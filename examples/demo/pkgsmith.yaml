@@ -1,28 +1,37 @@
-# One manifest, four distros. Each distro is a lane. Lanes build side by side, and formats that share a build
-# (deb and tar here) run it once.
+# One manifest, four distros. Each matrix entry names its own image and setup.
+# Entries on the same image (deb and tar) share one build.
 name: hello
 version: 1.0.0
-description: A tracked-build demo
+description: A demo that packages a small C program
 maintainer: Kieran Drewett <kieran@drewett.dev>
 license: MIT
 
-matrix:
-  include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
-    - { distro: debian, image: "debian:13", format: tar }
-    - { distro: arch, image: "archlinux:base", format: archlinux }
-    - { distro: alpine, image: "alpine:3.22", format: apk }
-
-image: ${{ matrix.image }}
-setup: |
-  . /etc/os-release
-  case "$ID" in
-    fedora) dnf -y install gcc make ;;
-    debian) apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make ;;
-    arch)   pacman -Sy --noconfirm gcc make ;;
-    alpine) apk add --no-cache gcc make musl-dev ;;
-  esac
+# The build is the same everywhere. pkgsmith records the files it installs and packages them.
 build: |
   make
   make install PREFIX=/usr
+
+matrix:
+  include:
+    - format: rpm
+      distro: fedora
+      image: fedora:43
+      setup: dnf -y install gcc make
+    - format: deb
+      distro: debian
+      image: debian:13
+      setup: &apt |
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
+    - format: tar
+      distro: debian
+      image: debian:13
+      setup: *apt
+    - format: archlinux
+      distro: arch
+      image: archlinux:base
+      setup: pacman -Sy --noconfirm gcc make
+    - format: apk
+      distro: alpine
+      image: alpine:3.22
+      setup: apk add --no-cache gcc make musl-dev

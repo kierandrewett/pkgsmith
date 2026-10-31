@@ -21,15 +21,17 @@ build: |                              # runs on every build
 ## `image`
 
 Any container image. Use the distro you build for, because a program links against the libraries of the distro it was
-built on. Expressions work, so a matrix can pick the image:
+built on. Set it at the top of the manifest when every build uses one image. Set it in a `matrix` entry when the images
+differ:
 
 ```yaml
 matrix:
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: alpine, image: "alpine:3.22", format: apk }
-image: ${{ matrix.image }}
+    - { format: rpm, distro: fedora, image: "fedora:43", setup: dnf -y install gcc make }
+    - { format: apk, distro: alpine, image: "alpine:3.22", setup: apk add --no-cache gcc make musl-dev }
 ```
+
+A matrix entry may also set `setup` and `build`. A value in the entry replaces the top-level one for that package.
 
 pkgsmith pulls an image that is not on the machine.
 

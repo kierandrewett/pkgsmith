@@ -10,13 +10,17 @@ license: MIT
 
 matrix:
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
+    - format: rpm
+      distro: fedora
+      image: fedora:43
+      setup: dnf -y install cargo gcc
+    - format: deb
+      distro: debian
+      image: debian:13
+      setup: |
+        apt-get update -qq
+        apt-get install -y cargo gcc
 
-image: ${{ matrix.image }}
-setup: |
-  . /etc/os-release
-  if [ "$ID" = fedora ]; then dnf -y install cargo gcc; else apt-get update -qq && apt-get install -y cargo gcc; fi
 build: |
   cargo build --release --locked
   install -Dm755 target/release/ripfind /usr/bin/ripfind

@@ -166,6 +166,7 @@ impl Job {
         }
         self.values
             .iter()
+            .filter(|(k, _)| !["setup", "build"].contains(&k.as_str()))
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(", ")
@@ -372,6 +373,16 @@ impl Manifest {
             None => context.expand(&self.arch)?,
         };
         bound.arch = context.arch.clone();
+        // A matrix entry may carry its own image, setup and build. They replace the top-level ones for that job.
+        for (key, field) in [
+            ("image", &mut bound.image),
+            ("setup", &mut bound.setup),
+            ("build", &mut bound.build),
+        ] {
+            if let Some(value) = job.values.get(key) {
+                *field = Some(value.clone());
+            }
+        }
         let expand = |text: &mut String| -> Result<()> {
             *text = context.expand(text)?;
             Ok(())

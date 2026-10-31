@@ -58,15 +58,16 @@ matrix:
   #   format values: tar | deb | rpm | archlinux | apk | ipk  (add a `format` axis to fix the format per job)
 
   # include: add keys to the jobs an entry matches. An entry matches a job when every key of the entry that is also an
-  # axis has the job's value. Here each distro gets its image and its format. An entry that matches no job becomes a
-  # new job.
+  # axis has the job's value. An entry that matches no job becomes a new job.
+  # An entry may carry `image`, `setup` and `build`. They replace the top-level ones of the jobs it matches, so each
+  # distro names the image it builds in and the setup that image needs. `format` fixes the format of those jobs.
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: opensuse, image: "registry.opensuse.org/opensuse/tumbleweed", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
-    - { distro: ubuntu, image: "ubuntu:24.04", format: deb }
-    - { distro: arch, image: "archlinux:base", format: archlinux }
-    - { distro: alpine, image: "alpine:3.22", format: apk }
+    - { distro: fedora, format: rpm, image: "fedora:43", setup: dnf -y install gcc make }
+    - { distro: opensuse, format: rpm, image: "registry.opensuse.org/opensuse/tumbleweed", setup: zypper -n install gcc make }
+    - { distro: debian, format: deb, image: "debian:13", setup: apt-get update -qq && apt-get install -y gcc make }
+    - { distro: ubuntu, format: deb, image: "ubuntu:24.04", setup: apt-get update -qq && apt-get install -y gcc make }
+    - { distro: arch, format: archlinux, image: "archlinux:base", setup: pacman -Sy --noconfirm gcc make }
+    - { distro: alpine, format: apk, image: "alpine:3.22", setup: apk add --no-cache gcc make musl-dev }
 
   # exclude: drop every job that matches all the keys of an entry.
   exclude:
@@ -76,20 +77,13 @@ matrix:
 # Build environment (docs/build-environment.md)
 # ---------------------------------------------------------------------------------------------------------------------
 
-# The container image the build runs in. Any image works. Expressions work here.
-image: ${{ matrix.image }}
+# The container image the build runs in. Any image works. A matrix entry replaces it, as above. Put an `image` here
+# when every job uses one image. Expressions work here.
+# image: fedora:43
 
-# Runs once, in the image, and is cached as an image. Install the build dependencies here.
+# Runs once, in the image, and is cached as an image. A matrix entry replaces it, as above.
 # Text with a "#!" first line runs as written. Other text runs with `sh -e`.
-setup: |
-  . /etc/os-release
-  case "$ID" in
-    fedora)   dnf -y install gcc make ;;
-    opensuse*) zypper -n install gcc make ;;
-    debian|ubuntu) apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make ;;
-    arch)     pacman -Sy --noconfirm gcc make ;;
-    alpine)   apk add --no-cache gcc make musl-dev ;;
-  esac
+# setup: dnf -y install gcc make
 
 # Runs in the image with the build context at /src. A throw-away overlay covers /src, so the build may write there.
 # Everything the build installs outside /src becomes the package.

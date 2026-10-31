@@ -25,8 +25,8 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 
 | Key       | Type   | Meaning                                                                                       |
 | --------- | ------ | --------------------------------------------------------------------------------------------- |
-| `image`   | text   | Container image of the build environment. See [build environment](build-environment.md)       |
-| `setup`   | script | Runs once in the image. Not tracked. The result is cached                                     |
+| `image`   | text   | Container image of the build environment. A `matrix` entry may set its own. See [build environment](build-environment.md) |
+| `setup`   | script | Runs once in the image. Not tracked. The result is cached. A `matrix` entry may set its own   |
 | `build`   | script | Runs in the image with the build context at `/src`. Files it installs outside `/src` are packaged |
 | `exclude` | list   | Paths the package leaves out. Prefixes or globs, for example `/usr/share/doc/**`              |
 | `matrix`  | map    | Axes, `include` and `exclude`. See [matrix and expressions](matrix-and-expressions.md)        |
@@ -105,13 +105,9 @@ matrix:
   distro: [fedora, debian]
   arch: [amd64, arm64]
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
+    - { distro: fedora, format: rpm, image: "fedora:43", setup: dnf -y install cargo }
+    - { distro: debian, format: deb, image: "debian:13", setup: apt-get update -qq && apt-get install -y cargo }
 
-image: ${{ matrix.image }}
-setup: |
-  . /etc/os-release
-  [ "$ID" = fedora ] && dnf -y install cargo || { apt-get update -qq && apt-get install -y cargo; }
 build: |
   cargo build --release --manifest-path crates/config/Cargo.toml
   install -Dm755 target/release/bingux-config /usr/bin/bingux-config

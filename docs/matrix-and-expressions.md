@@ -19,15 +19,20 @@ matrix:
 Every key except `include` and `exclude` is an axis: a name with a list of values. pkgsmith builds one job for every
 combination of the axes (here 2 x 2 = 4), then applies `exclude`, then `include`.
 
-### Reserved axes
+### Reserved keys
 
-| Axis     | Effect                                                                                       |
+| Key      | Effect                                                                                       |
 | -------- | -------------------------------------------------------------------------------------------- |
-| `format` | The format of the job. Without this axis, a job builds every format the command line asks for |
+| `format` | The format of the job. Without this key, a job builds every format the command line asks for |
 | `arch`   | The architecture. Overrides `arch` in the manifest                                           |
 | `distro` | Selects the matching `overrides` entry                                                       |
+| `image`  | The build image of the job. Replaces the top-level `image`                                   |
+| `setup`  | The setup script of the job. Replaces the top-level `setup`. A full script is allowed        |
+| `build`  | The build script of the job. Replaces the top-level `build`                                  |
 
-Any other axis is a variable. `${{ matrix.image }}` reads it, and a build script sees it as `MATRIX_IMAGE`.
+`setup` and `build` are scripts, so they are not exported as `MATRIX_` variables and are not shown in job names.
+
+Any other key is a variable. `${{ matrix.size }}` reads it, and a build script sees it as `MATRIX_SIZE`.
 
 Values may be text, numbers or `true` / `false`. All are kept as text.
 

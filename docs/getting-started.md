@@ -39,30 +39,36 @@ install: hello
 ```yaml
 name: hello
 version: 1.0.0
-description: A tracked-build demo
+description: A demo that packages a small C program
 maintainer: Your Name <you@example.com>
 license: MIT
 
-matrix:
-  include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
-    - { distro: arch, image: "archlinux:base", format: archlinux }
-    - { distro: alpine, image: "alpine:3.22", format: apk }
-
-image: ${{ matrix.image }}
-setup: |
-  . /etc/os-release
-  case "$ID" in
-    fedora) dnf -y install gcc make ;;
-    debian) apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make ;;
-    arch)   pacman -Sy --noconfirm gcc make ;;
-    alpine) apk add --no-cache gcc make musl-dev ;;
-  esac
 build: |
   make
   make install PREFIX=/usr
+
+matrix:
+  include:
+    - format: rpm
+      distro: fedora
+      image: fedora:43
+      setup: dnf -y install gcc make
+    - format: deb
+      distro: debian
+      image: debian:13
+      setup: apt-get update -qq && apt-get install -y gcc make
+    - format: archlinux
+      distro: arch
+      image: archlinux:base
+      setup: pacman -Sy --noconfirm gcc make
+    - format: apk
+      distro: alpine
+      image: alpine:3.22
+      setup: apk add --no-cache gcc make musl-dev
 ```
+
+Each `matrix` entry is one package. It names the format, the distro, the image to build in, and the `setup` that image
+needs. The `build` is the same for all of them.
 
 ## Plan
 
