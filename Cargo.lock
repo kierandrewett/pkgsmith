@@ -1219,6 +1219,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-oci"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "pkgsmith-plugin-rpm"
 version = "0.1.0"
 dependencies = [
