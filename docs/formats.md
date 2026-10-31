@@ -188,8 +188,14 @@ be a number.
 | `compression`  | `zstd`, `xz`, `gzip`, `bzip2`, `none`     | `zstd`            | Compression of the whole file              |
 | `dep_origins`  | Map of dependency name to `category/port` | None              | The origin of each dependency              |
 
-Scripts map to the pkg phases: `pre_install` to `pre-install`, `post_install` to `post-install`, `pre_remove` to
-`pre-deinstall` and `post_remove` to `post-deinstall`.
+Scripts map to the pkg phases:
+
+| Manifest       | pkg phase        |
+| -------------- | ---------------- |
+| `pre_install`  | `pre-install`    |
+| `post_install` | `post-install`   |
+| `pre_remove`   | `pre-deinstall`  |
+| `post_remove`  | `post-deinstall` |
 
 ## xbps
 
