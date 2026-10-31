@@ -35,7 +35,6 @@ tar = "0.4.46"
 tempfile = "3.27.0"
 terminal_size = "0.4.4"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
-xz2 = "0.1.7"
 zip = "9.2.0"
 zstd = "0.14.3"
 ureq = "3"

@@ -47,7 +47,7 @@ impl Compression {
                 encoder.finish()?
             }
             Compression::Xz => {
-                let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 6);
+                let mut encoder = liblzma::write::XzEncoder::new(Vec::new(), 6);
                 encoder.write_all(data)?;
                 encoder.finish()?
             }
@@ -277,7 +277,7 @@ mod tests {
                 "gzip" => io::Read::bytes(flate2::read::GzDecoder::new(packed.as_slice()))
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap(),
-                "xz" => io::Read::bytes(xz2::read::XzDecoder::new(packed.as_slice()))
+                "xz" => io::Read::bytes(liblzma::read::XzDecoder::new(packed.as_slice()))
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap(),
                 "zstd" => zstd::stream::decode_all(packed.as_slice()).unwrap(),
