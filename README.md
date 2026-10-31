@@ -12,7 +12,7 @@ It works like [nFPM](https://nfpm.goreleaser.com/), with a manifest that behaves
 | `deb`       | `.deb`                     | works       |
 | `archlinux` | `.pkg.tar.zst`             | works       |
 | `ipk`       | `.ipk` (OpenWrt)           | works       |
-| `rpm`       | `.rpm`                     | planned     |
+| `rpm`       | `.rpm`                     | works       |
 | `apk`       | `.apk` (Alpine)            | planned     |
 | `snap`      | `.snap`                    | planned     |
 | `flatpak`   | `.flatpak`                 | planned     |

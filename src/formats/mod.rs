@@ -6,10 +6,11 @@ use std::path::PathBuf;
 
 pub mod arch;
 pub mod deb;
+pub mod rpm;
 pub mod tarball;
 
 /// Every format name, in the order `pkgsmith formats` lists them.
-pub const ALL: &[&str] = &["tar", "deb", "archlinux", "ipk"];
+pub const ALL: &[&str] = &["tar", "deb", "archlinux", "ipk", "rpm"];
 
 pub fn build(package: &Package) -> Result<PathBuf> {
     match package.format {
@@ -17,6 +18,7 @@ pub fn build(package: &Package) -> Result<PathBuf> {
         "deb" => deb::build(package, deb::Flavour::Deb),
         "ipk" => deb::build(package, deb::Flavour::Ipk),
         "archlinux" => arch::build(package),
+        "rpm" => rpm::build(package),
         other => bail!("unknown format {other:?}; supported: {}", ALL.join(", ")),
     }
 }

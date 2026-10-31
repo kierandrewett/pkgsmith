@@ -17,7 +17,7 @@ description: |
 
 matrix:
   arch: [amd64, arm64]
-  format: [tar, deb, archlinux, ipk]
+  format: [tar, deb, archlinux, ipk, rpm]
 
 contents:
   # One staged prefix per architecture: ${STAGE}-amd64, ${STAGE}-arm64.
