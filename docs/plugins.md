@@ -141,7 +141,7 @@ const PkgsmithPlugin *pkgsmith_plugin_entry(void);
 
 ### Signing
 
-A plugin states in `describe` how its format is signed, with the field `signing` of each format:
+A format plugin states in `describe` how its format is signed, with the field `signing` of each format:
 
 | Value                       | Meaning                                                                      |
 | --------------------------- | ---------------------------------------------------------------------------- |
@@ -149,7 +149,8 @@ A plugin states in `describe` how its format is signed, with the field `signing`
 | `{"embedded": "SCHEME"}`    | The plugin puts the signature inside the package. See below                  |
 | `"none"`                    | The package cannot be signed                                                 |
 
-An embedding plugin calls `can_sign` and, when it returns 1, `sign`. The `scheme` is a number in C and a name in JSON:
+An embedding plugin calls `can_sign` and, when it returns 1, `sign`. The host finds the key and a signer plugin that
+takes it. The `scheme` is a number in C and a name in JSON:
 
 | Number | Name           | The signature                                                                  |
 | ------ | -------------- | ------------------------------------------------------------------------------ |
@@ -158,22 +159,43 @@ An embedding plugin calls `can_sign` and, when it returns 1, `sign`. The `scheme
 | 3      | `rsa-sha1`     | RSA PKCS#1 v1.5 over the SHA-1 digest of the data, from an RSA key             |
 
 - `sign` returns 0 and the signature in `out`, or 1 and an error message in `out`.
-- `key_name` gives the file name of the private key. The `apk` plugin puts it into the signature name.
+- `key_name` gives the file name of the key. The `apk` plugin puts it into the signature name.
 - The host allocated both buffers. Give them back to `free_buf`.
 
 See [signing](signing.md) for the keys and the command line options.
 
-A plugin is code in the process of pkgsmith. Signing through the host keeps the key out of the package description, but
-it does not hide the key from the plugin.
+## Writing a signer
 
+A signer is a plugin that signs. It lists `signers` in `describe`, next to or instead of `formats`:
 
-[examples/plugins/c-listing/listing.c](../examples/plugins/c-listing/listing.c) is a complete plugin in C. It adds a
-format that lists the files of a package.
-
-```console
-$ cc -shared -fPIC -o pkgsmith-plugin-listing.so listing.c
-$ pkgsmith --plugin-path . build -F listing
+```json
+{"name": "signer-gpg", "version": "0.1.0", "signers": [
+  {"name": "gpg", "description": "Signs with gpg", "schemes": ["openpgp"]}
+]}
 ```
+
+Two more methods reach a signer. Both take a JSON signing request, and the data goes by path, not inside the JSON:
+
+| Field             | Meaning                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `signer`          | The signer the host chose, one of the names the plugin lists                          |
+| `scheme`          | One of the schemes in the table above                                                 |
+| `key`             | What the user gave after `--sign-key`: a key file or an identifier. The signer decides |
+| `passphrase_file` | A file with the passphrase, or `null`                                                 |
+| `input`, `output` | The file to sign and the file to write. Empty for `accepts`                           |
+| `armor`           | `true` for OpenPGP ASCII armor                                                        |
+
+- `accepts` returns `{"ok": true}` when the signer can sign with this key, and `{"ok": false}` when the key is not
+  its own. For a key that is its own but unusable, such as a locked key or a wrong passphrase, return an error with the
+  reason. The host stops at that error and tries no other signer. Open the key in `accepts`, so that a bad key fails
+  before any build starts.
+- `sign` writes the signature to `output` and returns `{"ok": true}`.
+
+In Rust, implement `accepts` and `sign` of the `Plugin` trait, and leave `file_name` and `build` as they are.
+[plugins/signer-gpg](../plugins/signer-gpg) is the smallest example.
+
+A plugin is code in the process of pkgsmith. Signing through the host keeps the key out of the package description, but
+it does not hide the key from a plugin.
 
 ## Writing a plugin in Rust
 

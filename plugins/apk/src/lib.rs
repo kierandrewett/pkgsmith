@@ -19,6 +19,7 @@ impl Plugin for Apk {
                 description: "An Alpine package (.apk)".into(),
                 signing: Signing::Embedded(Scheme::RsaSha256),
             }],
+            ..Default::default()
         }
     }
 

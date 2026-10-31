@@ -163,6 +163,8 @@ dependencies = [
  "solana-nohash-hasher",
  "thiserror 2.0.21",
  "xxhash-rust",
+ "zstd 0.13.3",
+ "zstd-safe 7.3.0",
 ]
 
 [[package]]
@@ -2076,18 +2078,12 @@ dependencies = [
  "glob",
  "libloading",
  "md-5 0.11.0",
- "pgp",
- "pkcs8",
  "pkgsmith-plugin",
  "podman-api",
- "rand",
- "rsa",
  "serde",
  "serde_json",
  "serde_yaml_ng",
- "sha1 0.10.7",
  "sha1 0.11.0",
- "sha2 0.10.9",
  "sha2 0.11.1",
  "tar",
  "tempfile",
@@ -2095,7 +2091,7 @@ dependencies = [
  "tokio",
  "ureq",
  "zip",
- "zstd",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -2112,7 +2108,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.1",
  "tar",
- "zstd",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -2123,6 +2119,16 @@ dependencies = [
  "pkgsmith-plugin",
  "serde",
  "sha2 0.11.1",
+]
+
+[[package]]
+name = "pkgsmith-plugin-appimage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "backhand",
+ "pkgsmith-plugin",
+ "serde",
 ]
 
 [[package]]
@@ -2167,6 +2173,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-signer-gpg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+]
+
+[[package]]
+name = "pkgsmith-plugin-signer-openpgp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pgp",
+ "pkgsmith-plugin",
+ "rand",
+]
+
+[[package]]
+name = "pkgsmith-plugin-signer-rsa"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkcs8",
+ "pkgsmith-plugin",
+ "rsa",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "pkgsmith-plugin-slackware"
 version = "0.1.0"
 dependencies = [
@@ -2188,6 +2224,15 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-tar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
+name = "pkgsmith-plugin-xbps"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3554,7 +3599,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "zeroize",
  "zopfli",
- "zstd",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -3583,11 +3628,29 @@ dependencies = [
 
 [[package]]
 name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe 7.3.0",
+]
+
+[[package]]
+name = "zstd"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
 dependencies = [
- "zstd-safe",
+ "zstd-safe 8.2.0",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+dependencies = [
+ "zstd-sys",
 ]
 
 [[package]]

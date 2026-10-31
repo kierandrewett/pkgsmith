@@ -19,6 +19,7 @@ impl Plugin for Snap {
                 description: "A snap package (.snap), for snapd".into(),
                 signing: Signing::None,
             }],
+            ..Default::default()
         }
     }
 

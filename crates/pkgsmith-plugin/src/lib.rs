@@ -19,4 +19,4 @@ pub mod version;
 pub use abi::Scheme;
 pub use entry::{Data, Entry};
 pub use package::{Package, Scripts};
-pub use plugin::{FormatInfo, Host, Plugin, PluginInfo, Signing};
+pub use plugin::{FormatInfo, Host, Plugin, PluginInfo, SignRequest, SignerInfo, Signing};

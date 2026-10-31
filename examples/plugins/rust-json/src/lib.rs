@@ -21,7 +21,8 @@ impl Plugin for Json {
                 description: "The package description as a JSON file (.json)".into(),
                 signing: Signing::Detached,
             }],
-        }
+ ..Default::default()
+}
     }
 
     fn file_name(&self, package: &Package) -> Result<String> {

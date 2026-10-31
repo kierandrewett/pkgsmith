@@ -7,7 +7,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use libloading::Library;
 use pkgsmith_plugin::abi::{ABI_VERSION, Buf, ENTRY_SYMBOL, EntryFn, HostVTable, PluginVTable};
-use pkgsmith_plugin::{Package, PluginInfo, Scheme, Signing};
+use pkgsmith_plugin::{Package, PluginInfo, Scheme, SignRequest, SignerInfo, Signing};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
@@ -252,12 +252,31 @@ impl Registry {
                 self.format_names().join(", ")
             );
         };
+        self.invoke(
+            index,
+            method,
+            serde_json::to_vec(package)?,
+            &package.format,
+            log,
+            signer,
+        )
+    }
+
+    /// Send one request to one plugin and read its answer.
+    fn invoke(
+        &self,
+        index: usize,
+        method: &str,
+        request: Vec<u8>,
+        format: &str,
+        log: &dyn Fn(u32, &str),
+        signer: Option<&dyn Signer>,
+    ) -> Result<serde_json::Value> {
         let plugin = &self.plugins[index];
-        let request = serde_json::to_vec(package)?;
         let context = CallContext {
             log,
             signer,
-            format: &package.format,
+            format,
         };
         let host = HostVTable {
             abi_version: ABI_VERSION,
@@ -286,6 +305,64 @@ impl Registry {
             Reply::Ok(value) => Ok(value),
             Reply::Error(text) => bail!("{text}"),
         }
+    }
+
+    /// Every signer of every loaded plugin, with the plugin that offers it.
+    pub fn signers(&self) -> Vec<(&SignerInfo, &PluginInfo)> {
+        self.plugins
+            .iter()
+            .flat_map(|p| p.info.signers.iter().map(move |s| (s, &p.info)))
+            .collect()
+    }
+
+    /// Ask the signers, in plugin order, which one takes this request. A signer that the user named is the only one
+    /// asked. `Ok(None)` means that no signer claims the key. An `Err` is a signer that claims the key and says why it
+    /// cannot use it, for example a wrong passphrase. The error is returned at once: no other signer is tried.
+    pub fn choose_signer(&self, request: &SignRequest, named: bool) -> Result<Option<String>> {
+        for (index, plugin) in self.plugins.iter().enumerate() {
+            for signer in &plugin.info.signers {
+                if !signer.schemes.contains(&request.scheme)
+                    || (named && signer.name != request.signer)
+                {
+                    continue;
+                }
+                let mut ask = request.clone();
+                ask.signer = signer.name.clone();
+                let answer = self
+                    .invoke(
+                        index,
+                        "accepts",
+                        serde_json::to_vec(&ask)?,
+                        "",
+                        &|_, _| {},
+                        None,
+                    )
+                    .with_context(|| format!("the {} signer", signer.name))?;
+                if answer == serde_json::Value::Bool(true) {
+                    return Ok(Some(signer.name.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Sign with the signer that `choose_signer` found.
+    pub fn run_signer(&self, request: &SignRequest) -> Result<()> {
+        let index = self
+            .plugins
+            .iter()
+            .position(|p| p.info.signers.iter().any(|s| s.name == request.signer))
+            .ok_or_else(|| anyhow::anyhow!("no signer named {:?}", request.signer))?;
+        self.invoke(
+            index,
+            "sign",
+            serde_json::to_vec(request)?,
+            "",
+            &|_, _| {},
+            None,
+        )
+        .with_context(|| format!("the {} signer", request.signer))?;
+        Ok(())
     }
 
     /// The name of the file `build` would write. `package.entries` may be empty.

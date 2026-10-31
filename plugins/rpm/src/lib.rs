@@ -20,6 +20,7 @@ impl Plugin for Rpm {
                     "An rpm package (.rpm), for Fedora, openSUSE, RHEL and their relatives".into(),
                 signing: Signing::Embedded(Scheme::OpenPgp),
             }],
+            ..Default::default()
         }
     }
 

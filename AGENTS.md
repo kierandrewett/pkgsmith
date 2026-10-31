@@ -28,17 +28,12 @@ Update the documentation in the same change as the code. A change is not finishe
 6. Check every link and command you wrote against the current code and `--help` output. Do not document a feature that
    you did not run.
 
-## Markdown
+## Writing Markdown
 
-Every Markdown file you write or change goes through the markdown-style check. It reads the rules in
-`~/.agents/tools/markdown-style/markdown-style.md`.
-
-```sh
-python3 ~/.agents/tools/markdown-style/markdown-style.py lint --fail-on-flags README.md docs/*.md AGENTS.md
-python3 ~/.agents/tools/markdown-style/markdown-style.py review --fail-on-flags README.md docs/*.md AGENTS.md
-```
-
-Fix every flag. Then run both commands again.
+- One idea per paragraph, under about 60 words. Use a list or a table for options, values and steps.
+- For each option, give its type or accepted values, its default and its effect. List every value of an enum.
+- Start with a small working example, then the details. Do not explain a table again in prose.
+- Link text says what the link opens. Check every link and command against the current code and `--help`.
 
 ## Verify with the real tool
 

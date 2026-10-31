@@ -19,6 +19,7 @@ impl Plugin for Arch {
                 description: "An Arch Linux package (.pkg.tar.zst)".into(),
                 signing: Signing::Detached,
             }],
+            ..Default::default()
         }
     }
 

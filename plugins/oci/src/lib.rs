@@ -20,6 +20,7 @@ impl Plugin for Oci {
                     .into(),
                 signing: Signing::None,
             }],
+            ..Default::default()
         }
     }
 

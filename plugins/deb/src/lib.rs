@@ -35,6 +35,7 @@ impl Plugin for Deb {
                     signing: Signing::Detached,
                 },
             ],
+            ..Default::default()
         }
     }
 

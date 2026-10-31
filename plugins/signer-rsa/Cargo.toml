@@ -1,0 +1,20 @@
+[package]
+name = "pkgsmith-plugin-signer-rsa"
+version = "0.1.0"
+edition = "2024"
+description = "pkgsmith plugin: the rsa signer"
+license = "MIT"
+repository = "https://github.com/kierandrewett/pkgsmith"
+publish = false
+
+[lib]
+name = "pkgsmith_plugin_signer_rsa"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.104"
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
+rsa = "0.9.10"
+sha1 = "0.10"
+sha2 = "0.10"

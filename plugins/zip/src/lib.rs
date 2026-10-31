@@ -18,6 +18,7 @@ impl Plugin for Zip {
                 description: "A zip archive (.zip)".into(),
                 signing: Signing::Detached,
             }],
+            ..Default::default()
         }
     }
 

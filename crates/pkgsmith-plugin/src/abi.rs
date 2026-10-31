@@ -120,7 +120,7 @@ pub struct HostVTable {
 }
 
 /// How a signature is made. The numbers are part of the C interface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[repr(u32)]
 pub enum Scheme {

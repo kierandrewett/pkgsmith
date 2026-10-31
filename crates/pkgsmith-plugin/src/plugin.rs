@@ -2,7 +2,7 @@
 
 use crate::abi::{Buf, HostVTable, Scheme};
 use crate::package::Package;
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -30,12 +30,46 @@ pub struct FormatInfo {
     pub signing: Signing,
 }
 
-/// What `describe` returns.
+/// A way to sign that a plugin offers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignerInfo {
+    /// The name in `--sign-key SIGNER:KEY`, for example `gpg`.
+    pub name: String,
+    pub description: String,
+    /// The schemes this signer can make.
+    pub schemes: Vec<Scheme>,
+}
+
+/// What `describe` returns.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginInfo {
     pub name: String,
     pub version: String,
+    /// The formats the plugin writes. Empty for a plugin that only signs.
+    #[serde(default)]
     pub formats: Vec<FormatInfo>,
+    /// The ways to sign that the plugin offers. Empty for a plugin that only writes formats.
+    #[serde(default)]
+    pub signers: Vec<SignerInfo>,
+}
+
+/// What the host asks of a signer: sign the file `input` and write the signature to `output`. The data goes by path
+/// and not inside the JSON, because a package can be large.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignRequest {
+    /// The signer the host chose, one of the names the plugin lists.
+    pub signer: String,
+    pub scheme: Scheme,
+    /// What the user gave after `--sign-key`: a key file, or an identifier such as a key id. The signer decides what it
+    /// means.
+    pub key: String,
+    /// A file that holds the passphrase of the key, or `None`.
+    pub passphrase_file: Option<PathBuf>,
+    pub input: PathBuf,
+    /// Where to write the signature. A binary packet or raw bytes, or ASCII armor when `armor` is true.
+    pub output: PathBuf,
+    /// Write OpenPGP armor. Only `openpgp` signatures can be armored.
+    pub armor: bool,
 }
 
 /// The host, for messages that belong on the screen of the user.
@@ -125,11 +159,29 @@ impl Host<'_> {
 pub trait Plugin: Send + Sync {
     fn info(&self) -> PluginInfo;
 
-    /// The name of the file `build` writes, from the package alone. `package.entries` is empty.
-    fn file_name(&self, package: &Package) -> Result<String>;
+    /// The name of the file `build` writes, from the package alone. `package.entries` is empty. A plugin that writes
+    /// formats must implement this.
+    fn file_name(&self, _package: &Package) -> Result<String> {
+        bail!("this plugin writes no formats")
+    }
 
-    /// Write the package into `package.out` and return the path of the file.
-    fn build(&self, package: &Package, host: &Host) -> Result<PathBuf>;
+    /// Write the package into `package.out` and return the path of the file. A plugin that writes formats must
+    /// implement this.
+    fn build(&self, _package: &Package, _host: &Host) -> Result<PathBuf> {
+        bail!("this plugin writes no formats")
+    }
+
+    /// Whether this signer can sign with the request: it is one of its names, it makes the scheme, and `key` is a key
+    /// it can use. `Ok(false)` means "not mine". An `Err` means the key is mine but cannot be used, and its text is
+    /// shown to the user, for example "the key is locked". A plugin that signs must implement this.
+    fn accepts(&self, _request: &SignRequest) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Sign `request.input` and write the signature to `request.output`. A plugin that signs must implement this.
+    fn sign(&self, _request: &SignRequest) -> Result<()> {
+        bail!("this plugin has no signer")
+    }
 }
 
 #[derive(Serialize)]
@@ -181,18 +233,27 @@ pub unsafe fn call(
             Ok(method) => method,
             Err(_) => return reply::<()>(Err(anyhow::anyhow!("the method name is not UTF-8"))),
         };
-        let package: Result<Package> =
-            serde_json::from_slice(request).context("the request is not a package");
         let host = Host { raw: host };
-        match (method, package) {
-            (_, Err(error)) => reply::<()>(Err(error)),
-            ("file_name", Ok(package)) => reply(plugin.file_name(&package)),
-            ("build", Ok(package)) => reply(
-                plugin
-                    .build(&package, &host)
-                    .map(|p| p.display().to_string()),
-            ),
-            (other, Ok(_)) => reply::<()>(Err(anyhow::anyhow!("unknown method {other:?}"))),
+        match method {
+            "file_name" | "build" => match serde_json::from_slice::<Package>(request) {
+                Err(error) => reply::<()>(Err(
+                    anyhow::Error::from(error).context("the request is not a package")
+                )),
+                Ok(package) if method == "file_name" => reply(plugin.file_name(&package)),
+                Ok(package) => reply(
+                    plugin
+                        .build(&package, &host)
+                        .map(|p| p.display().to_string()),
+                ),
+            },
+            "accepts" | "sign" => match serde_json::from_slice::<SignRequest>(request) {
+                Err(error) => reply::<()>(Err(
+                    anyhow::Error::from(error).context("the request is not a signing request")
+                )),
+                Ok(request) if method == "accepts" => reply(plugin.accepts(&request)),
+                Ok(request) => reply(plugin.sign(&request).map(|()| true)),
+            },
+            other => reply::<()>(Err(anyhow::anyhow!("unknown method {other:?}"))),
         }
     }));
     outcome.unwrap_or_else(|_| reply::<()>(Err(anyhow::anyhow!("the plugin panicked"))))

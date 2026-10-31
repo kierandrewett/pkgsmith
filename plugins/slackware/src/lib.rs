@@ -19,6 +19,7 @@ impl Plugin for Slackware {
                 description: "A Slackware package (.txz), for installpkg".into(),
                 signing: Signing::Detached,
             }],
+            ..Default::default()
         }
     }
 

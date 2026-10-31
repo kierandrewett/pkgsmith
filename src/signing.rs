@@ -1,233 +1,272 @@
-//! Package signing: the keys that the user gave, and the signatures made with them.
+//! Package signing: which key signs which format, and the call to the signer plugin that does it.
 //!
-//! The host holds the keys. A plugin that embeds a signature asks the host through [`crate::plugins::Signer`], so the
-//! key is not part of the package description. A plugin is code in this process, so that is a convenience and not
-//! isolation: install only plugins that you trust.
+//! The host holds no key and no signing code. A signer is a plugin (see `pkgsmith plugins`) that offers one or more
+//! schemes. The user gives `--sign-key [FORMAT=][SIGNER:]KEY`:
 //!
-//! Two kinds of key are read, both from a file:
+//! * `FORMAT=` limits the key to one format. A key without it is tried for every format.
+//! * `SIGNER:` names the signer plugin. Without it, the signers are asked one by one whether they take the key.
+//! * `KEY` is whatever the signer understands: a key file, or a key id for `gpg`.
 //!
-//! * an armored OpenPGP secret key (`gpg --export-secret-keys --armor KEYID`), which signs with [`Scheme::OpenPgp`];
-//! * an RSA private key in PEM form, PKCS#1 (`BEGIN RSA PRIVATE KEY`) or PKCS#8 (`BEGIN PRIVATE KEY`, or
-//!   `BEGIN ENCRYPTED PRIVATE KEY`), which signs with [`Scheme::RsaSha256`] and [`Scheme::RsaSha1`].
+//! A package format states how it is signed: not at all, with a detached OpenPGP signature that this module writes next
+//! to the file, or with a signature inside the package that the format plugin asks for while it builds.
 
-use crate::plugins::Signer;
+use crate::plugins::{Registry, Signer};
 use anyhow::{Context, Result, anyhow, bail};
-use pgp::composed::{Deserializable, DetachedSignature, SignedSecretKey};
-use pgp::crypto::hash::HashAlgorithm;
-use pgp::ser::Serialize as _;
-use pgp::types::Password;
-use pkcs8::DecodePrivateKey as _;
-use pkgsmith_plugin::Scheme;
-use rsa::RsaPrivateKey;
-use rsa::pkcs1::DecodeRsaPrivateKey as _;
-use rsa::pkcs1v15::SigningKey;
-use rsa::signature::{SignatureEncoding, Signer as _};
+use pkgsmith_plugin::{Scheme, SignRequest, Signing as FormatSigning};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
-enum Key {
-    OpenPgp(Box<SignedSecretKey>),
-    Rsa(Box<RsaPrivateKey>),
+/// One `--sign-key` value, split into its parts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spec {
+    pub format: Option<String>,
+    pub signer: Option<String>,
+    pub key: String,
 }
 
-struct Entry {
-    /// The format this key is for, or `None` for every format.
-    format: Option<String>,
-    path: PathBuf,
+/// Split `[FORMAT=][SIGNER:]KEY`. A prefix counts only when it is a name that exists, so a key file such as
+/// `C:\keys\a.pem` or `./a=b.pem` stays whole.
+pub fn parse_spec(text: &str, formats: &[String], signers: &[String]) -> Spec {
+    let mut rest = text;
+    let mut format = None;
+    if let Some((head, tail)) = rest.split_once('=')
+        && formats.iter().any(|f| f == head)
+    {
+        format = Some(head.to_string());
+        rest = tail;
+    }
+    let mut signer = None;
+    if let Some((head, tail)) = rest.split_once(':')
+        && signers.iter().any(|s| s == head)
+    {
+        signer = Some(head.to_string());
+        rest = tail;
+    }
+    Spec {
+        format,
+        signer,
+        key: rest.to_string(),
+    }
 }
 
-/// The signing keys of a run.
-pub struct Keys {
-    entries: Vec<Entry>,
-    passphrase: Option<String>,
-    loaded: Mutex<HashMap<PathBuf, Arc<Key>>>,
+/// A signer name and the key it will use.
+type Chosen = (String, String);
+
+/// The signing setup of one run.
+pub struct Signing<'a> {
+    registry: &'a Registry,
+    specs: Vec<Spec>,
+    passphrase_file: Option<PathBuf>,
+    /// The result of asking the signers for a format and scheme, so each question is asked once.
+    chosen: Mutex<HashMap<(String, Scheme), Option<Chosen>>>,
 }
 
-impl Keys {
-    /// `specs` are `PATH` (a key for every format) or `FORMAT=PATH`. `passphrase` unlocks encrypted keys.
-    pub fn new(specs: &[String], passphrase: Option<String>) -> Result<Keys> {
-        let mut entries = Vec::new();
-        for spec in specs {
-            let (format, path) = match spec.split_once('=') {
-                Some((format, path)) if !format.is_empty() && !format.contains('/') => {
-                    (Some(format.to_string()), path)
-                }
-                _ => (None, spec.as_str()),
-            };
-            let path = PathBuf::from(path);
-            if !path.is_file() {
-                bail!("the signing key {} does not exist", path.display());
-            }
-            entries.push(Entry { format, path });
+impl<'a> Signing<'a> {
+    pub fn new(
+        registry: &'a Registry,
+        texts: &[String],
+        passphrase_file: Option<PathBuf>,
+    ) -> Result<Self> {
+        let formats = registry.format_names();
+        let signers: Vec<String> = registry
+            .signers()
+            .iter()
+            .map(|(s, _)| s.name.clone())
+            .collect();
+        let specs: Vec<Spec> = texts
+            .iter()
+            .map(|t| parse_spec(t, &formats, &signers))
+            .collect();
+        if let Some(spec) = specs.iter().find(|s| s.key.is_empty()) {
+            bail!("--sign-key {spec:?} has no key");
         }
-        Ok(Keys {
-            entries,
-            passphrase,
-            loaded: Mutex::new(HashMap::new()),
+        if let Some(file) = &passphrase_file
+            && !file.is_file()
+        {
+            bail!("the passphrase file {} does not exist", file.display());
+        }
+        Ok(Signing {
+            registry,
+            specs,
+            passphrase_file,
+            chosen: Mutex::new(HashMap::new()),
         })
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+    /// No key was given, so nothing is signed.
+    pub fn is_off(&self) -> bool {
+        self.specs.is_empty()
     }
 
-    fn load(&self, path: &Path) -> Result<Arc<Key>> {
-        if let Some(key) = self.loaded.lock().unwrap().get(path) {
-            return Ok(key.clone());
+    fn request(&self, spec: &Spec, scheme: Scheme, armor: bool) -> SignRequest {
+        SignRequest {
+            signer: spec.signer.clone().unwrap_or_default(),
+            scheme,
+            key: spec.key.clone(),
+            passphrase_file: self.passphrase_file.clone(),
+            input: PathBuf::new(),
+            output: PathBuf::new(),
+            armor,
         }
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read the signing key {}", path.display()))?;
-        let password = self.passphrase.clone().unwrap_or_default();
-        let key = if text.contains("BEGIN PGP PRIVATE KEY BLOCK") {
-            let (key, _) = SignedSecretKey::from_string(&text)
-                .with_context(|| format!("{} is not a valid OpenPGP secret key", path.display()))?;
-            Key::OpenPgp(Box::new(key))
-        } else if text.contains("BEGIN RSA PRIVATE KEY") {
-            Key::Rsa(Box::new(
-                RsaPrivateKey::from_pkcs1_pem(&text)
-                    .with_context(|| format!("{} is not a valid RSA key", path.display()))?,
-            ))
-        } else if text.contains("BEGIN ENCRYPTED PRIVATE KEY") {
-            if self.passphrase.is_none() {
-                bail!(
-                    "{} is encrypted. Give the passphrase with --sign-passphrase-file or PKGSMITH_SIGN_PASSPHRASE",
-                    path.display()
-                );
-            }
-            Key::Rsa(Box::new(
-                RsaPrivateKey::from_pkcs8_encrypted_pem(&text, password.as_bytes()).with_context(
-                    || format!("cannot decrypt {}: wrong passphrase?", path.display()),
-                )?,
-            ))
-        } else if text.contains("BEGIN PRIVATE KEY") {
-            Key::Rsa(Box::new(
-                RsaPrivateKey::from_pkcs8_pem(&text)
-                    .with_context(|| format!("{} is not a valid RSA key", path.display()))?,
-            ))
-        } else {
-            bail!(
-                "{} is not an armored OpenPGP secret key or a PEM RSA private key",
-                path.display()
-            );
-        };
-        let key = Arc::new(key);
-        self.loaded
-            .lock()
-            .unwrap()
-            .insert(path.to_path_buf(), key.clone());
-        Ok(key)
     }
 
-    /// The key for `format` that can sign with `scheme`: a key named for the format first, then the default keys.
-    fn find(&self, format: &str, scheme: Scheme) -> Result<Option<(Arc<Key>, &Path)>> {
+    /// The signer and key for a format and scheme. Keys named for the format go first, then the general ones.
+    fn choose(&self, format: &str, scheme: Scheme) -> Result<Option<Chosen>> {
+        let cache_key = (format.to_string(), scheme);
+        if let Some(found) = self.chosen.lock().unwrap().get(&cache_key) {
+            return Ok(found.clone());
+        }
         let named = self
-            .entries
+            .specs
             .iter()
-            .filter(|e| e.format.as_deref() == Some(format));
-        let general = self.entries.iter().filter(|e| e.format.is_none());
-        for entry in named.chain(general) {
-            let key = self.load(&entry.path)?;
-            let fits = matches!(
-                (&*key, scheme),
-                (Key::OpenPgp(_), Scheme::OpenPgp)
-                    | (Key::Rsa(_), Scheme::RsaSha256 | Scheme::RsaSha1)
-            );
-            if fits {
-                return Ok(Some((key, &entry.path)));
+            .filter(|s| s.format.as_deref() == Some(format));
+        let general = self.specs.iter().filter(|s| s.format.is_none());
+        let mut found = None;
+        for spec in named.chain(general) {
+            let request = self.request(spec, scheme, false);
+            if let Some(signer) = self
+                .registry
+                .choose_signer(&request, spec.signer.is_some())?
+            {
+                found = Some((signer, spec.key.clone()));
+                break;
             }
         }
-        Ok(None)
+        self.chosen.lock().unwrap().insert(cache_key, found.clone());
+        Ok(found)
     }
 
-    /// Check that a key exists for `format` and `scheme`, and say why not: no key, a key of another type, or a key that
-    /// cannot be read, for example because the passphrase is missing or wrong.
-    pub fn require(&self, format: &str, scheme: Scheme) -> Result<()> {
-        if self.find(format, scheme)?.is_some() {
+    /// The scheme a format needs, or `None` when pkgsmith does not sign it.
+    pub fn scheme_for(&self, format: &str) -> Option<Scheme> {
+        match self.registry.signing(format)? {
+            FormatSigning::Detached => Some(Scheme::OpenPgp),
+            FormatSigning::Embedded(scheme) => Some(scheme),
+            FormatSigning::None => None,
+        }
+    }
+
+    /// Check before any build starts that a key and a signer exist for `format`. The signer has opened the key by now, so
+    /// a missing file, a wrong key type or a wrong passphrase stops the run here.
+    pub fn require(&self, format: &str) -> Result<()> {
+        let Some(scheme) = self.scheme_for(format) else {
+            return Ok(());
+        };
+        if self.choose(format, scheme)?.is_some() {
             return Ok(());
         }
-        let wanted = match scheme {
-            Scheme::OpenPgp => "an armored OpenPGP secret key",
-            _ => "an RSA private key in PEM form",
-        };
-        let other = if self.has_key_for(format) {
-            " The key you gave has another type."
-        } else {
-            ""
-        };
-        bail!("{format} is signed with {scheme:?}. Give {wanted} with --sign-key.{other}")
-    }
-
-    /// Whether a key for this format exists at all, whatever its type.
-    pub fn has_key_for(&self, format: &str) -> bool {
-        self.entries
+        let installed: Vec<String> = self
+            .registry
+            .signers()
             .iter()
-            .any(|e| e.format.is_none() || e.format.as_deref() == Some(format))
-    }
-
-    /// An OpenPGP detached signature of `data`, as a binary packet or as ASCII armor.
-    pub fn detached(&self, format: &str, data: &[u8], armor: bool) -> Result<Vec<u8>> {
-        let signature = self.make(format, Scheme::OpenPgp, data)?;
-        if !armor {
-            return Ok(signature);
-        }
-        let parsed = DetachedSignature::from_bytes(signature.as_slice())?;
-        Ok(parsed.to_armored_bytes(Default::default())?)
-    }
-
-    fn make(&self, format: &str, scheme: Scheme, data: &[u8]) -> Result<Vec<u8>> {
-        let Some((key, path)) = self.find(format, scheme)? else {
-            bail!(
-                "no signing key for {format} can sign with {scheme:?}. {}",
-                match scheme {
-                    Scheme::OpenPgp => "Give an armored OpenPGP secret key",
-                    _ => "Give an RSA private key in PEM form",
-                }
-            );
-        };
-        match &*key {
-            Key::OpenPgp(key) => {
-                let password = Password::from(self.passphrase.clone().unwrap_or_default().as_str());
-                let signature = DetachedSignature::sign_binary_data(
-                    rand::rngs::OsRng,
-                    &key.primary_key,
-                    &password,
-                    HashAlgorithm::Sha256,
-                    data,
-                )
-                .map_err(|e| {
-                    let hint = if self.passphrase.is_none() {
-                        " If the key has a passphrase, give it with --sign-passphrase-file or PKGSMITH_SIGN_PASSPHRASE."
-                    } else {
-                        ""
-                    };
-                    anyhow!("cannot sign with {}: {e}.{hint}", path.display())
-                })?;
-                Ok(signature.to_bytes()?)
+            .filter(|(s, _)| s.schemes.contains(&scheme))
+            .map(|(s, _)| s.name.clone())
+            .collect();
+        bail!(
+            "{format} needs a {scheme:?} signature, but no signer takes the key you gave. Signers for it: {}. Give a key with --sign-key [{format}=][SIGNER:]KEY",
+            if installed.is_empty() {
+                "none installed".to_string()
+            } else {
+                installed.join(", ")
             }
-            Key::Rsa(key) => Ok(match scheme {
-                Scheme::RsaSha1 => SigningKey::<sha1_10::Sha1>::new((**key).clone())
-                    .sign(data)
-                    .to_vec(),
-                _ => SigningKey::<sha2_10::Sha256>::new((**key).clone())
-                    .sign(data)
-                    .to_vec(),
-            }),
+        )
+    }
+
+    fn sign_paths(
+        &self,
+        format: &str,
+        scheme: Scheme,
+        input: &Path,
+        output: &Path,
+        armor: bool,
+    ) -> Result<()> {
+        let (signer, key) = self
+            .choose(format, scheme)?
+            .ok_or_else(|| anyhow!("no signer takes the key for {format}"))?;
+        self.registry.run_signer(&SignRequest {
+            signer,
+            scheme,
+            key,
+            passphrase_file: self.passphrase_file.clone(),
+            input: input.to_path_buf(),
+            output: output.to_path_buf(),
+            armor,
+        })
+    }
+
+    /// Write the detached OpenPGP signature of `file` next to it, as `FILE.sig` or `FILE.asc`. Returns what was done,
+    /// for the summary line.
+    pub fn sign_detached(&self, format: &str, file: &Path, armor: bool) -> Result<&'static str> {
+        match self.registry.signing(format) {
+            Some(FormatSigning::Detached) => {
+                let mut output = file.as_os_str().to_owned();
+                output.push(if armor { ".asc" } else { ".sig" });
+                self.sign_paths(format, Scheme::OpenPgp, file, Path::new(&output), armor)?;
+                Ok(if armor {
+                    "signed, .asc"
+                } else {
+                    "signed, .sig"
+                })
+            }
+            Some(FormatSigning::Embedded(_)) => Ok("signed"),
+            _ => Ok("not signed: this format cannot be signed"),
         }
     }
 }
 
-impl Signer for Keys {
+impl Signer for Signing<'_> {
     fn can_sign(&self, format: &str, scheme: Scheme) -> bool {
-        matches!(self.find(format, scheme), Ok(Some(_)))
+        matches!(self.choose(format, scheme), Ok(Some(_)))
     }
 
     fn sign(&self, format: &str, scheme: Scheme, data: &[u8]) -> Result<Vec<u8>> {
-        self.make(format, scheme, data)
+        // The format plugin hands over bytes, the signer plugins read and write files. Keep the files in a private
+        // folder that is removed at once.
+        let dir = tempfile::tempdir().context("cannot make a folder for the signature")?;
+        let input = dir.path().join("data");
+        let output = dir.path().join("signature");
+        std::fs::write(&input, data)?;
+        self.sign_paths(format, scheme, &input, &output, false)?;
+        Ok(std::fs::read(&output)?)
     }
 
     fn key_name(&self, format: &str, scheme: Scheme) -> Option<String> {
-        let (_, path) = self.find(format, scheme).ok()??;
-        path.file_name().map(|n| n.to_string_lossy().into_owned())
+        let (_, key) = self.choose(format, scheme).ok()??;
+        Some(
+            Path::new(&key)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(key),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_prefix_counts_only_when_it_names_a_format_or_a_signer() {
+        let formats = names(&["rpm", "apk"]);
+        let signers = names(&["gpg", "rsa-pem"]);
+        let parse = |t| parse_spec(t, &formats, &signers);
+        assert_eq!(
+            parse("rpm=gpg:ABCD"),
+            Spec {
+                format: Some("rpm".into()),
+                signer: Some("gpg".into()),
+                key: "ABCD".into()
+            }
+        );
+        assert_eq!(parse("apk=key.pem").format.as_deref(), Some("apk"));
+        assert_eq!(parse("gpg:me@example.org").signer.as_deref(), Some("gpg"));
+        // Not names: the text is the key.
+        assert_eq!(parse("./a=b.pem").key, "./a=b.pem");
+        assert_eq!(parse("C:\\keys\\a.pem").key, "C:\\keys\\a.pem");
+        assert_eq!(parse("key.asc").signer, None);
     }
 }

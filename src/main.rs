@@ -8,9 +8,8 @@ use pkgsmith::package::{self, Options};
 use pkgsmith::plan;
 use pkgsmith::plugins::{self, Registry, Signer};
 use pkgsmith::runner::{Runner, build_key, lane};
-use pkgsmith::signing::Keys;
+use pkgsmith::signing::Signing;
 use pkgsmith::ui::{Mode, Ui};
-use pkgsmith_plugin::{Scheme, Signing};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -81,12 +80,12 @@ enum Command {
         /// Folder for the files a tracked build installs.
         #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
         work: PathBuf,
-        /// Sign the packages with this key: a file, or FORMAT=FILE for one format. Repeatable. An armored OpenPGP
-        /// secret key signs rpm and writes a detached signature for most other formats. An RSA key in PEM form
-        /// signs apk. Also PKGSMITH_SIGN_KEY, a list separated by `:`.
-        #[arg(long, value_name = "[FORMAT=]FILE")]
+        /// Sign the packages. `[FORMAT=][SIGNER:]KEY`: a key file, or for the gpg signer a key id. FORMAT limits the key
+        /// to one format and SIGNER names the signer plugin. Repeatable. Also PKGSMITH_SIGN_KEY, a list separated by
+        /// `;`. See `pkgsmith plugins` for the signers.
+        #[arg(long, value_name = "[FORMAT=][SIGNER:]KEY")]
         sign_key: Vec<String>,
-        /// A file that holds the passphrase of the signing key. Also PKGSMITH_SIGN_PASSPHRASE.
+        /// A file that holds the passphrase of the key. Also PKGSMITH_SIGN_PASSPHRASE_FILE.
         #[arg(long, value_name = "FILE")]
         sign_passphrase_file: Option<PathBuf>,
         /// Write detached signatures as ASCII armor in FILE.asc instead of binary in FILE.sig.
@@ -145,74 +144,24 @@ enum PluginsAction {
     },
 }
 
-/// The keys the user gave on the command line or in the environment.
-fn signing_keys(specs: Vec<String>, passphrase_file: Option<PathBuf>) -> Result<Keys> {
-    let specs = if specs.is_empty() {
-        std::env::var("PKGSMITH_SIGN_KEY")
-            .map(|list| {
-                list.split(':')
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-                    .collect()
-            })
-            .unwrap_or_default()
-    } else {
-        specs
-    };
-    let passphrase = match passphrase_file {
-        Some(file) => Some(
-            std::fs::read_to_string(&file)
-                .with_context(|| format!("cannot read {}", file.display()))?
-                .trim_end_matches(['\r', '\n'])
-                .to_string(),
-        ),
-        None => std::env::var("PKGSMITH_SIGN_PASSPHRASE").ok(),
-    };
-    Keys::new(&specs, passphrase)
-}
-
-/// Refuse to start a long build for a package that cannot be signed with the keys given. A format that cannot be
-/// signed at all is allowed, and `sign_file` says so when it is built.
-fn check_signable(registry: &Registry, keys: &Keys, items: &[plan::Item]) -> Result<()> {
-    let mut seen: Vec<&str> = Vec::new();
-    for item in items {
-        if seen.contains(&item.format.as_str()) {
-            continue;
-        }
-        seen.push(&item.format);
-        let needed = match registry.signing(&item.format) {
-            Some(Signing::Detached) => Scheme::OpenPgp,
-            Some(Signing::Embedded(scheme)) => scheme,
-            _ => continue,
-        };
-        keys.require(&item.format, needed)?;
+/// The signing setup from the command line, or from `PKGSMITH_SIGN_KEY` and `PKGSMITH_SIGN_PASSPHRASE_FILE`.
+fn signing_setup<'a>(
+    registry: &'a Registry,
+    mut keys: Vec<String>,
+    passphrase_file: Option<PathBuf>,
+) -> Result<Signing<'a>> {
+    if keys.is_empty()
+        && let Ok(list) = std::env::var("PKGSMITH_SIGN_KEY")
+    {
+        keys = list
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
     }
-    Ok(())
-}
-
-/// Sign a finished package the way its format wants. Returns what was done, for the summary.
-fn sign_file(
-    registry: &Registry,
-    keys: &Keys,
-    format: &str,
-    file: &Path,
-    armor: bool,
-) -> Result<&'static str> {
-    match registry.signing(format) {
-        Some(Signing::Detached) => {
-            let signature = keys.detached(format, &std::fs::read(file)?, armor)?;
-            let mut name = file.as_os_str().to_owned();
-            name.push(if armor { ".asc" } else { ".sig" });
-            std::fs::write(&name, signature)?;
-            Ok(if armor {
-                "signed, .asc"
-            } else {
-                "signed, .sig"
-            })
-        }
-        Some(Signing::Embedded(_)) => Ok("signed"),
-        _ => Ok("not signed: this format cannot be signed"),
-    }
+    let passphrase_file = passphrase_file
+        .or_else(|| std::env::var_os("PKGSMITH_SIGN_PASSPHRASE_FILE").map(PathBuf::from));
+    Signing::new(registry, &keys, passphrase_file)
 }
 
 fn default_jobs() -> usize {
@@ -676,10 +625,17 @@ fn run() -> Result<()> {
         } => {
             let scope = scope(&source.build_arg)?;
             let (manifest, items) = load(&source, &registry)?;
-            let keys = signing_keys(sign_key, sign_passphrase_file)?;
-            let signer: Option<&Keys> = (!keys.is_empty()).then_some(&keys);
-            if let Some(keys) = signer {
-                check_signable(&registry, keys, &items)?;
+            let signing = signing_setup(&registry, sign_key, sign_passphrase_file)?;
+            let signer: Option<&Signing> = (!signing.is_off()).then_some(&signing);
+            if let Some(signing) = signer {
+                // Every key is opened and every signer asked before the first container starts.
+                let mut seen: Vec<&str> = Vec::new();
+                for item in &items {
+                    if !seen.contains(&item.format.as_str()) {
+                        seen.push(&item.format);
+                        signing.require(&item.format)?;
+                    }
+                }
             }
             let mode = if quiet {
                 Mode::Quiet
@@ -702,8 +658,8 @@ fn run() -> Result<()> {
                     )
                     .and_then(|file| {
                         let signed = match signer {
-                            Some(keys) => {
-                                sign_file(&registry, keys, &item.format, &file, sign_armor)?
+                            Some(signing) => {
+                                signing.sign_detached(&item.format, &file, sign_armor)?
                             }
                             None => "",
                         };

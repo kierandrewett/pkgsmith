@@ -18,6 +18,7 @@ impl Plugin for Tar {
                 description: "A tar archive (.tar.xz, .tar.gz, .tar.zst, .tar.bz2)".into(),
                 signing: Signing::Detached,
             }],
+            ..Default::default()
         }
     }
 
