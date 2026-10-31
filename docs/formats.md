@@ -199,8 +199,8 @@ Scripts map to the pkg phases:
 
 ## xbps
 
-An xbps package is a tar with `props.plist`, `files.plist` and the files, plus an `INSTALL` and a `REMOVE` script. The
-revision in the file name comes from `release`, which must be a positive integer, and the version cannot hold `-` or `_`.
+An xbps package is a tar of the files with two property lists and two scripts. The revision in the file name comes from
+`release`, which must be a positive integer. The version cannot hold `-` or `_`.
 
 - A dependency without a version is written `name>=0`, because xbps refuses a bare name.
 - `pre_install` and `post_install` share one `INSTALL` script, and `pre_remove` and `post_remove` share one `REMOVE`.
