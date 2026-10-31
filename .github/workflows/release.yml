@@ -8,7 +8,8 @@
 #
 # Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
 #
-# Needs the secret CARGO_REGISTRY_TOKEN: a crates.io token that may publish new crates.
+# Publishing to crates.io needs the secret CARGO_REGISTRY_TOKEN: a crates.io token that may publish new crates. Without
+# the secret the crates.io job says so and does nothing, and the GitHub release is still made.
 name: release
 
 on:
@@ -82,21 +83,21 @@ jobs:
     name: crates.io
     needs: [packages]
     runs-on: ubuntu-24.04
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - name: Dry run
-        if: github.event_name != 'push'
-        run: cargo publish --dry-run --locked -p pkgsmith-plugin
-      - name: Publish pkgsmith-plugin
-        if: github.event_name == 'push'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked -p pkgsmith-plugin
-      - name: Publish pkgsmith
-        if: github.event_name == 'push'
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Publish pkgsmith-plugin and pkgsmith
         run: |
+          if [ "${GITHUB_EVENT_NAME}" != push ]; then
+            cargo publish --dry-run --locked -p pkgsmith-plugin
+            exit 0
+          fi
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "::warning::The secret CARGO_REGISTRY_TOKEN is not set, so nothing was published to crates.io."
+            exit 0
+          fi
+          cargo publish --locked -p pkgsmith-plugin
           # pkgsmith depends on the plugin crate that was just published. Wait until the index serves it.
           for attempt in $(seq 1 30); do
             if cargo publish --locked -p pkgsmith; then exit 0; fi
