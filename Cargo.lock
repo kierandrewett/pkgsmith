@@ -2167,6 +2167,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-slackware"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
 name = "pkgsmith-plugin-snap"
 version = "0.1.0"
 dependencies = [

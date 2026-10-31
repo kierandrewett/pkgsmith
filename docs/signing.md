@@ -15,8 +15,8 @@ How a package is signed depends on its format. Each format needs a key of one ty
 | `deb`, `ipk`, `archlinux`, `tar`, `zip` | A file next to the package, OpenPGP     | Armored OpenPGP secret key      |
 | `snap`, `oci`                       | Not signed by pkgsmith                      | None                            |
 
-A format that cannot be signed produces an unsigned package and the summary says so. Snap packages are signed by the
-Snap Store, and container images are signed with a tool such as cosign.
+A format that cannot be signed produces an unsigned package and the summary says so. pkgsmith does not sign snap
+packages or container images.
 
 ## Keys
 
