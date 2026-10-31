@@ -138,7 +138,16 @@ fn walk(src: &Path, dst: &str, content: &Content, out: &mut Vec<Entry>) -> Resul
 
 /// Resolve the manifest's `contents` for one format. Later entries replace earlier ones with the same path.
 pub fn resolve(manifest: &Manifest, format: &str) -> Result<Vec<Entry>> {
-    let mut found: BTreeMap<String, Entry> = BTreeMap::new();
+    resolve_with(manifest, format, Vec::new())
+}
+
+/// Like `resolve`, starting from the files a tracked build installed. The manifest's `contents` then add to them or
+/// replace them, for example to mark a file as configuration or to change its mode.
+pub fn resolve_with(manifest: &Manifest, format: &str, tracked: Vec<Entry>) -> Result<Vec<Entry>> {
+    let mut found: BTreeMap<String, Entry> = tracked
+        .into_iter()
+        .map(|entry| (entry.path.clone(), entry))
+        .collect();
     for content in &manifest.contents {
         if content
             .only

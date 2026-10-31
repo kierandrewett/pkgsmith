@@ -5,6 +5,7 @@
 //! installed system, so the build of the program itself stays outside this tool.
 
 pub mod archive;
+pub mod container;
 pub mod expand;
 pub mod expr;
 pub mod formats;
@@ -12,5 +13,7 @@ pub mod hash;
 pub mod manifest;
 pub mod package;
 pub mod plan;
+pub mod runner;
 pub mod tree;
+pub mod ui;
 pub mod version;

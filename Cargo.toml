@@ -7,15 +7,17 @@ edition = "2024"
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 flate2 = "1.1.10"
+futures-util = "0.3.34"
 glob = "0.3.4"
 md-5 = "0.11.0"
+podman-api = "0.11.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_yaml_ng = "0.10.0"
 sha1 = "0.11.0"
 sha2 = "0.11.1"
 tar = "0.4.46"
+tempfile = "3.27.0"
+terminal_size = "0.4.4"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
 xz2 = "0.1.7"
 zstd = "0.14.3"
-
-[dev-dependencies]
-tempfile = "3.27.0"

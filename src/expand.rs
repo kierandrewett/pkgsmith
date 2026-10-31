@@ -49,6 +49,15 @@ impl Scope {
     /// Replace every `${{ expression }}`, `${NAME}` and `${NAME:-default}`. A `${NAME}` that is unset and has no
     /// default is an error, so a typo cannot produce an empty path or version.
     pub fn expand(&self, text: &str) -> Result<String> {
+        self.expand_with(text, true)
+    }
+
+    /// Like `expand`, but leave `${NAME}` alone. Scripts use it: `${HOME}` in a script belongs to the shell.
+    pub fn expand_expressions(&self, text: &str) -> Result<String> {
+        self.expand_with(text, false)
+    }
+
+    fn expand_with(&self, text: &str, variables: bool) -> Result<String> {
         let mut out = String::with_capacity(text.len());
         let mut rest = text;
         while let Some(start) = rest.find("${") {
@@ -60,6 +69,11 @@ impl Scope {
                 };
                 out.push_str(&expr::eval(expression[..end].trim(), self)?.text());
                 rest = &expression[end + 2..];
+                continue;
+            }
+            if !variables {
+                out.push_str("${");
+                rest = after;
                 continue;
             }
             let Some(end) = after.find('}') else {

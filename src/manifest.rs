@@ -244,6 +244,16 @@ pub struct Manifest {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub matrix: Matrix,
+    /// The build environment: a container image. With an image, `build` runs inside it and every file the build
+    /// installs becomes part of the package.
+    pub image: Option<String>,
+    /// Runs once in the image before `build`, for example to install the build dependencies. Not tracked.
+    pub setup: Option<String>,
+    /// Runs in the image with the source folder mounted at `/src`. Whatever it writes outside `/src` is packaged.
+    pub build: Option<String>,
+    /// Paths (globs) the build installed that the package leaves out.
+    #[serde(default)]
+    pub exclude: Vec<String>,
     pub maintainer: Option<String>,
     pub homepage: Option<String>,
     pub license: Option<String>,
@@ -279,6 +289,10 @@ pub struct Manifest {
     /// The folder of the manifest. Relative `src` paths and script files resolve against it.
     #[serde(skip)]
     pub base: PathBuf,
+    /// The build context: the folder mounted at `/src` in a tracked build. The folder of the manifest unless the
+    /// command line names another.
+    #[serde(skip)]
+    pub context: PathBuf,
 }
 
 fn one() -> String {
@@ -322,6 +336,7 @@ impl Manifest {
         if manifest.base.as_os_str().is_empty() {
             manifest.base = PathBuf::from(".");
         }
+        manifest.context = manifest.base.clone();
         Ok(manifest)
     }
 
@@ -394,6 +409,12 @@ impl Manifest {
             contents.push(content);
         }
         bound.contents = contents;
+        if let Some(image) = &mut bound.image {
+            *image = context.expand(image)?;
+        }
+        for script in [&mut bound.setup, &mut bound.build].into_iter().flatten() {
+            *script = context.expand_expressions(script)?;
+        }
         bound.matrix = Matrix::default();
         bound.check()?;
         Ok(bound)

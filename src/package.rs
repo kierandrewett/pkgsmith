@@ -45,11 +45,21 @@ impl<'a> Package<'a> {
         format: &'a str,
         options: &'a Options,
     ) -> Result<Package<'a>> {
+        Package::with_tracked(manifest, format, options, Vec::new())
+    }
+
+    /// A package whose files start as what a tracked build installed (see `container`).
+    pub fn with_tracked(
+        manifest: &'a Manifest,
+        format: &'a str,
+        options: &'a Options,
+        tracked: Vec<Entry>,
+    ) -> Result<Package<'a>> {
         Ok(Package {
             manifest,
             format,
             effective: manifest.effective(format, options.distro.as_deref()),
-            entries: tree::resolve(manifest, format)
+            entries: tree::resolve_with(manifest, format, tracked)
                 .with_context(|| format!("cannot collect the files for {format}"))?,
             options,
         })
