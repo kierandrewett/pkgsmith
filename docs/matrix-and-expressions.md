@@ -29,8 +29,38 @@ combination of the axes (here 2 x 2 = 4), then applies `exclude`, then `include`
 | `image`  | The build image of the job. Replaces the top-level `image`                                   |
 | `setup`  | The setup script of the job. Replaces the top-level `setup`. A full script is allowed        |
 | `build`  | The build script of the job. Replaces the top-level `build`                                  |
+| `file`   | The name of the output file. A template. See below                                           |
 
-`setup` and `build` are scripts, so they are not exported as `MATRIX_` variables and are not shown in job names.
+`setup`, `build` and `file` are not exported as `MATRIX_` variables and are not shown in job names.
+
+### Naming the output file
+
+Every format picks a default file name, such as `hello-1.0.0-amd64.tar.xz`. `pkgsmith plan` shows it. A `file`
+template in a matrix entry replaces it.
+
+| Placeholder  | Value                                                            |
+| ------------ | ---------------------------------------------------------------- |
+| `{file}`     | The name the format picked                                       |
+| `{name}`, `{version}`, `{release}` | The package fields                         |
+| `{arch}`     | `amd64`, `arm64` or `all`                                        |
+| `{format}`, `{distro}` | The format and the distro of the job                   |
+
+```yaml
+matrix:
+  include:
+    - { format: tar, distro: fedora, file: "{name}_{version}.tar.bz2" }
+    - { format: rpm, distro: opensuse, file: "opensuse-{file}" }
+```
+
+The result must be a plain file name: not empty, not starting with a dot, and without `/`. The template names the whole
+file, so write the extension yourself, or keep it with `{file}`.
+
+Two jobs that would write the same file stop the build before it starts, because they run side by side. This happens by
+default when two distros make the same format, for example an rpm for Fedora and one for openSUSE. Give one of them a
+`file` template.
+
+Each job builds in a private folder and moves its file to the final name, so the folder `-o` receives only finished
+packages.
 
 Any other key is a variable. `${{ matrix.size }}` reads it, and a build script sees it as `MATRIX_SIZE`.
 

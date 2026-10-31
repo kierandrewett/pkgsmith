@@ -1,0 +1,6 @@
+# The graphical installers. They share the common details and add what only installers need.
+include: common.yaml
+
+matrix:
+  include:
+    - { format: tar, distro: any, file: "{name}-{version}.tar.xz" }

@@ -164,6 +164,46 @@ fn signing_setup<'a>(
     Signing::new(registry, &keys, passphrase_file)
 }
 
+/// The file name each item would write: the name the plugin picks, or the `file` template of the matrix entry.
+fn planned_name(
+    registry: &Registry,
+    manifest: &Manifest,
+    scope: &Scope,
+    output: &Path,
+    item: &plan::Item,
+) -> Result<String> {
+    let bound = manifest.bind(scope, &item.job, &item.format)?;
+    let outline = package::outline(
+        &bound,
+        &item.format,
+        &Options::new(output.to_path_buf(), item.job.distro().map(String::from)),
+    );
+    let name = registry.file_name(&outline)?;
+    package::output_name(&item.job, &outline, &name)
+}
+
+/// Two jobs that write the same file would overwrite each other while they run side by side. Stop before any build.
+fn check_unique_names(
+    registry: &Registry,
+    manifest: &Manifest,
+    scope: &Scope,
+    output: &Path,
+    items: &[plan::Item],
+) -> Result<()> {
+    let mut seen: std::collections::HashMap<String, &plan::Item> = std::collections::HashMap::new();
+    for item in items {
+        let name = planned_name(registry, manifest, scope, output, item)?;
+        if let Some(first) = seen.insert(name.clone(), item) {
+            bail!(
+                "{} and {} would both write {name}. Give one of the matrix entries a `file` template, for example `file: \"{{distro}}-{{file}}\"`",
+                first.label(),
+                item.label()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn default_jobs() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get().min(8))
@@ -346,13 +386,17 @@ fn plan_table(
                     bound.arch.clone(),
                     bound.image.clone().unwrap_or_default(),
                     letter,
-                    registry
-                        .file_name(&package::outline(
+                    {
+                        let outline = package::outline(
                             bound,
                             &item.format,
                             &Options::new(PathBuf::from("."), item.job.distro().map(String::from)),
-                        ))
-                        .map_err(|e| format!("{e:#}")),
+                        );
+                        registry
+                            .file_name(&outline)
+                            .and_then(|name| package::output_name(&item.job, &outline, &name))
+                            .map_err(|e| format!("{e:#}"))
+                    },
                 )
             }
             Err(error) => (
@@ -625,6 +669,7 @@ fn run() -> Result<()> {
         } => {
             let scope = scope(&source.build_arg)?;
             let (manifest, items) = load(&source, &registry)?;
+            check_unique_names(&registry, &manifest, &scope, &output, &items)?;
             let signing = signing_setup(&registry, sign_key, sign_passphrase_file)?;
             let signer: Option<&Signing> = (!signing.is_off()).then_some(&signing);
             if let Some(signing) = signer {
@@ -644,9 +689,18 @@ fn run() -> Result<()> {
             };
             let ui = Ui::new(mode);
             let runner = Runner::new(work, ui.clone(), !no_cache);
+            let job_number = AtomicUsize::new(0);
             let (written, errors) = run_all(&items, jobs, |item| {
                 let bound = manifest.bind(&scope, &item.job, &item.format)?;
-                let options = Options::new(output.clone(), item.job.distro().map(String::from));
+                // Each job builds in a private folder inside the output folder. Two jobs can make a file of the same default
+                // name, and the `file` template gives them different final names. The destinations were checked to be
+                // different before the first build started.
+                let private = output.join(format!(
+                    ".pkgsmith-{}-{}",
+                    std::process::id(),
+                    job_number.fetch_add(1, Ordering::Relaxed)
+                ));
+                let options = Options::new(private.clone(), item.job.distro().map(String::from));
                 let tracked = runner.tracked(&bound, &item.job)?;
                 let package = package::assemble(&bound, &item.format, &options, tracked)?;
                 let step = ui.step(&lane(&bound, &item.job), format!("package {}", item.format));
@@ -657,6 +711,25 @@ fn run() -> Result<()> {
                         signer.map(|k| k as &dyn Signer),
                     )
                     .and_then(|file| {
+                        // A `file` template in the matrix entry renames the result before it is signed.
+                        let name = package::output_name(
+                            &item.job,
+                            &package,
+                            &file
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        )?;
+                        let destination = output.join(name);
+                        std::fs::rename(&file, &destination).with_context(|| {
+                            format!(
+                                "cannot move {} to {}",
+                                file.display(),
+                                destination.display()
+                            )
+                        })?;
+                        let _ = std::fs::remove_dir_all(&private);
+                        let file = destination;
                         let signed = match signer {
                             Some(signing) => {
                                 signing.sign_detached(&item.format, &file, sign_armor)?
@@ -665,6 +738,9 @@ fn run() -> Result<()> {
                         };
                         Ok((file, signed))
                     });
+                if built.is_err() {
+                    let _ = std::fs::remove_dir_all(&private);
+                }
                 match built {
                     Ok((file, signed)) => {
                         step.log(&file.display().to_string());

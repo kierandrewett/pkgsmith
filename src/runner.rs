@@ -36,7 +36,7 @@ pub fn build_env(manifest: &Manifest, job: &Job) -> BTreeMap<String, String> {
         job.distro().unwrap_or_default().to_string(),
     );
     for (key, value) in &job.values {
-        if !["format", "setup", "build"].contains(&key.as_str()) {
+        if !["format", "setup", "build", "file"].contains(&key.as_str()) {
             let key: String = key
                 .chars()
                 .map(|c| {

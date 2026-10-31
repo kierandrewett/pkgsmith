@@ -1,0 +1,10 @@
+# The details every package shares. Other manifests include this file, so the name, the version, the licence and the
+# files are written once.
+name: hello
+version: 1.0.0
+description: A small program
+maintainer: Example Maintainer <maintainer@example.com>
+homepage: https://example.com/hello
+license: MIT
+contents:
+  - { src: ../demo/hello.c, dst: /usr/share/hello/hello.c }

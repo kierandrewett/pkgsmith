@@ -126,7 +126,7 @@ impl Job {
         }
         self.values
             .iter()
-            .filter(|(k, _)| !["setup", "build"].contains(&k.as_str()))
+            .filter(|(k, _)| !["setup", "build", "file"].contains(&k.as_str()))
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(", ")
@@ -279,12 +279,100 @@ fn octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::E
         })
 }
 
+/// How deep `include:` may nest. A chain this long is a mistake, and the limit keeps a loop from running away.
+const MAX_INCLUDE_DEPTH: usize = 8;
+
+/// Read a manifest file and the files it includes, merged into one YAML value.
+///
+/// `include:` is a top-level key that holds a file name or a list of file names, relative to the folder of the file
+/// that names them. Included files are merged in order, then the including file is merged on top, so the file that
+/// includes wins. Merging works key by key: two maps merge, and for anything else (text, numbers, lists) the later value
+/// replaces the earlier one. A list is replaced as a whole, it is not joined.
+fn load_merged(path: &Path, stack: &mut Vec<PathBuf>) -> Result<serde_yaml_ng::Value> {
+    use serde_yaml_ng::Value;
+    let canonical =
+        std::fs::canonicalize(path).with_context(|| format!("cannot read {}", path.display()))?;
+    if stack.contains(&canonical) {
+        let chain: Vec<String> = stack
+            .iter()
+            .chain([&canonical])
+            .map(|p| p.display().to_string())
+            .collect();
+        bail!("include loop: {}", chain.join(" -> "));
+    }
+    if stack.len() >= MAX_INCLUDE_DEPTH {
+        bail!(
+            "include: nested more than {MAX_INCLUDE_DEPTH} files deep at {}",
+            path.display()
+        );
+    }
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let mut own: Value = serde_yaml_ng::from_str(&text)
+        .with_context(|| format!("{} is not valid YAML", path.display()))?;
+    let Some(map) = own.as_mapping_mut() else {
+        bail!("{} must hold a map of keys", path.display());
+    };
+    let included = map.remove("include");
+    let names: Vec<String> = match included {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::String(name)) => vec![name],
+        Some(Value::Sequence(items)) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::String(name) => Ok(name),
+                other => bail!(
+                    "include: in {} has {other:?}; list file names",
+                    path.display()
+                ),
+            })
+            .collect::<Result<_>>()?,
+        Some(other) => bail!(
+            "include: in {} must be a file name or a list of them, not {other:?}",
+            path.display()
+        ),
+    };
+    let folder = path.parent().unwrap_or(Path::new("."));
+    stack.push(canonical);
+    let mut merged = Value::Mapping(Default::default());
+    for name in names {
+        let file = folder.join(&name);
+        let part = load_merged(&file, stack)
+            .with_context(|| format!("included from {}", path.display()))?;
+        merge(&mut merged, part);
+    }
+    stack.pop();
+    merge(&mut merged, own);
+    Ok(merged)
+}
+
+/// Merge `over` into `base`: maps merge key by key, every other value replaces.
+fn merge(base: &mut serde_yaml_ng::Value, over: serde_yaml_ng::Value) {
+    use serde_yaml_ng::Value;
+    match (base, over) {
+        (Value::Mapping(base), Value::Mapping(over)) => {
+            for (key, value) in over {
+                match base.get_mut(&key) {
+                    Some(existing) => merge(existing, value),
+                    None => {
+                        base.insert(key, value);
+                    }
+                }
+            }
+        }
+        (base, over) => *base = over,
+    }
+}
+
 impl Manifest {
-    /// Read a manifest without expanding anything. `jobs` and `bind` do the rest.
+    /// Read a manifest without expanding anything. `jobs` and `bind` do the rest. Files named by `include:` are read
+    /// first and merged underneath: see [`load_merged`].
     pub fn parse(path: &Path) -> Result<Manifest> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
-        let mut manifest: Manifest = serde_yaml_ng::from_str(&text)
+        let merged = load_merged(path, &mut Vec::new())?;
+        // Through text and back: reading a YAML value directly is stricter than reading text, for example it will not turn the
+        // number 1 into the text "1" for `release: 1`.
+        let merged = serde_yaml_ng::to_string(&merged)?;
+        let mut manifest: Manifest = serde_yaml_ng::from_str(&merged)
             .with_context(|| format!("{} is not a valid manifest", path.display()))?;
         manifest.base = path.parent().map(Path::to_path_buf).unwrap_or_default();
         if manifest.base.as_os_str().is_empty() {

@@ -1,6 +1,6 @@
 //! A package as a plugin sees it: the manifest of one job and one format turned into a [`pkgsmith_plugin::Package`].
 
-use crate::manifest::Manifest;
+use crate::manifest::{Job, Manifest};
 use crate::tree;
 use anyhow::{Context, Result};
 use pkgsmith_plugin::{Entry, Package, Scripts};
@@ -102,4 +102,87 @@ pub fn assemble(
     package.entries = tree::resolve_with(manifest, format, tracked)
         .with_context(|| format!("cannot collect the files for {format}"))?;
     Ok(package)
+}
+
+/// The name of the output file. A matrix entry may set `file`, a template that replaces the name the plugin picked.
+/// `{file}` is the name the plugin picked. `{name}`, `{version}`, `{release}`, `{arch}`, `{format}` and `{distro}` are
+/// the fields of the package. The result is a file name: no folder, not empty, not hidden.
+pub fn output_name(job: &Job, package: &Package, default: &str) -> Result<String> {
+    let Some(template) = job.values.get("file") else {
+        return Ok(default.to_string());
+    };
+    let mut name = String::new();
+    let mut rest = template.as_str();
+    while let Some(open) = rest.find('{') {
+        name.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            anyhow::bail!("file {template:?} has a `{{` without a `}}`");
+        };
+        name.push_str(match &after[..close] {
+            "file" => default,
+            "name" => &package.name,
+            "version" => &package.version,
+            "release" => &package.release,
+            "arch" => &package.arch,
+            "format" => &package.format,
+            "distro" => package.distro.as_deref().unwrap_or(""),
+            other => anyhow::bail!(
+                "file {template:?}: unknown placeholder {{{other}}}; use file, name, version, release, arch, format or distro"
+            ),
+        });
+        rest = &after[close + 1..];
+    }
+    name.push_str(rest);
+    if name.is_empty() || name.starts_with('.') || name.contains('/') || name.contains('\\') {
+        anyhow::bail!("file {template:?} gives {name:?}, which is not a plain file name");
+    }
+    Ok(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(file: &str) -> Job {
+        Job {
+            values: [("file".to_string(), file.to_string())].into(),
+        }
+    }
+
+    fn package() -> Package {
+        Package {
+            name: "hi".into(),
+            version: "1.0.0".into(),
+            release: "1".into(),
+            arch: "amd64".into(),
+            format: "tar".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_template_replaces_the_name_and_can_keep_the_default() {
+        let p = package();
+        assert_eq!(
+            output_name(&Job::default(), &p, "hi.tar.xz").unwrap(),
+            "hi.tar.xz"
+        );
+        assert_eq!(
+            output_name(&job("{name}_{version}.tar.bz2"), &p, "x").unwrap(),
+            "hi_1.0.0.tar.bz2"
+        );
+        assert_eq!(
+            output_name(&job("release-{file}"), &p, "hi.tar.xz").unwrap(),
+            "release-hi.tar.xz"
+        );
+    }
+
+    #[test]
+    fn a_template_that_is_not_a_file_name_is_refused() {
+        let p = package();
+        for bad in ["../x", "a/b", ".hidden", "{nope}", "{name", ""] {
+            assert!(output_name(&job(bad), &p, "x").is_err(), "{bad}");
+        }
+    }
 }

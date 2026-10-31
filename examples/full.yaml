@@ -60,12 +60,14 @@ matrix:
   # include: add keys to the jobs an entry matches. An entry matches a job when every key of the entry that is also an
   # axis has the job's value. An entry that matches no job becomes a new job.
   # An entry may carry `image`, `setup` and `build`. They replace the top-level ones of the jobs it matches, so each
-  # distro names the image it builds in and the setup that image needs. `format` fixes the format of those jobs.
+  # distro names the image it builds in and the setup that image needs. `format` fixes the format of those jobs. `file`
+  # `file` names the output file: `{file}` is the name the format picked, so two distros that make the same format do not
+  # overwrite each other.
   include:
     - { distro: fedora, format: rpm, image: "fedora:43", setup: dnf -y install gcc make }
-    - { distro: opensuse, format: rpm, image: "registry.opensuse.org/opensuse/tumbleweed", setup: zypper -n install gcc make }
+    - { distro: opensuse, format: rpm, file: "opensuse-{file}", image: "registry.opensuse.org/opensuse/tumbleweed", setup: zypper -n install gcc make }
     - { distro: debian, format: deb, image: "debian:13", setup: apt-get update -qq && apt-get install -y gcc make }
-    - { distro: ubuntu, format: deb, image: "ubuntu:24.04", setup: apt-get update -qq && apt-get install -y gcc make }
+    - { distro: ubuntu, format: deb, file: "ubuntu-{file}", image: "ubuntu:24.04", setup: apt-get update -qq && apt-get install -y gcc make }
     - { distro: arch, format: archlinux, image: "archlinux:base", setup: pacman -Sy --noconfirm gcc make }
     - { distro: alpine, format: apk, image: "alpine:3.22", setup: apk add --no-cache gcc make musl-dev }
 

@@ -30,6 +30,7 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 | `build`   | script | Runs in the image with the build context at `/src`. Files it installs outside `/src` are packaged |
 | `exclude` | list   | Paths the package leaves out. Prefixes or globs, for example `/usr/share/doc/**`              |
 | `matrix`  | map    | Axes, `include` and `exclude`. See [matrix and expressions](matrix-and-expressions.md)        |
+| `include` | list   | Other manifest files to merge underneath this one. See [including other files](#including-other-files) |
 
 `image` needs `build`. A manifest without `image` does not run anything. It packages the files that `contents` names,
 read from the folder of the manifest.
@@ -94,6 +95,36 @@ tar:
   compression: zstd
   top_folder: true
 ```
+
+## Including other files
+
+`include` pulls other manifests into this one, so the details every package shares are written once. It is useful when
+several manifests describe the same program, for example one per kind of installer.
+
+```yaml
+# pkgsmith.yaml
+include: [common.yaml, installers.yaml]
+description: A small program, as a release archive
+```
+
+`include` is a file name or a list of file names. A name is relative to the folder of the file that holds it. The files
+can include other files, up to eight levels deep. A loop, a missing file or a value that is not a file name stops the
+command with the path of each file on the way.
+
+The files are merged in order, and then the file that holds the `include` is merged on top. So the including file wins.
+
+| Value kind                 | What a later file does to an earlier one                      |
+| -------------------------- | ------------------------------------------------------------- |
+| A map, such as `tar:`      | Merges key by key. Keys that only the earlier file has stay   |
+| Text, a number or a flag   | Replaces it                                                   |
+| A list, such as `contents:` or `depends:` | Replaces the whole list. Lists are not joined  |
+
+A list is replaced and not joined, because a joined list cannot remove an entry. To add to a list, repeat the shared
+entries in the including file, or keep the shared part in one included file and the rest in another.
+
+Paths inside the manifest, such as `src` of a `contents` entry and script file names, are relative to the folder of the
+manifest that you build, not to the included file. [examples/include](../examples/include) shows three files that
+include each other.
 
 ## A complete example
 
