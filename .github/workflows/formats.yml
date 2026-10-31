@@ -1,0 +1,105 @@
+# The format test suite. It builds a package in every format and installs it with the real tool of that format, in the
+# newest release of each distro (scripts/verify-formats.sh pulls the rolling images on every run). It runs every day,
+# because a new release of Fedora, Debian, Arch, Alpine, Slackware or Void can break a package that worked yesterday.
+#
+# A failure opens a GitHub issue that is assigned to the maintainer and holds the log. While that issue is open, a new
+# failure adds a comment to it and does not open a second one. The issue closes itself when a run passes again.
+name: formats
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "crates/**"
+      - "scripts/verify-formats.sh"
+      - ".github/workflows/formats.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ISSUE_LABEL: format-regression
+  ISSUE_ASSIGNEE: kierandrewett
+
+jobs:
+  formats:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pkgsmith and the plugins
+        run: cargo build --workspace --locked
+
+      - name: Fetch an AppImage runtime
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/runtime-x86_64" \
+            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          chmod +x "$RUNNER_TEMP/runtime-x86_64"
+          echo "PKGSMITH_APPIMAGE_RUNTIME=$RUNNER_TEMP/runtime-x86_64" >> "$GITHUB_ENV"
+
+      - name: Run the format tests
+        id: suite
+        run: |
+          set -o pipefail
+          {
+            scripts/verify-formats.sh target/debug/pkgsmith
+            echo
+            scripts/verify-signing.sh target/debug/pkgsmith
+          } 2>&1 | tee "$RUNNER_TEMP/summary.txt"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-formats-log
+          path: verify-formats.log
+          if-no-files-found: warn
+
+      - name: Open or update the issue on a failure
+        if: failure() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          failed="$(grep -E '^(FAIL|[0-9]+ check)' "$RUNNER_TEMP/summary.txt" || true)"
+          images="$(grep -E '^image ' "$RUNNER_TEMP/summary.txt" || true)"
+          [ -n "$failed" ] || failed="The suite stopped before it printed a result. See the log of the run."
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          {
+            echo "The scheduled format tests failed: $run"
+            echo
+            echo "Failed checks:"
+            echo '```'
+            echo "$failed"
+            echo '```'
+            echo
+            echo "Images that were tested (the newest release of each):"
+            echo '```'
+            echo "$images"
+            echo '```'
+            echo
+            echo "The full log is the artifact \`verify-formats-log\` of the run."
+            echo "Reproduce with \`scripts/verify-formats.sh\`. It pulls the newest images on every run."
+          } > "$RUNNER_TEMP/body.md"
+          gh label create "$ISSUE_LABEL" --color B60205 --description "A format test failed on a newer distro release" 2>/dev/null || true
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --title "Format tests failed on $(date -u +%F)" --label "$ISSUE_LABEL" \
+              --assignee "$ISSUE_ASSIGNEE" --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Close the issue when the suite passes again
+        if: success() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          for number in $(gh issue list --label "$ISSUE_LABEL" --state open --json number --jq '.[].number'); do
+            gh issue close "$number" --comment "The format tests pass again: $run"
+          done

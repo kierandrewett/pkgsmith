@@ -458,8 +458,14 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
     let (mut file_flags, mut users, mut groups) = (vec![], vec![], vec![]);
     let (mut dir_indexes, mut basenames, mut dirnames) = (vec![], vec![], Vec::<String>::new());
     for entry in entries {
+        // A symbolic link has the size of its target text, as `lstat` reports it, and the payload carries that text. rpm
+        // compares the two while it unpacks, so a size of 0 makes the payload unreadable ("cpio: Bad magic").
+        let size = match &entry.data {
+            Data::Symlink { target } => target.len() as u64,
+            _ => entry.size(),
+        };
         sizes.push(
-            u32::try_from(entry.size())
+            u32::try_from(size)
                 .map_err(|_| anyhow::anyhow!("{} is larger than 4 GiB", entry.path))?,
         );
         modes.push(file_mode(entry) as u16);

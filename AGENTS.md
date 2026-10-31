@@ -37,16 +37,26 @@ Update the documentation in the same change as the code. A change is not finishe
 
 ## Verify with the real tool
 
-A format is not done until the real package manager or tool of that format accepts the package. Build the package, then
-install or inspect it with that tool, usually in a container. Examples that exist in this repository:
+A format is not done until the real package manager or tool of that format accepts the package. The test suite does this:
 
-- rpm: `rpm -Kv` and `rpm -i` in Fedora. deb: `dpkg -i` and `dpkg -V` in Debian.
-- Arch: `pacman -U` and `pacman -Qkk`. apk: `apk add` in Alpine.
-- Slackware: `installpkg`, `upgradepkg` and `removepkg` in the Slackware image.
-- OCI: `podman load` and `podman run`.
+```sh
+cargo build --workspace
+scripts/verify-formats.sh target/debug/pkgsmith           # every format
+scripts/verify-formats.sh target/debug/pkgsmith rpm deb   # some formats
+scripts/verify-signing.sh target/debug/pkgsmith           # signatures
+```
 
-Say in the commit message and in the docs what was checked and what was not. If the real tool cannot run here (snap needs
-snapd, FreeBSD needs FreeBSD), say that plainly. Never claim a check that did not run.
+Each script builds a small package, installs or inspects it with the tool of the format in Podman, and prints `ok`,
+`FAIL` or `skip` for every check. A run writes `verify-formats.log` with the digest of every image.
+
+- The suite pulls the newest release of every distro image on each run. Do not pin an image in the script: the suite is
+  there to catch what a new release breaks. Use `IMAGE_FEDORA=fedora:43` and the like to reproduce one fixed release.
+- A new format plugin gets its checks in `scripts/verify-formats.sh` in the same change. Build, install, run, remove, and
+  check the package manager's own verification (`rpm -V`, `dpkg -V`, `pacman -Qkk`).
+- Say which checks could not run here (snap needs snapd, FreeBSD needs FreeBSD) in the commit and in the docs. Never claim
+  a check that did not run.
+- `.github/workflows/formats.yml` runs both scripts every day. A failure opens a GitHub issue with the label
+  `format-regression`, assigned to the maintainer, and later failures comment on it. A passing run closes it.
 
 ## Build and test
 

@@ -5,10 +5,13 @@
 #
 #   scripts/verify-signing.sh [PATH-TO-pkgsmith]
 #
-# It needs gpg, openssl, podman and the images fedora:43 and alpine:3.22. pkgsmith and its plugins must sit together, as
+# It needs gpg, openssl and podman. Like verify-formats.sh it installs into the newest Fedora and Alpine on every run, so
+# a new release that breaks a signature is found. Set IMAGE_FEDORA or IMAGE_ALPINE to test one fixed release. pkgsmith and its plugins must sit together, as
 # `cargo build --workspace` leaves them. Every key is made fresh in a temporary folder, with a private GNUPGHOME.
 set -euo pipefail
 
+IMAGE_FEDORA="${IMAGE_FEDORA:-registry.fedoraproject.org/fedora:latest}"
+IMAGE_ALPINE="${IMAGE_ALPINE:-docker.io/library/alpine:latest}"
 PKGSMITH="${1:-target/debug/pkgsmith}"
 PKGSMITH="$(realpath "$PKGSMITH")"
 WORK="$(mktemp -d)"
@@ -95,7 +98,7 @@ d = bytearray(open('tampered.rpm', 'rb').read()); d[-5] ^= 0xFF; open('tampered.
 PY
 cp plain.pub.asc out-rpm/
 cp tampered.rpm out-rpm/
-check "rpm -Kv: NOKEY before the import, OK after, BAD when changed" podman run --rm -v "$PWD/out-rpm:/p:ro,z" fedora:43 sh -ec '
+check "rpm -Kv: NOKEY before the import, OK after, BAD when changed" podman run --rm --pull=always -v "$PWD/out-rpm:/p:ro,z" "$IMAGE_FEDORA" sh -ec '
     rpm -Kv /p/hi-1.0.0-1.x86_64.rpm | grep -q "NOKEY"
     rpm --import /p/plain.pub.asc
     out=$(rpm -Kv /p/hi-1.0.0-1.x86_64.rpm)
@@ -105,7 +108,7 @@ check "rpm -Kv: NOKEY before the import, OK after, BAD when changed" podman run 
     rpm -Kv /p/tampered.rpm | grep -q "BAD"
     rpm -i /p/hi-1.0.0-1.x86_64.rpm && hi | grep -q signed-hi'
 cp plain.pub.asc out-rpm-gpg/
-check "rpm made through gpg verifies" podman run --rm -v "$PWD/out-rpm-gpg:/p:ro,z" fedora:43 sh -ec '
+check "rpm made through gpg verifies" podman run --rm --pull=always -v "$PWD/out-rpm-gpg:/p:ro,z" "$IMAGE_FEDORA" sh -ec '
     rpm --import /p/plain.pub.asc
     rpm -Kv /p/hi-1.0.0-1.x86_64.rpm | grep -q "signature.*: OK"'
 
@@ -113,7 +116,7 @@ echo "== apk, embedded RSA signature, checked with apk in Alpine (no --allow-unt
 check "build the apk" build apk out-apk --sign-key release.rsa
 check "build the apk from an encrypted key" build apk out-apk-enc --sign-key locked.rsa --sign-passphrase-file pw-s3cret
 cp release.rsa.pub out-apk/
-check "apk: UNTRUSTED without the key, installs with it" podman run --rm -v "$PWD/out-apk:/p:ro,z" alpine:3.22 sh -ec '
+check "apk: UNTRUSTED without the key, installs with it" podman run --rm --pull=always -v "$PWD/out-apk:/p:ro,z" "$IMAGE_ALPINE" sh -ec '
     if apk add --no-cache --no-network /p/hi-1.0.0-r1.apk 2>&1 | grep -q "UNTRUSTED"; then :; else echo "expected UNTRUSTED"; exit 1; fi
     cp /p/release.rsa.pub /etc/apk/keys/release.rsa.pub
     apk add --no-cache --no-network /p/hi-1.0.0-r1.apk
