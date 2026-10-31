@@ -1,93 +1,114 @@
 # pkgsmith
 
-pkgsmith builds distribution packages from one manifest per package. The manifest names the package, the files, the
-install scripts and the dependencies. The same file produces every format.
+pkgsmith builds distribution packages from one manifest. You write the package name, the files, the install scripts
+and the dependencies once. pkgsmith builds your program inside a container for each distro and writes a `.rpm`,
+`.deb`, `.pkg.tar.zst`, `.apk`, `.ipk`, `.tar.xz` or `.zip`.
 
-It works like [nFPM](https://nfpm.goreleaser.com/), with a manifest that behaves like a GitHub Actions workflow: a
-`matrix` runs the build once per combination, and `${{ }}` expressions and `if:` see the combination.
+![pkgsmith builds one package for Fedora, Debian, Arch and Alpine in a single run](docs/media/demo.svg)
 
-| Format      | File                       | Status      |
-| ----------- | -------------------------- | ----------- |
-| `tar`       | `.tar.xz`, `.gz`, `.zst`   | works       |
-| `deb`       | `.deb`                     | works       |
-| `archlinux` | `.pkg.tar.zst`             | works       |
-| `ipk`       | `.ipk` (OpenWrt)           | works       |
-| `rpm`       | `.rpm`                     | works       |
-| `apk`       | `.apk` (Alpine)            | works       |
-| `snap`      | `.snap`                    | planned     |
-| `flatpak`   | `.flatpak`                 | planned     |
-| `nix`       | Nix expression             | planned     |
+The recording shows `examples/demo`: a manifest, a Makefile and a C file. One `pkgsmith build` makes four containers
+(Fedora, Debian, Arch, Alpine), runs `make install` in each, and writes five packages. The cast is in
+[docs/media/demo.cast](docs/media/demo.cast). Play it with `asciinema play docs/media/demo.cast`.
 
-## Use
+The manifest works like a GitHub Actions workflow. A `matrix` runs the build once for each combination, and
+`${{ }}` expressions and `if:` see that combination.
+
+## Quick start
+
+You need [Podman](https://podman.io/) running (the user socket is enough) and a Rust toolchain to build pkgsmith.
 
 ```sh
-pkgsmith plan  package.yaml                       # what would be built
-pkgsmith build package.yaml --set STAGE=/path/to/stage --set VERSION=0.1.0 -o out
-pkgsmith build package.yaml --job arch=arm64 --format deb -o out
-pkgsmith check package.yaml --format deb          # the files one build would package
-pkgsmith formats
+cargo install --path .
+cd examples/demo
+pkgsmith build        # packages go to ./dist
 ```
 
-pkgsmith does not build your program. It packages a staged prefix, a folder laid out like the installed system
-(`usr/bin/...`), for example the `DESTDIR` of `make install`.
-
-## The manifest
-
-See [examples/bingux-config.yaml](examples/bingux-config.yaml).
-
-| Key                                     | Meaning                                                                                  |
-| --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `name`, `version`, `release`, `arch`    | Package identity. `version` is `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-prerelease`      |
-| `description`                           | First line is the summary, the rest is the long text                                     |
-| `maintainer`, `homepage`, `license`     | Metadata                                                                                 |
-| `depends`, `recommends`, `suggests`, `conflicts`, `replaces`, `provides` | Lists of package names                                  |
-| `contents`                              | Files, see below                                                                         |
-| `scripts`                               | `pre_install`, `post_install`, `pre_remove`, `post_remove`. Inline text, or a file name  |
-| `overrides`                             | Lists and scripts per format (`deb`) or per distro (`fedora`). A distro wins             |
-| `matrix`                                | Axes, `include` and `exclude`, like `strategy.matrix`                                    |
-| `env`                                   | Defaults for `${NAME}` and `${{ env.NAME }}`                                             |
-
-`contents` entries have a `dst` (absolute) and, depending on `type`, a `src`:
-
-| `type`             | Meaning                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `file` (default)   | One file, or the files a glob matches. `dst` is a folder for a glob or when it ends `/` |
-| `tree`             | A folder copied recursively, including the folder and every folder below it             |
-| `dir`              | An empty folder the package owns                                                        |
-| `symlink`          | A symbolic link. `src` is the target as it reads on the installed system                |
-| `config`           | A file the package manager keeps when the user changed it                               |
-| `ghost`            | A file the package owns but does not carry                                              |
-
-An entry may also set `mode` (`"0755"`), `owner`, `group`, `only: [deb, ipk]` and `if: <expression>`.
-
-### Matrix and expressions
-
-The axes `format`, `arch` and `distro` steer the build. Any other axis is a variable.
+`examples/demo/pkgsmith.yaml`:
 
 ```yaml
+name: hello
+version: 1.0.0
+description: A tracked-build demo
+maintainer: Kieran Drewett <kieran@drewett.dev>
+license: MIT
+
 matrix:
-  arch: [amd64, arm64]
-  format: [deb, archlinux]
-  exclude:
-    - { format: archlinux, arch: arm64 }
-contents:
-  - src: ${STAGE}-${{ matrix.arch }}/usr/bin/tool
-    dst: /usr/bin/tool
-  - src: tool.conf
-    dst: /etc/tool.conf
-    type: config
-    if: format == 'deb'
+  include:
+    - { distro: fedora, image: "fedora:43", format: rpm }
+    - { distro: debian, image: "debian:13", format: deb }
+    - { distro: debian, image: "debian:13", format: tar }
+    - { distro: arch, image: "archlinux:base", format: archlinux }
+    - { distro: alpine, image: "alpine:3.22", format: apk }
+
+image: ${{ matrix.image }}
+setup: |                    # runs once per image, and the result is cached
+  . /etc/os-release
+  case "$ID" in
+    fedora) dnf -y install gcc make ;;
+    debian) apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make ;;
+    arch)   pacman -Sy --noconfirm gcc make ;;
+    alpine) apk add --no-cache gcc make musl-dev ;;
+  esac
+build: |                    # pkgsmith records the files this installs and packages them
+  make
+  make install PREFIX=/usr
 ```
 
-Expressions support `matrix.NAME`, `env.NAME`, `format`, `distro`, `arch`, strings, numbers, `true`, `false`, `==`,
-`!=`, `&&`, `||`, `!`, parentheses, and `contains`, `startsWith`, `endsWith`, `format`, `lower` and `upper`. `==` ignores
-case. `&&` and `||` return a value, so `${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}` works.
+There is no `contents` list. pkgsmith watches what `make install` writes and packages that. To choose the files
+yourself, see [docs/contents.md](docs/contents.md). More in [docs/getting-started.md](docs/getting-started.md).
 
-### Versions
+## Commands
 
-Write one version. pkgsmith spells it for each format so that a nightly sorts after the last release and before the
-next one: `0.1.13-nightly.20261031.142.gabc1234` becomes `0.1.13~nightly.20261031.142.gabc1234` for deb,
-`0.1.13nightly20261031.142` for Arch and `0.1.13_pre20261031142` for apk.
+```sh
+pkgsmith plan                           # a table of what would be built, no containers started
+pkgsmith plan --json                    # the same for scripts
+pkgsmith build                          # build everything
+pkgsmith build -j 4                     # four builds at the same time
+pkgsmith build --format deb --job arch=arm64
+pkgsmith build --build-arg VERSION=0.4.2 -o out
+pkgsmith files                          # list the files each package would carry
+pkgsmith formats
+pkgsmith prune                          # remove the cached set-up images
+```
+
+Run `pkgsmith plan` first when you change a matrix. It shows each file name, and a `BUILD` letter that marks the
+jobs that share one build, so one `make` serves both a `.deb` and a `.tar.xz`.
+
+## Formats
+
+| Format      | File                      | Status  |
+| ----------- | ------------------------- | ------- |
+| `rpm`       | `.rpm`                    | works   |
+| `deb`       | `.deb`                    | works   |
+| `archlinux` | `.pkg.tar.zst`            | works   |
+| `apk`       | `.apk` (Alpine)           | works   |
+| `ipk`       | `.ipk` (OpenWrt)          | works   |
+| `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | works |
+| `zip`       | `.zip`                    | works   |
+
+pkgsmith writes each format itself. It does not call `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`. The packages were
+checked by installing them: rpm on Fedora 43 and openSUSE Tumbleweed, deb on Debian 13, Arch with `pacman -Qkk`, apk on
+Alpine with apk-tools 3.
+
+## Documentation
+
+* [Getting started](docs/getting-started.md)
+* [Manifest reference](docs/manifest.md)
+* [Contents: files, trees, links and config files](docs/contents.md)
+* [Build environment: images, set-up, the tracked build](docs/build-environment.md)
+* [Matrix and expressions](docs/matrix-and-expressions.md)
+* [Versions and nightly builds](docs/versions.md)
+* [Install scripts](docs/scripts.md)
+* [Dependencies](docs/dependencies.md)
+
+Every file in [examples/](examples/) is a complete manifest. [examples/full.yaml](examples/full.yaml) uses every key
+and has a comment on each one.
+
+## Limits
+
+* pkgsmith does not find the shared libraries a program needs. List them in `depends`.
+* Builds run for `linux/amd64` and `linux/arm64`.
+* Package signing is not done yet.
 
 ## Build and test
 
@@ -96,5 +117,6 @@ cargo build --release
 cargo test
 ```
 
-The packages were checked by installing them: a `.deb` in Debian 13 (`dpkg -i`, `dpkg -V`, `dpkg -r`) and an Arch
-package in Arch Linux (`pacman -U`, `pacman -Qkk`, `pacman -R`).
+## Licence
+
+MIT
