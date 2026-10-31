@@ -13,5 +13,6 @@ pub mod package;
 pub mod plan;
 pub mod plugins;
 pub mod runner;
+pub mod signing;
 pub mod tree;
 pub mod ui;

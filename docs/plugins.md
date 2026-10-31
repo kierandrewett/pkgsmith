@@ -111,8 +111,12 @@ typedef struct { uint8_t *ptr; size_t len; } PkgsmithBuf;
 
 typedef struct {
     uint32_t abi_version;                    /* 1 */
-    void *ctx;                               /* give it back as the first argument of log */
+    void *ctx;                               /* give it back as the first argument of every function below */
     void (*log)(void *ctx, uint32_t level, const uint8_t *message, size_t len); /* 0 error, 1 warning, 2 info */
+    uint32_t (*can_sign)(void *ctx, uint32_t scheme);                   /* 1 when the host holds a key */
+    int32_t (*sign)(void *ctx, uint32_t scheme, const uint8_t *data, size_t len, PkgsmithBuf *out);
+    int32_t (*key_name)(void *ctx, uint32_t scheme, PkgsmithBuf *out);
+    void (*free_buf)(PkgsmithBuf buf);       /* frees a buffer that sign or key_name returned */
 } PkgsmithHost;
 
 typedef struct {
@@ -134,6 +138,34 @@ const PkgsmithPlugin *pkgsmith_plugin_entry(void);
 - The plugin allocates every buffer it returns. pkgsmith gives each one back to `free_buf` after it reads it.
 - pkgsmith may call a plugin from several threads at the same time.
 - A plugin with another `abi_version` is refused.
+
+### Signing
+
+A plugin states in `describe` how its format is signed, with the field `signing` of each format:
+
+| Value                       | Meaning                                                                      |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `"detached"` (the default)  | pkgsmith writes a detached OpenPGP signature next to the package file        |
+| `{"embedded": "SCHEME"}`    | The plugin puts the signature inside the package. See below                  |
+| `"none"`                    | The package cannot be signed                                                 |
+
+An embedding plugin calls `can_sign` and, when it returns 1, `sign`. The `scheme` is a number in C and a name in JSON:
+
+| Number | Name           | The signature                                                                  |
+| ------ | -------------- | ------------------------------------------------------------------------------ |
+| 1      | `openpgp`      | A binary OpenPGP detached signature packet over SHA-256, from an OpenPGP key   |
+| 2      | `rsa-sha256`   | RSA PKCS#1 v1.5 over the SHA-256 digest of the data, from an RSA key           |
+| 3      | `rsa-sha1`     | RSA PKCS#1 v1.5 over the SHA-1 digest of the data, from an RSA key             |
+
+- `sign` returns 0 and the signature in `out`, or 1 and an error message in `out`.
+- `key_name` gives the file name of the private key. The `apk` plugin puts it into the signature name.
+- The host allocated both buffers. Give them back to `free_buf`.
+
+See [signing](signing.md) for the keys and the command line options.
+
+A plugin is code in the process of pkgsmith. Signing through the host keeps the key out of the package description, but
+it does not hide the key from the plugin.
+
 
 [examples/plugins/c-listing/listing.c](../examples/plugins/c-listing/listing.c) is a complete plugin in C. It adds a
 format that lists the files of a package.

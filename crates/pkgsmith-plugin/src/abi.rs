@@ -12,8 +12,12 @@
 //!
 //! typedef struct {
 //!     uint32_t abi_version;                    /* 1 */
-//!     void *ctx;                               /* give it back as the first argument of log */
+//!     void *ctx;                               /* give it back as the first argument of every function below */
 //!     void (*log)(void *ctx, uint32_t level, const uint8_t *message, size_t len); /* 0 error, 1 warn, 2 info */
+//!     uint32_t (*can_sign)(void *ctx, uint32_t scheme);
+//!     int32_t (*sign)(void *ctx, uint32_t scheme, const uint8_t *data, size_t len, PkgsmithBuf *out);
+//!     int32_t (*key_name)(void *ctx, uint32_t scheme, PkgsmithBuf *out);
+//!     void (*free_buf)(PkgsmithBuf buf);       /* frees a buffer that sign or key_name returned */
 //! } PkgsmithHost;
 //!
 //! typedef struct {
@@ -77,6 +81,10 @@ impl Buf {
 }
 
 /// What the host gives a plugin during a call.
+///
+/// The signing functions let a plugin ask the host for a signature without handling the key. This keeps the key out of
+/// the request, but it is not isolation: a plugin is native code in the process of pkgsmith and has the permissions of
+/// the user. Install only plugins that you trust.
 #[repr(C)]
 pub struct HostVTable {
     pub abi_version: u32,
@@ -90,6 +98,49 @@ pub struct HostVTable {
             len: usize,
         ),
     >,
+    /// 1 when the host holds a key for `scheme` for the format of this call, else 0. See [`Scheme`].
+    pub can_sign: Option<unsafe extern "C" fn(ctx: *mut std::ffi::c_void, scheme: u32) -> u32>,
+    /// Sign `data`. Returns 0 and the signature in `out`, or 1 and an error message in `out`. The host allocated `out`:
+    /// give it back to `free_buf`.
+    pub sign: Option<
+        unsafe extern "C" fn(
+            ctx: *mut std::ffi::c_void,
+            scheme: u32,
+            data: *const u8,
+            len: usize,
+            out: *mut Buf,
+        ) -> i32,
+    >,
+    /// The name of the key for `scheme`: the file name of the private key. Returns 0 and the name in `out`, or 1 when
+    /// there is none. The host allocated `out`.
+    pub key_name:
+        Option<unsafe extern "C" fn(ctx: *mut std::ffi::c_void, scheme: u32, out: *mut Buf) -> i32>,
+    /// Frees a buffer that `sign` or `key_name` returned.
+    pub free_buf: Option<unsafe extern "C" fn(buf: Buf)>,
+}
+
+/// How a signature is made. The numbers are part of the C interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[repr(u32)]
+pub enum Scheme {
+    /// A binary OpenPGP detached signature packet (SHA-256) from an OpenPGP key.
+    OpenPgp = 1,
+    /// An RSA PKCS#1 v1.5 signature over the SHA-256 digest, from an RSA key.
+    RsaSha256 = 2,
+    /// An RSA PKCS#1 v1.5 signature over the SHA-1 digest, from an RSA key.
+    RsaSha1 = 3,
+}
+
+impl Scheme {
+    pub fn from_number(number: u32) -> Option<Scheme> {
+        match number {
+            1 => Some(Scheme::OpenPgp),
+            2 => Some(Scheme::RsaSha256),
+            3 => Some(Scheme::RsaSha1),
+            _ => None,
+        }
+    }
 }
 
 /// What a plugin gives the host.

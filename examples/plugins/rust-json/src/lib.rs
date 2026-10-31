@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Json;
@@ -19,6 +19,7 @@ impl Plugin for Json {
             formats: vec![FormatInfo {
                 name: "json".into(),
                 description: "The package description as a JSON file (.json)".into(),
+                signing: Signing::Detached,
             }],
         }
     }

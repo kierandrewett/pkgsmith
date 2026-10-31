@@ -8,7 +8,7 @@ use md5::Md5;
 use pkgsmith_plugin::archive::Compression;
 use pkgsmith_plugin::hash::digests;
 use pkgsmith_plugin::version::Version;
-use pkgsmith_plugin::{Data, Entry, Package};
+use pkgsmith_plugin::{Data, Entry, Host, Package, Scheme};
 use serde::Deserialize;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -97,10 +97,14 @@ const SUGGESTVERSION: u32 = 5050;
 const SUGGESTFLAGS: u32 = 5051;
 
 // Signature header tags.
+const SIG_DSA: u32 = 267;
+const SIG_RSA: u32 = 268;
 const SIG_SHA1: u32 = 269;
 const SIG_SHA256: u32 = 273;
 const SIG_SIZE: u32 = 1000;
+const SIG_PGP: u32 = 1002;
 const SIG_MD5: u32 = 1004;
+const SIG_GPG: u32 = 1005;
 const SIG_PAYLOADSIZE: u32 = 1007;
 
 // Dependency flags.
@@ -393,6 +397,32 @@ fn interpreter(script: &str) -> String {
         .to_string()
 }
 
+/// The public key algorithm of an OpenPGP signature packet (1 is RSA), read from the packet.
+fn signature_algorithm(packet: &[u8]) -> Option<u8> {
+    let first = *packet.first()?;
+    let body = if first & 0x40 != 0 {
+        // New format header: one, two or five length bytes.
+        match *packet.get(1)? {
+            0..=191 => 2,
+            192..=223 => 3,
+            255 => 6,
+            _ => return None,
+        }
+    } else {
+        // Old format header: the low two bits give the length of the length.
+        match first & 0x03 {
+            0 => 2,
+            1 => 3,
+            2 => 5,
+            _ => return None,
+        }
+    };
+    // Version 4 signature: version, type, public key algorithm.
+    (*packet.get(body)? == 4)
+        .then(|| packet.get(body + 2).copied())
+        .flatten()
+}
+
 /// `name-version-release.arch.rpm`.
 pub fn file_name(package: &Package) -> Result<String> {
     let nevr = format!(
@@ -407,7 +437,7 @@ pub fn file_name(package: &Package) -> Result<String> {
     ))
 }
 
-pub fn build(package: &Package) -> Result<PathBuf> {
+pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
     let options: Options = package.options()?;
     let mtime = package.mtime;
     let arch = architecture(&package.arch);
@@ -624,25 +654,40 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     md5.update(&compressed);
     sha1.update(&header_bytes);
     sha256.update(&header_bytes);
-    let signature = header(
-        vec![
-            (
-                SIG_SIZE,
-                Value::Int32(vec![(header_bytes.len() + compressed.len()) as u32]),
-            ),
-            (SIG_MD5, Value::Bin(md5.finalize().to_vec())),
-            (
-                SIG_SHA1,
-                Value::Str(pkgsmith_plugin::hash::hex(&sha1.finalize())),
-            ),
-            (
-                SIG_SHA256,
-                Value::Str(pkgsmith_plugin::hash::hex(&sha256.finalize())),
-            ),
-            (SIG_PAYLOADSIZE, Value::Int32(vec![cpio.len() as u32])),
-        ],
-        HEADERSIGNATURES,
-    );
+    let mut signature_tags = vec![
+        (
+            SIG_SIZE,
+            Value::Int32(vec![(header_bytes.len() + compressed.len()) as u32]),
+        ),
+        (SIG_MD5, Value::Bin(md5.finalize().to_vec())),
+        (
+            SIG_SHA1,
+            Value::Str(pkgsmith_plugin::hash::hex(&sha1.finalize())),
+        ),
+        (
+            SIG_SHA256,
+            Value::Str(pkgsmith_plugin::hash::hex(&sha256.finalize())),
+        ),
+        (SIG_PAYLOADSIZE, Value::Int32(vec![cpio.len() as u32])),
+    ];
+    if host.can_sign(Scheme::OpenPgp) {
+        // An OpenPGP signature of the header, and one of the header and the payload together. An RSA key uses the
+        // tags RSA and PGP. Every other key type (ECDSA, EdDSA, DSA) uses DSA and GPG.
+        let header_signature = host.sign(Scheme::OpenPgp, &header_bytes)?;
+        let mut everything = header_bytes.clone();
+        everything.extend(&compressed);
+        let payload_signature = host.sign(Scheme::OpenPgp, &everything)?;
+        let rsa = signature_algorithm(&header_signature) == Some(1);
+        signature_tags.push((
+            if rsa { SIG_RSA } else { SIG_DSA },
+            Value::Bin(header_signature),
+        ));
+        signature_tags.push((
+            if rsa { SIG_PGP } else { SIG_GPG },
+            Value::Bin(payload_signature),
+        ));
+    }
+    let signature = header(signature_tags, HEADERSIGNATURES);
 
     let mut file = lead(&format!("{}-{nevr}", package.name), arch);
     file.extend(&signature);

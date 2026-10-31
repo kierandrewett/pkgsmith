@@ -4,7 +4,7 @@ mod format;
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Snap;
@@ -17,6 +17,7 @@ impl Plugin for Snap {
             formats: vec![FormatInfo {
                 name: "snap".into(),
                 description: "A snap package (.snap), for snapd".into(),
+                signing: Signing::None,
             }],
         }
     }

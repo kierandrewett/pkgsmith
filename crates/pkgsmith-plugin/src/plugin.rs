@@ -1,10 +1,23 @@
 //! The Rust side of writing a plugin: implement [`Plugin`] and call [`export_plugin!`](crate::export_plugin).
 
-use crate::abi::{Buf, HostVTable};
+use crate::abi::{Buf, HostVTable, Scheme};
 use crate::package::Package;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// How a format carries a signature.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Signing {
+    /// The package cannot be signed by pkgsmith. Snap and OCI images are signed by other means.
+    None,
+    /// The package file stays as it is and the host writes a detached OpenPGP signature next to it. The default.
+    #[default]
+    Detached,
+    /// The plugin puts the signature inside the package. It asks the host for it with [`Host::sign`], using the scheme.
+    Embedded(Scheme),
+}
 
 /// One format a plugin writes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,6 +25,9 @@ pub struct FormatInfo {
     /// The name in `format:` of a matrix entry and on the command line, for example `deb`.
     pub name: String,
     pub description: String,
+    /// How the format is signed. In JSON: `"none"`, `"detached"` (the default) or `{"embedded": "rsa-sha256"}`.
+    #[serde(default)]
+    pub signing: Signing,
 }
 
 /// What `describe` returns.
@@ -41,6 +57,59 @@ impl Host<'_> {
         {
             // SAFETY: the host promises that `ctx` and `log` stay valid for the call.
             unsafe { log(raw.ctx, level as u32, message.as_ptr(), message.len()) };
+        }
+    }
+
+    /// Whether the host holds a key for `scheme` for the format of this call. A plugin signs only when it does.
+    pub fn can_sign(&self, scheme: Scheme) -> bool {
+        match self.raw {
+            // SAFETY: the host promises that `ctx` and the functions stay valid for the call.
+            Some(raw) => raw
+                .can_sign
+                .is_some_and(|f| unsafe { f(raw.ctx, scheme as u32) } == 1),
+            None => false,
+        }
+    }
+
+    /// Sign `data` with the key of the host. The key stays with the host, but a plugin is trusted code in the same
+    /// process, so this is a convenience and not isolation.
+    pub fn sign(&self, scheme: Scheme, data: &[u8]) -> Result<Vec<u8>> {
+        let Some(raw) = self.raw else {
+            bail!("there is no host to sign with")
+        };
+        let (Some(sign), Some(free)) = (raw.sign, raw.free_buf) else {
+            bail!("the host cannot sign");
+        };
+        let mut out = Buf {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: the pointers are valid for the call. `out` is filled by the host and freed by it.
+        unsafe {
+            let status = sign(raw.ctx, scheme as u32, data.as_ptr(), data.len(), &mut out);
+            let bytes = out.as_slice().to_vec();
+            free(out);
+            if status != 0 {
+                bail!("{}", String::from_utf8_lossy(&bytes));
+            }
+            Ok(bytes)
+        }
+    }
+
+    /// The name of the key for `scheme`, which Alpine writes into the package so that `apk` finds the public key.
+    pub fn key_name(&self, scheme: Scheme) -> Option<String> {
+        let raw = self.raw?;
+        let (key_name, free) = (raw.key_name?, raw.free_buf?);
+        let mut out = Buf {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: as in `sign`.
+        unsafe {
+            let status = key_name(raw.ctx, scheme as u32, &mut out);
+            let name = String::from_utf8_lossy(out.as_slice()).into_owned();
+            free(out);
+            (status == 0).then_some(name)
         }
     }
 

@@ -3,7 +3,7 @@
 mod format;
 
 use anyhow::Result;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Zip;
@@ -16,6 +16,7 @@ impl Plugin for Zip {
             formats: vec![FormatInfo {
                 name: "zip".into(),
                 description: "A zip archive (.zip)".into(),
+                signing: Signing::Detached,
             }],
         }
     }

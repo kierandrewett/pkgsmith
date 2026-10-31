@@ -3,7 +3,7 @@
 mod format;
 
 use anyhow::Result;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Tar;
@@ -16,6 +16,7 @@ impl Plugin for Tar {
             formats: vec![FormatInfo {
                 name: "tar".into(),
                 description: "A tar archive (.tar.xz, .tar.gz, .tar.zst, .tar.bz2)".into(),
+                signing: Signing::Detached,
             }],
         }
     }

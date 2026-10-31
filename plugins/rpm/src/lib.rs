@@ -4,7 +4,7 @@ mod format;
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Scheme, Signing};
 use std::path::PathBuf;
 
 struct Rpm;
@@ -18,6 +18,7 @@ impl Plugin for Rpm {
                 name: "rpm".into(),
                 description:
                     "An rpm package (.rpm), for Fedora, openSUSE, RHEL and their relatives".into(),
+                signing: Signing::Embedded(Scheme::OpenPgp),
             }],
         }
     }
@@ -27,9 +28,9 @@ impl Plugin for Rpm {
         format::file_name(package)
     }
 
-    fn build(&self, package: &Package, _host: &Host) -> Result<PathBuf> {
+    fn build(&self, package: &Package, host: &Host) -> Result<PathBuf> {
         expect_format(package, &["rpm"])?;
-        format::build(package)
+        format::build(package, host)
     }
 }
 

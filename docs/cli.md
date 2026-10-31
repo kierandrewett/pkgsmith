@@ -55,6 +55,14 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 | `-q`, `--quiet`      | A flag         | Off     | Prints only the path of each package |
 | `--no-cache`         | A flag         | Off     | Runs the setup scripts again instead of reusing the cached images |
 
+`build` signs packages when it gets a key. See [signing](signing.md) for the key types and how to check a signature.
+
+| Option                        | Values                             | Default | Effect |
+| ----------------------------- | ---------------------------------- | ------- | ------ |
+| `--sign-key [FORMAT=]FILE`    | A key file. Repeatable             | None    | Signs with this key, for one format or for all it fits |
+| `--sign-passphrase-file FILE` | A path                             | None    | Holds the passphrase of the keys |
+| `--sign-armor`                | A flag                             | Off     | Writes `FILE.asc` instead of `FILE.sig` |
+
 `plan` also takes `--json`, which prints the jobs as JSON for scripts.
 
 ## Plugins

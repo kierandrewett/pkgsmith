@@ -38,6 +38,12 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
 zip = "9.2.0"
 zstd = "0.14.3"
 ureq = "3"
+pgp = "0.21.0"
+rsa = "0.9.10"
+rand = "0.8"
+sha2_10 = { version = "0.10", package = "sha2" }
+sha1_10 = { version = "0.10", package = "sha1" }
+pkcs8 = { version = "0.10", features = ["pem", "encryption"] }
 
 # `cargo binstall pkgsmith` downloads the archive that the release workflow attaches to each release and installs the
 # binary. The plugins are libraries, so run `pkgsmith plugins install` afterwards.

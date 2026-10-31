@@ -5,7 +5,7 @@ mod format;
 use anyhow::Result;
 use format::Flavour;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Deb;
@@ -27,10 +27,12 @@ impl Plugin for Deb {
                     name: "deb".into(),
                     description: "A Debian package (.deb), for Debian, Ubuntu and their relatives"
                         .into(),
+                    signing: Signing::Detached,
                 },
                 FormatInfo {
                     name: "ipk".into(),
                     description: "An OpenWrt package (.ipk)".into(),
+                    signing: Signing::Detached,
                 },
             ],
         }

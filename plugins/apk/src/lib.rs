@@ -4,7 +4,7 @@ mod format;
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Scheme, Signing};
 use std::path::PathBuf;
 
 struct Apk;
@@ -17,6 +17,7 @@ impl Plugin for Apk {
             formats: vec![FormatInfo {
                 name: "apk".into(),
                 description: "An Alpine package (.apk)".into(),
+                signing: Signing::Embedded(Scheme::RsaSha256),
             }],
         }
     }
@@ -26,9 +27,9 @@ impl Plugin for Apk {
         format::file_name(package)
     }
 
-    fn build(&self, package: &Package, _host: &Host) -> Result<PathBuf> {
+    fn build(&self, package: &Package, host: &Host) -> Result<PathBuf> {
         expect_format(package, &["apk"])?;
-        format::build(package)
+        format::build(package, host)
     }
 }
 

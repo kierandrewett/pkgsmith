@@ -4,7 +4,7 @@ mod format;
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Arch;
@@ -17,6 +17,7 @@ impl Plugin for Arch {
             formats: vec![FormatInfo {
                 name: "archlinux".into(),
                 description: "An Arch Linux package (.pkg.tar.zst)".into(),
+                signing: Signing::Detached,
             }],
         }
     }

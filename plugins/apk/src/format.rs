@@ -6,11 +6,11 @@
 //! `apk add --allow-untrusted`.
 
 use anyhow::Result;
-use pkgsmith_plugin::Package;
 use pkgsmith_plugin::archive::{self, Compression, Leading, TarStyle};
 use pkgsmith_plugin::entry;
 use pkgsmith_plugin::hash::hex;
 use pkgsmith_plugin::version::Version;
+use pkgsmith_plugin::{Host, Package, Scheme};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -67,7 +67,7 @@ pub fn file_name(package: &Package) -> Result<String> {
     ))
 }
 
-pub fn build(package: &Package) -> Result<PathBuf> {
+pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
     let mtime = package.mtime;
     let version = format!(
         "{}-r{}",
@@ -122,7 +122,24 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     let control_tar = archive::tar_styled(&[], "", mtime, &control_files, open)?;
     let control = Compression::Gzip.compress(&control_tar)?;
 
-    let mut file = control;
+    // A signed package starts with a third stream: a tar with one member, `.SIGN.RSA256.KEYNAME.pub`, that holds an RSA
+    // signature (SHA-256) of the bytes of the control stream. `apk` looks for a public key of that name in
+    // /etc/apk/keys. KEYNAME is the file name of the private key, as `abuild` names its keys.
+    let mut file = Vec::new();
+    if host.can_sign(Scheme::RsaSha256) {
+        let key = host
+            .key_name(Scheme::RsaSha256)
+            .ok_or_else(|| anyhow::anyhow!("the signing key has no name"))?;
+        let signature = host.sign(Scheme::RsaSha256, &control)?;
+        let member = Leading {
+            name: format!(".SIGN.RSA256.{key}.pub"),
+            data: signature,
+            mode: 0o644,
+        };
+        let tar = archive::tar_styled(&[], "", mtime, &[member], open)?;
+        file.extend(Compression::Gzip.compress(&tar)?);
+    }
+    file.extend(control);
     file.extend(data);
     std::fs::create_dir_all(&package.out)?;
     let path = package.output(&file_name(package)?);

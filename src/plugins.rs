@@ -7,7 +7,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use libloading::Library;
 use pkgsmith_plugin::abi::{ABI_VERSION, Buf, ENTRY_SYMBOL, EntryFn, HostVTable, PluginVTable};
-use pkgsmith_plugin::{Package, PluginInfo};
+use pkgsmith_plugin::{Package, PluginInfo, Scheme, Signing};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
@@ -27,6 +27,20 @@ struct Loaded {
 unsafe impl Send for Loaded {}
 unsafe impl Sync for Loaded {}
 
+/// What a plugin may ask of the host while it builds: signatures, made with keys the host holds.
+pub trait Signer: Sync {
+    fn can_sign(&self, format: &str, scheme: Scheme) -> bool;
+    fn sign(&self, format: &str, scheme: Scheme, data: &[u8]) -> Result<Vec<u8>>;
+    fn key_name(&self, format: &str, scheme: Scheme) -> Option<String>;
+}
+
+/// What the trampolines of one call can reach.
+struct CallContext<'a> {
+    log: &'a dyn Fn(u32, &str),
+    signer: Option<&'a dyn Signer>,
+    format: &'a str,
+}
+
 /// A format and the plugin that writes it.
 #[derive(Debug, Clone)]
 pub struct FormatEntry {
@@ -34,6 +48,7 @@ pub struct FormatEntry {
     pub description: String,
     pub plugin: String,
     pub path: PathBuf,
+    pub signing: Signing,
 }
 
 pub struct Registry {
@@ -198,11 +213,20 @@ impl Registry {
                         description: format.description.clone(),
                         plugin: plugin.info.name.clone(),
                         path: plugin.path.clone(),
+                        signing: format.signing,
                     });
                 }
             }
         }
         out
+    }
+
+    /// How the format is signed, or `None` for a format no plugin writes.
+    pub fn signing(&self, format: &str) -> Option<Signing> {
+        self.formats()
+            .into_iter()
+            .find(|f| f.name == format)
+            .map(|f| f.signing)
     }
 
     pub fn format_names(&self) -> Vec<String> {
@@ -219,6 +243,7 @@ impl Registry {
         method: &str,
         package: &Package,
         log: &dyn Fn(u32, &str),
+        signer: Option<&dyn Signer>,
     ) -> Result<serde_json::Value> {
         let Some(&index) = self.formats.get(&package.format) else {
             bail!(
@@ -229,11 +254,19 @@ impl Registry {
         };
         let plugin = &self.plugins[index];
         let request = serde_json::to_vec(package)?;
-        let context: &dyn Fn(u32, &str) = log;
+        let context = CallContext {
+            log,
+            signer,
+            format: &package.format,
+        };
         let host = HostVTable {
             abi_version: ABI_VERSION,
-            ctx: &context as *const &dyn Fn(u32, &str) as *mut c_void,
-            log: Some(trampoline),
+            ctx: &context as *const CallContext as *mut c_void,
+            log: Some(log_trampoline),
+            can_sign: Some(can_sign_trampoline),
+            sign: Some(sign_trampoline),
+            key_name: Some(key_name_trampoline),
+            free_buf: Some(free_trampoline),
         };
         // SAFETY: the pointers are valid for the call, and the reply is freed by the plugin that made it.
         let reply = unsafe {
@@ -257,7 +290,7 @@ impl Registry {
 
     /// The name of the file `build` would write. `package.entries` may be empty.
     pub fn file_name(&self, package: &Package) -> Result<String> {
-        match self.call("file_name", package, &|_, _| {})? {
+        match self.call("file_name", package, &|_, _| {}, None)? {
             serde_json::Value::String(name) => Ok(name),
             other => bail!("the plugin answered {other} instead of a file name"),
         }
@@ -265,23 +298,84 @@ impl Registry {
 
     /// Write the package and return the path of the file. The output folder exists when the plugin runs. `log` receives the messages of the plugin: a level (0 error,
     /// 1 warning, 2 information) and the text.
-    pub fn build(&self, package: &Package, log: &dyn Fn(u32, &str)) -> Result<PathBuf> {
+    pub fn build(
+        &self,
+        package: &Package,
+        log: &dyn Fn(u32, &str),
+        signer: Option<&dyn Signer>,
+    ) -> Result<PathBuf> {
         std::fs::create_dir_all(&package.out)
             .with_context(|| format!("cannot create {}", package.out.display()))?;
-        match self.call("build", package, log)? {
+        match self.call("build", package, log, signer)? {
             serde_json::Value::String(path) => Ok(PathBuf::from(path)),
             other => bail!("the plugin answered {other} instead of a path"),
         }
     }
 }
 
-unsafe extern "C" fn trampoline(ctx: *mut c_void, level: u32, message: *const u8, len: usize) {
-    // SAFETY: `ctx` is the `&&dyn Fn` that `Registry::call` built, and `message` is valid for `len` bytes.
-    let (log, message) = unsafe {
-        (
-            &*(ctx as *const &dyn Fn(u32, &str)),
-            std::slice::from_raw_parts(message, len),
-        )
+unsafe fn context<'a>(ctx: *mut c_void) -> &'a CallContext<'a> {
+    // SAFETY: `ctx` is the `CallContext` that `Registry::call` built, alive for the whole call.
+    unsafe { &*(ctx as *const CallContext) }
+}
+
+unsafe extern "C" fn log_trampoline(ctx: *mut c_void, level: u32, message: *const u8, len: usize) {
+    // SAFETY: `message` is valid for `len` bytes, as the interface requires.
+    let message = unsafe { std::slice::from_raw_parts(message, len) };
+    (unsafe { context(ctx) }.log)(level, &String::from_utf8_lossy(message));
+}
+
+unsafe extern "C" fn can_sign_trampoline(ctx: *mut c_void, scheme: u32) -> u32 {
+    let context = unsafe { context(ctx) };
+    let (Some(scheme), Some(signer)) = (Scheme::from_number(scheme), context.signer) else {
+        return 0;
     };
-    log(level, &String::from_utf8_lossy(message));
+    u32::from(signer.can_sign(context.format, scheme))
+}
+
+unsafe extern "C" fn sign_trampoline(
+    ctx: *mut c_void,
+    scheme: u32,
+    data: *const u8,
+    len: usize,
+    out: *mut Buf,
+) -> i32 {
+    let context = unsafe { context(ctx) };
+    // SAFETY: `data` is valid for `len` bytes and `out` is a valid pointer, as the interface requires.
+    let (data, out) = unsafe { (std::slice::from_raw_parts(data, len), &mut *out) };
+    let result = match (Scheme::from_number(scheme), context.signer) {
+        (Some(scheme), Some(signer)) => signer.sign(context.format, scheme, data),
+        (None, _) => Err(anyhow!("unknown signature scheme {scheme}")),
+        (_, None) => Err(anyhow!("no signing key was given; use --sign-key")),
+    };
+    match result {
+        Ok(bytes) => {
+            *out = Buf::from_vec(bytes);
+            0
+        }
+        Err(error) => {
+            *out = Buf::from_vec(format!("{error:#}").into_bytes());
+            1
+        }
+    }
+}
+
+unsafe extern "C" fn key_name_trampoline(ctx: *mut c_void, scheme: u32, out: *mut Buf) -> i32 {
+    let context = unsafe { context(ctx) };
+    // SAFETY: `out` is a valid pointer, as the interface requires.
+    let out = unsafe { &mut *out };
+    let name = Scheme::from_number(scheme)
+        .zip(context.signer)
+        .and_then(|(scheme, signer)| signer.key_name(context.format, scheme));
+    match name {
+        Some(name) => {
+            *out = Buf::from_vec(name.into_bytes());
+            0
+        }
+        None => 1,
+    }
+}
+
+unsafe extern "C" fn free_trampoline(buf: Buf) {
+    // SAFETY: the buffer came from `Buf::from_vec` in this process.
+    unsafe { buf.free() };
 }

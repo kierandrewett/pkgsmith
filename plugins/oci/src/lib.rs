@@ -4,7 +4,7 @@ mod format;
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
-use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo};
+use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
 use std::path::PathBuf;
 
 struct Oci;
@@ -18,6 +18,7 @@ impl Plugin for Oci {
                 name: "oci".into(),
                 description: "An OCI container image (.oci.tar), for podman, docker and containerd"
                     .into(),
+                signing: Signing::None,
             }],
         }
     }

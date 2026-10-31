@@ -6,9 +6,11 @@ use pkgsmith::install;
 use pkgsmith::manifest::Manifest;
 use pkgsmith::package::{self, Options};
 use pkgsmith::plan;
-use pkgsmith::plugins::{self, Registry};
+use pkgsmith::plugins::{self, Registry, Signer};
 use pkgsmith::runner::{Runner, build_key, lane};
+use pkgsmith::signing::Keys;
 use pkgsmith::ui::{Mode, Ui};
+use pkgsmith_plugin::{Scheme, Signing};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -79,6 +81,17 @@ enum Command {
         /// Folder for the files a tracked build installs.
         #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
         work: PathBuf,
+        /// Sign the packages with this key: a file, or FORMAT=FILE for one format. Repeatable. An armored OpenPGP
+        /// secret key signs rpm and writes a detached signature for most other formats. An RSA key in PEM form
+        /// signs apk. Also PKGSMITH_SIGN_KEY, a list separated by `:`.
+        #[arg(long, value_name = "[FORMAT=]FILE")]
+        sign_key: Vec<String>,
+        /// A file that holds the passphrase of the signing key. Also PKGSMITH_SIGN_PASSPHRASE.
+        #[arg(long, value_name = "FILE")]
+        sign_passphrase_file: Option<PathBuf>,
+        /// Write detached signatures as ASCII armor in FILE.asc instead of binary in FILE.sig.
+        #[arg(long)]
+        sign_armor: bool,
     },
     /// List what `build` would do as a table: one row per job, with the file it would write and which jobs share a build.
     #[command(alias = "ls")]
@@ -130,6 +143,76 @@ enum PluginsAction {
         #[arg(long, value_name = "URL", default_value = install::DEFAULT_RELEASE_URL)]
         release_url: String,
     },
+}
+
+/// The keys the user gave on the command line or in the environment.
+fn signing_keys(specs: Vec<String>, passphrase_file: Option<PathBuf>) -> Result<Keys> {
+    let specs = if specs.is_empty() {
+        std::env::var("PKGSMITH_SIGN_KEY")
+            .map(|list| {
+                list.split(':')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        specs
+    };
+    let passphrase = match passphrase_file {
+        Some(file) => Some(
+            std::fs::read_to_string(&file)
+                .with_context(|| format!("cannot read {}", file.display()))?
+                .trim_end_matches(['\r', '\n'])
+                .to_string(),
+        ),
+        None => std::env::var("PKGSMITH_SIGN_PASSPHRASE").ok(),
+    };
+    Keys::new(&specs, passphrase)
+}
+
+/// Refuse to start a long build for a package that cannot be signed with the keys given. A format that cannot be
+/// signed at all is allowed, and `sign_file` says so when it is built.
+fn check_signable(registry: &Registry, keys: &Keys, items: &[plan::Item]) -> Result<()> {
+    let mut seen: Vec<&str> = Vec::new();
+    for item in items {
+        if seen.contains(&item.format.as_str()) {
+            continue;
+        }
+        seen.push(&item.format);
+        let needed = match registry.signing(&item.format) {
+            Some(Signing::Detached) => Scheme::OpenPgp,
+            Some(Signing::Embedded(scheme)) => scheme,
+            _ => continue,
+        };
+        keys.require(&item.format, needed)?;
+    }
+    Ok(())
+}
+
+/// Sign a finished package the way its format wants. Returns what was done, for the summary.
+fn sign_file(
+    registry: &Registry,
+    keys: &Keys,
+    format: &str,
+    file: &Path,
+    armor: bool,
+) -> Result<&'static str> {
+    match registry.signing(format) {
+        Some(Signing::Detached) => {
+            let signature = keys.detached(format, &std::fs::read(file)?, armor)?;
+            let mut name = file.as_os_str().to_owned();
+            name.push(if armor { ".asc" } else { ".sig" });
+            std::fs::write(&name, signature)?;
+            Ok(if armor {
+                "signed, .asc"
+            } else {
+                "signed, .sig"
+            })
+        }
+        Some(Signing::Embedded(_)) => Ok("signed"),
+        _ => Ok("not signed: this format cannot be signed"),
+    }
 }
 
 fn default_jobs() -> usize {
@@ -587,9 +670,17 @@ fn run() -> Result<()> {
             quiet,
             no_cache,
             work,
+            sign_key,
+            sign_passphrase_file,
+            sign_armor,
         } => {
             let scope = scope(&source.build_arg)?;
             let (manifest, items) = load(&source, &registry)?;
+            let keys = signing_keys(sign_key, sign_passphrase_file)?;
+            let signer: Option<&Keys> = (!keys.is_empty()).then_some(&keys);
+            if let Some(keys) = signer {
+                check_signable(&registry, keys, &items)?;
+            }
             let mode = if quiet {
                 Mode::Quiet
             } else {
@@ -603,11 +694,26 @@ fn run() -> Result<()> {
                 let tracked = runner.tracked(&bound, &item.job)?;
                 let package = package::assemble(&bound, &item.format, &options, tracked)?;
                 let step = ui.step(&lane(&bound, &item.job), format!("package {}", item.format));
-                match registry.build(&package, &|_, message| step.log(message)) {
-                    Ok(file) => {
+                let built = registry
+                    .build(
+                        &package,
+                        &|_, message| step.log(message),
+                        signer.map(|k| k as &dyn Signer),
+                    )
+                    .and_then(|file| {
+                        let signed = match signer {
+                            Some(keys) => {
+                                sign_file(&registry, keys, &item.format, &file, sign_armor)?
+                            }
+                            None => "",
+                        };
+                        Ok((file, signed))
+                    });
+                match built {
+                    Ok((file, signed)) => {
                         step.log(&file.display().to_string());
                         step.done();
-                        Ok((item.format.clone(), file))
+                        Ok((item.format.clone(), file, signed))
                     }
                     Err(error) => {
                         step.log(&format!("{error:#}"));
@@ -623,16 +729,21 @@ fn run() -> Result<()> {
             if quiet {
                 written
                     .iter()
-                    .for_each(|(_, file)| println!("{}", file.display()));
+                    .for_each(|(_, file, _)| println!("{}", file.display()));
             } else {
                 ui.note(&format!("\nPackages in {}:", output.display()));
-                for (format, file) in &written {
+                for (format, file, signed) in &written {
                     let bytes = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
                     let name = file
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    ui.note(&format!("  {format:<10} {name}  ({})", size(bytes)));
+                    let signed = if signed.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {signed}")
+                    };
+                    ui.note(&format!("  {format:<10} {name}  ({}{signed})", size(bytes)));
                 }
             }
         }
