@@ -2141,6 +2141,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-conda"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "pkgsmith-plugin-deb"
 version = "0.1.0"
 dependencies = [
@@ -2157,6 +2168,37 @@ dependencies = [
  "pkgsmith-plugin",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pkgsmith-plugin-gem"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "pkgsmith-plugin-npm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pkgsmith-plugin-nupkg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "sha2 0.11.1",
+ "zip",
 ]
 
 [[package]]

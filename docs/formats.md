@@ -16,6 +16,10 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `appimage`  | `.AppImage`                      | Linux desktops                       | The runtime, without FUSE           |
 | `wheel`     | `.whl`                           | pip                                  | `pip`, `twine` in Python 3.14       |
 | `xbps`      | `.xbps`                          | Void Linux                           | `xbps-install` in Void              |
+| `gem`       | `.gem`                           | RubyGems                             | `gem install` in the latest Ruby    |
+| `npm`       | `.tgz`                           | npm                                  | `npm install` in the latest Node    |
+| `conda`     | `.conda`, `.tar.bz2`             | conda, micromamba                    | `micromamba create` from a channel  |
+| `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
 | `zip`       | `.zip`                           | Any system                           | `unzip`                             |
@@ -218,3 +222,85 @@ Checked in the Void glibc image with the real tools:
 - The install script, `xbps-query -f` and `xbps-reconfigure`
 
 Not checked: a real install on a musl system, `aarch64`, `noarch` and upgrades.
+
+## gem
+
+A gem is an uncompressed tar with `metadata.gz`, `data.tar.gz` and `checksums.yaml.gz`. Files under `prefix` go into the
+gem. A file directly in `executable_dir` becomes an executable. A file anywhere else stops the build.
+
+- The version `1.2.3-nightly.X` becomes `1.2.3.pre.nightly.X`, the form of `Gem::Version`.
+- `depends` holds distro names, so it is ignored with a warning. Use `dependencies` for gems.
+- Install and remove scripts, `recommends`, `suggests`, `conflicts`, `replaces` and `provides` are ignored with a warning.
+
+| Key                     | Values                                  | Default                                  | Effect                                     |
+| ----------------------- | --------------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| `prefix`                | Absolute path                           | `/usr/share/gems/gems/NAME-VERSION`      | Files below it go into the gem             |
+| `executable_dir`        | Absolute path                           | `/usr/bin`                               | Files in it become `bin/NAME`              |
+| `require_paths`         | List of relative paths                  | `lib`                                    | The `require_paths` of the spec            |
+| `required_ruby_version` | A requirement such as `>= 2.7`          | Any Ruby                                 | The Ruby the gem needs                     |
+| `dependencies`          | Map of gem name to requirement          | None                                     | Runtime dependencies                       |
+| `platform`              | `ruby`, or a platform such as `x86_64-linux` | `ruby`                              | The platform of the gem                    |
+
+A byte-for-byte comparison with a gem from `gem build` was not made. `gem install` and `gem spec` accept the result, and
+a changed `data.tar.gz` or `metadata.gz` is refused by RubyGems.
+
+## npm
+
+An npm package is a gzip tar with everything below `package/`, and a generated `package.json`. Every file must be
+under `prefix`, or the build stops. Modes are normalised the way `npm pack` does it: 0755 for a program, else 0644.
+
+- `post_install` and `pre_install` become the `postinstall` and `preinstall` lifecycle scripts. npm runs no scripts on
+  removal, so `pre_remove` and `post_remove` are ignored with a warning.
+- `depends` is ignored with a warning. Use `dependencies` for npm ranges.
+- Symbolic links and empty folders are dropped, as `npm pack` does, with a warning.
+- The first description line becomes `description`. The rest becomes `README.md`.
+
+| Key            | Values                                  | Default                              | Effect                                      |
+| -------------- | --------------------------------------- | ------------------------------------ | ------------------------------------------- |
+| `prefix`       | Absolute path                           | `/usr/lib/node_modules/NAME`         | The folder that becomes the package root    |
+| `scope`        | Name without `@`                        | None                                 | Publishes as `@SCOPE/NAME`                  |
+| `bin`          | Map of command to path under `prefix`   | None                                 | The `bin` field. The targets get mode 0755  |
+| `main`         | Path under `prefix`                     | npm's default                        | The `main` field                            |
+| `dependencies` | Map of name to semver range             | None                                 | Written as given                            |
+
+A real `npm publish`, `dependencies` resolution and the `cpu` field on arm64 were not checked.
+
+## conda
+
+A `.conda` file is a zip of two zstd tars, `pkg-` for the files and `info-` for the metadata. Files go below `prefix`.
+The version cannot hold `-`. A package with `arch: all` is `noarch`.
+
+- `post_install`, `pre_install` and `pre_remove` become the `post-link`, `pre-link` and `pre-unlink` scripts. conda has
+  no `post_remove`, so it is ignored with a warning.
+- Absolute symbolic links below the prefix are rewritten as relative links, as conda-build does.
+- The manifest `depends` is ignored with a warning, unless the `depends` option is set.
+
+| Key            | Values                                 | Default        | Effect                                           |
+| -------------- | -------------------------------------- | -------------- | ------------------------------------------------ |
+| `archive`      | `conda`, `tar.bz2`                     | `conda`        | The package container                            |
+| `prefix`       | Absolute path                          | `/usr`         | The folder that becomes the conda prefix         |
+| `build_number` | Number                                 | The `release`  | The build number                                 |
+| `build_string` | Letters, digits, `_`, `.`, `+`         | The build number | The build string                               |
+| `depends`      | List of match specs, such as `zlib >=1.2` | None        | The `depends` of `index.json`                    |
+
+Checked with micromamba against a channel indexed by `conda-index`, for `amd64` only, with both containers. A package
+from `conda-build` was not compared.
+
+## nupkg
+
+A `.nupkg` is a zip with the nuspec, the Open Packaging Conventions parts and the files below one folder. NuGet needs an
+author, so the manifest needs a `maintainer`. The version is kept as written, as a SemVer 2 pre-release.
+
+- NuGet has no architecture. A package that is not `arch: all` warns, and files go in without a runtime folder. Put
+  per-platform files under `runtimes/RID/` with `folder` and `prefix`.
+- `depends` holds distro names, so it is ignored with a warning. Use `dependencies`.
+- Scripts, symbolic links, `recommends`, `suggests`, `conflicts`, `replaces` and `provides` are ignored with a warning.
+
+| Key            | Values                                                         | Default | Effect                                      |
+| -------------- | -------------------------------------------------------------- | ------- | ------------------------------------------- |
+| `folder`       | `lib`, `content`, `contentFiles`, `build`, `tools`, `runtimes` | `tools` | The top folder of the files                 |
+| `prefix`       | Path prefix                                                    | None    | Removed from each path. Files outside it stop the build |
+| `dependencies` | List of `id`, `version`, `target_framework`                    | None    | The `<dependencies>` of the nuspec          |
+
+Checked with `dotnet add package` and `dotnet nuget push` against local folder feeds. Not checked: packages with several
+target frameworks, `contentFiles`, and a comparison with `dotnet pack` output.

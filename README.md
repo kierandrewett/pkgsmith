@@ -23,6 +23,10 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `oci`       | `.oci.tar`                       | podman, docker             |
 | `appimage`  | `.AppImage`                      | Linux desktops             |
 | `wheel`     | `.whl`                           | pip                        |
+| `gem`       | `.gem`                           | RubyGems                   |
+| `npm`       | `.tgz`                           | npm                        |
+| `conda`     | `.conda`, `.tar.bz2`             | conda, micromamba          |
+| `nupkg`     | `.nupkg`                         | NuGet                      |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                 |
 | `zip`       | `.zip`                           | Any system                 |
 

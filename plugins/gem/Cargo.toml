@@ -1,0 +1,18 @@
+[package]
+name = "pkgsmith-plugin-gem"
+version = "0.1.0"
+edition = "2024"
+description = "pkgsmith plugin: RubyGems packages (.gem)"
+license = "MIT"
+repository = "https://github.com/kierandrewett/pkgsmith"
+publish = false
+
+[lib]
+name = "pkgsmith_plugin_gem"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.104"
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.1"

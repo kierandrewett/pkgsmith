@@ -29,6 +29,10 @@ IMAGE_ARCH="${IMAGE_ARCH:-docker.io/library/archlinux:base}"
 IMAGE_ALPINE="${IMAGE_ALPINE:-docker.io/library/alpine:latest}"
 IMAGE_SLACKWARE="${IMAGE_SLACKWARE:-docker.io/vbatts/slackware:current}"
 IMAGE_VOID="${IMAGE_VOID:-ghcr.io/void-linux/void-glibc:latest}"
+IMAGE_RUBY="${IMAGE_RUBY:-docker.io/library/ruby:latest}"
+IMAGE_NODE="${IMAGE_NODE:-docker.io/library/node:latest}"
+IMAGE_MAMBA="${IMAGE_MAMBA:-docker.io/mambaorg/micromamba:latest}"
+IMAGE_DOTNET="${IMAGE_DOTNET:-mcr.microsoft.com/dotnet/sdk:latest}"
 PULL="--pull=always"
 [ -n "${PKGSMITH_NO_PULL:-}" ] && PULL="--pull=missing"
 
@@ -49,7 +53,7 @@ need() { command -v "$1" >/dev/null 2>&1; }
 need podman || { echo "podman is required"; exit 2; }
 
 # Pull every image now, so a pull error is one clear failure and the log shows what was tested.
-for image in "$IMAGE_FEDORA" "$IMAGE_DEBIAN" "$IMAGE_ARCH" "$IMAGE_ALPINE" "$IMAGE_SLACKWARE" "$IMAGE_VOID"; do
+for image in "$IMAGE_FEDORA" "$IMAGE_DEBIAN" "$IMAGE_ARCH" "$IMAGE_ALPINE" "$IMAGE_SLACKWARE" "$IMAGE_VOID" "$IMAGE_RUBY" "$IMAGE_NODE" "$IMAGE_MAMBA" "$IMAGE_DOTNET"; do
     if [ -z "${PKGSMITH_NO_PULL:-}" ]; then podman pull -q "$image" >>"$LOG" 2>&1 || echo "could not pull $image" >&2; fi
     echo "image $image $(podman image inspect --format '{{.Digest}} {{.Created}}' "$image" 2>/dev/null)" | tee -a "$LOG"
 done
@@ -97,6 +101,12 @@ wheel:
 YAML
 
 build() { "$PKGSMITH" build . -F "$1" -o "out-$1" --progress plain; }
+
+# The language package formats install into a language's own tree, so each one gets a manifest of its own.
+lang_manifest() { # lang_manifest FORMAT: writes lang-FORMAT.yaml with the common header and the given contents and section
+    { printf 'name: hi\nversion: 1.0.0\narch: all\ndescription: Says hi\nmaintainer: Test <test@example.org>\nhomepage: https://example.org/hi\nlicense: MIT\n'; cat; } > "lang-$1.yaml"
+}
+build_lang() { "$PKGSMITH" build . -f "lang-$1.yaml" -F "$1" -o "out-$1" --progress plain; }
 in_image() { # in_image IMAGE DIR SCRIPT: run a script with the output folder mounted at /p
     podman run --rm $PULL -v "$WORK/$2:/p:ro,z" "$1" sh -ec "$3"
 }
@@ -186,6 +196,63 @@ if selected freebsd; then
         f=$(ls out-freebsd/*.pkg); tar -tf "$f" | head -2 | tr "\n" " " | grep -q "+COMPACT_MANIFEST +MANIFEST"
         tar -xOf "$f" +MANIFEST | python3 -c "import sys,json; d=json.load(sys.stdin); assert d[\"name\"]==\"hi\" and d[\"abi\"]==\"FreeBSD:14:amd64\""'
     skip "freebsd: the real pkg tool accepts it" "FreeBSD is not available here"
+fi
+
+if selected gem; then
+    mkdir -p lang/gem/lib lang/gem/bin
+    printf 'module Hi\n  def self.say = "hi-from-gem"\nend\n' > lang/gem/lib/hi.rb
+    printf '#!/usr/bin/env ruby\nrequire "hi"\nputs Hi.say\n' > lang/gem/bin/hi; chmod 755 lang/gem/bin/hi
+    lang_manifest gem <<'YAML'
+contents:
+  - { src: lang/gem/lib/hi.rb, dst: /usr/share/gems/gems/hi-1.0.0/lib/hi.rb }
+  - { src: lang/gem/bin/hi, dst: /usr/bin/hi }
+YAML
+    check "gem: build" build_lang gem
+    check "gem: install, require, run, uninstall (latest Ruby)" in_image "$IMAGE_RUBY" out-gem '
+        gem install --local /p/hi-1.0.0.gem --no-document >/dev/null; ruby -e "require %q(hi); puts Hi.say" | grep -q hi-from-gem
+        hi | grep -q hi-from-gem; gem spec /p/hi-1.0.0.gem name | grep -q hi; gem uninstall hi -x >/dev/null'
+fi
+if selected npm; then
+    mkdir -p lang/npm
+    printf 'module.exports = "hi-from-npm";\n' > lang/npm/index.js
+    lang_manifest npm <<'YAML'
+contents:
+  - { src: lang/npm/index.js, dst: /usr/lib/node_modules/hi/index.js }
+YAML
+    check "npm: build" build_lang npm
+    check "npm: install and require (latest Node)" in_image "$IMAGE_NODE" out-npm '
+        mkdir /tmp/proj && cd /tmp/proj && npm init -y >/dev/null && npm install --no-save /p/hi-1.0.0.tgz >/dev/null
+        node -p "require(\"hi\")" | grep -q hi-from-npm; npm publish --dry-run /p/hi-1.0.0.tgz >/dev/null 2>&1'
+fi
+if selected conda; then
+    mkdir -p lang/conda/bin
+    printf '#!/bin/sh\necho hi-from-conda\n' > lang/conda/bin/hi; chmod 755 lang/conda/bin/hi
+    lang_manifest conda <<'YAML'
+contents:
+  - { src: lang/conda/bin/hi, dst: /usr/bin/hi }
+YAML
+    check "conda: build" build_lang conda
+    check "conda: index, create an environment, run, remove (latest micromamba)" in_image "$IMAGE_MAMBA" out-conda '
+        mkdir -p /tmp/ch/noarch /tmp/ch/linux-64; cp /p/*.conda /tmp/ch/linux-64/
+        micromamba create -y -q -n idx -c conda-forge conda-index >/dev/null
+        micromamba run -n idx python -m conda_index /tmp/ch >/dev/null
+        micromamba create -y -q -n t -c file:///tmp/ch --override-channels hi >/dev/null
+        micromamba run -n t hi | grep -q hi-from-conda; micromamba remove -y -q -n t hi >/dev/null'
+fi
+if selected nupkg; then
+    mkdir -p lang/nupkg
+    printf 'hi-from-nupkg\n' > lang/nupkg/hi.txt
+    lang_manifest nupkg <<'YAML'
+contents:
+  - { src: lang/nupkg/hi.txt, dst: /usr/share/hi/hi.txt }
+nupkg:
+  prefix: /usr/share/hi
+YAML
+    check "nupkg: build" build_lang nupkg
+    check "nupkg: dotnet add package from a local feed (latest .NET SDK)" in_image "$IMAGE_DOTNET" out-nupkg '
+        mkdir /feed && cp /p/*.nupkg /feed/; cd /tmp && dotnet new console -o proj --no-restore >/dev/null && cd proj
+        printf "<configuration><packageSources><clear /><add key=\"feed\" value=\"/feed\" /></packageSources></configuration>" > nuget.config
+        dotnet add package hi --version 1.0.0 --source /feed >/dev/null; grep -q hi-from-nupkg /root/.nuget/packages/hi/1.0.0/tools/hi.txt'
 fi
 
 say ""
