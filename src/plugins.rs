@@ -56,7 +56,7 @@ enum Reply {
 /// 1. `extra`, from `--plugin-path`.
 /// 2. `PKGSMITH_PLUGIN_PATH`, a list separated by `:`.
 /// 3. The folder of the `pkgsmith` binary, which is where `cargo build` puts the plugins of this repository.
-/// 4. `../lib/pkgsmith/plugins` next to the binary, which finds the plugins of a package installed under any prefix.
+/// 4. `lib/pkgsmith/plugins` in the folder above the binary (`/usr/lib/pkgsmith/plugins` for `/usr/bin/pkgsmith`), which finds the plugins of a package installed under any prefix.
 /// 5. `$XDG_DATA_HOME/pkgsmith/plugins`, by default `~/.local/share/pkgsmith/plugins`.
 /// 6. `/usr/local/lib/pkgsmith/plugins`, `/usr/lib/pkgsmith/plugins` and `/usr/lib64/pkgsmith/plugins`.
 pub fn search_path(extra: &[PathBuf]) -> Vec<PathBuf> {
@@ -68,7 +68,9 @@ pub fn search_path(extra: &[PathBuf]) -> Vec<PathBuf> {
         && let Some(dir) = exe.parent()
     {
         path.push(dir.to_path_buf());
-        path.push(dir.join("../lib/pkgsmith/plugins"));
+        if let Some(prefix) = dir.parent() {
+            path.push(prefix.join("lib/pkgsmith/plugins"));
+        }
     }
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)

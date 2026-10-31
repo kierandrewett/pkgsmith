@@ -32,7 +32,7 @@ in this order:
 1. The folders you give with `--plugin-path DIR`. Repeat the option for more.
 2. The folders in `PKGSMITH_PLUGIN_PATH`, separated by `:`.
 3. The folder of the `pkgsmith` binary. A `cargo build` of this repository puts the plugins there.
-4. `../lib/pkgsmith/plugins` next to the binary. A package that installs `/usr/bin/pkgsmith` finds
+4. `lib/pkgsmith/plugins` in the folder above the binary. A package that installs `/usr/bin/pkgsmith` finds
    `/usr/lib/pkgsmith/plugins` this way.
 5. `$XDG_DATA_HOME/pkgsmith/plugins`, which is `~/.local/share/pkgsmith/plugins` by default.
 6. `/usr/local/lib/pkgsmith/plugins`, `/usr/lib/pkgsmith/plugins` and `/usr/lib64/pkgsmith/plugins`.
