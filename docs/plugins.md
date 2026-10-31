@@ -91,16 +91,7 @@ deb:
 pkgsmith does not know the keys. The plugin decides, and a good plugin refuses a key it does not know. A top-level key
 that is neither a manifest field nor a format of a loaded plugin is an error, so `dependz:` does not go unnoticed.
 
-The plugins in this repository read these sections:
-
-| Section     | Keys                                                                                         |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| `deb`       | `section` (default `misc`), `priority` (`optional`), `compression` (`xz`, `zstd`, `gzip`)    |
-| `rpm`       | `group` (`Unspecified`), `compression` (`zstd`, `xz`, `gzip`, `bzip2`)                              |
-| `archlinux` | `packager` (default: the maintainer)                                                         |
-| `ipk`       | `arch`: the OpenWrt architecture, for example `aarch64_generic`                              |
-| `tar`       | `compression` (`xz`, `gzip`, `zstd`, `bzip2`, `none`), `top_folder`: put everything below `{name}-{version}/` |
-| `zip`       | `top_folder`                                                                                 |
+The options of the plugins in this repository are in [formats](formats.md).
 
 ## The C interface
 

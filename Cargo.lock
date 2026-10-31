@@ -163,6 +163,8 @@ dependencies = [
  "solana-nohash-hasher",
  "thiserror 2.0.21",
  "xxhash-rust",
+ "zstd 0.13.3",
+ "zstd-safe 7.3.0",
 ]
 
 [[package]]
@@ -2089,7 +2091,7 @@ dependencies = [
  "tokio",
  "ureq",
  "zip",
- "zstd",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -2106,7 +2108,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.1",
  "tar",
- "zstd",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -2117,6 +2119,16 @@ dependencies = [
  "pkgsmith-plugin",
  "serde",
  "sha2 0.11.1",
+]
+
+[[package]]
+name = "pkgsmith-plugin-appimage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "backhand",
+ "pkgsmith-plugin",
+ "serde",
 ]
 
 [[package]]
@@ -2135,6 +2147,16 @@ dependencies = [
  "anyhow",
  "pkgsmith-plugin",
  "serde",
+]
+
+[[package]]
+name = "pkgsmith-plugin-freebsd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2217,6 +2239,18 @@ dependencies = [
  "anyhow",
  "pkgsmith-plugin",
  "serde",
+]
+
+[[package]]
+name = "pkgsmith-plugin-wheel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "pkgsmith-plugin",
+ "serde",
+ "sha2 0.10.9",
+ "zip",
 ]
 
 [[package]]
@@ -3578,7 +3612,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "zeroize",
  "zopfli",
- "zstd",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -3607,11 +3641,29 @@ dependencies = [
 
 [[package]]
 name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe 7.3.0",
+]
+
+[[package]]
+name = "zstd"
 version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
 dependencies = [
- "zstd-safe",
+ "zstd-safe 8.2.0",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882"
+dependencies = [
+ "zstd-sys",
 ]
 
 [[package]]

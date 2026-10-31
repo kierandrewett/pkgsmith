@@ -1,0 +1,20 @@
+[package]
+name = "pkgsmith-plugin-wheel"
+version = "0.1.0"
+edition = "2024"
+description = "pkgsmith plugin: Python wheels"
+license = "MIT"
+repository = "https://github.com/kierandrewett/pkgsmith"
+publish = false
+
+[lib]
+name = "pkgsmith_plugin_wheel"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.22.1"
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.10.9"
+zip = "9.2.0"

@@ -16,11 +16,17 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `archlinux` | `.pkg.tar.zst`                   | Arch Linux                 |
 | `apk`       | `.apk`                           | Alpine                     |
 | `ipk`       | `.ipk`                           | OpenWrt                    |
+| `slackware` | `.txz`                           | Slackware                  |
+| `snap`      | `.snap`                          | snapd                      |
+| `oci`       | `.oci.tar`                       | podman, docker             |
+| `appimage`  | `.AppImage`                      | Linux desktops             |
+| `wheel`     | `.whl`                           | pip                        |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                 |
 | `zip`       | `.zip`                           | Any system                 |
 
-pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`. The packages
-installed and ran in Fedora 43, Debian 13, Alpine 3.22 and Arch. The rpm also installed in openSUSE Tumbleweed.
+Options and what each format was checked with are in [formats](docs/formats.md).
+
+pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`.
 
 ## Install
 
@@ -126,6 +132,7 @@ Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter
 | [Install scripts](docs/scripts.md)                | What runs when, per format                      |
 | [Dependencies](docs/dependencies.md)              | Names, version constraints, per-distro names    |
 | [Signing](docs/signing.md)                        | Keys, `--sign-key`, and checking a signature    |
+| [Formats](docs/formats.md)                        | The options of every format                     |
 | [Plugins](docs/plugins.md)                        | Where plugins live, and how to write one        |
 | [Command line](docs/cli.md)                       | Every command and option                        |
 
