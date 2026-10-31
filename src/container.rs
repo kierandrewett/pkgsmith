@@ -21,6 +21,7 @@ use podman_api::opts::{
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -126,6 +127,7 @@ impl Script {
         let path = directory.path().join("script");
         let mut file = std::fs::File::create(&path)?;
         file.write_all(text.as_bytes())?;
+        #[cfg(unix)]
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
         Ok(Script {
             _directory: directory,
@@ -235,10 +237,41 @@ impl Engine {
         })
     }
 
+    /// Connect to the container engine.
+    ///
+    /// 1. `CONTAINER_HOST`, the variable of Podman itself: `unix:///path/to/podman.sock` or `tcp://host:port`. This is the
+    ///    way on Windows, and on any system where the socket is somewhere else.
+    /// 2. On Linux, the socket of the user (`$XDG_RUNTIME_DIR/podman/podman.sock`), else `podman system service` for the
+    ///    length of the run.
+    /// 3. On macOS, the socket of the running `podman machine`.
     pub fn connect() -> Result<Engine> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;
+        if let Some(host) = std::env::var("CONTAINER_HOST")
+            .ok()
+            .filter(|h| !h.is_empty())
+        {
+            let podman = Podman::new(&host)
+                .with_context(|| format!("CONTAINER_HOST={host} is not an address that pkgsmith understands: use unix:///PATH or tcp://HOST:PORT"))?;
+            runtime
+                .block_on(podman.ping())
+                .with_context(|| format!("podman does not answer at CONTAINER_HOST={host}"))?;
+            return Ok(Engine::new(podman, runtime, None, None));
+        }
+        #[cfg(unix)]
+        return Self::connect_unix(runtime);
+        #[cfg(not(unix))]
+        {
+            let _ = runtime;
+            bail!(
+                "pkgsmith needs the address of the Podman API to run container builds on this system. Start Podman (`podman machine start`) and set CONTAINER_HOST to a tcp:// address that it serves. Builds without an `image` do not need a container"
+            )
+        }
+    }
+
+    #[cfg(unix)]
+    fn connect_unix(runtime: tokio::runtime::Runtime) -> Result<Engine> {
         let default = std::env::var("XDG_RUNTIME_DIR")
             .map(|dir| format!("{dir}/podman/podman.sock"))
             .ok();
@@ -247,6 +280,30 @@ impl Engine {
             if runtime.block_on(podman.ping()).is_ok() {
                 return Ok(Engine::new(podman, runtime, None, None));
             }
+        }
+        if cfg!(target_os = "macos") {
+            // Podman runs in a virtual machine here. Its socket is on the Mac, and `podman machine inspect` names it.
+            let socket = Command::new("podman")
+                .args([
+                    "machine",
+                    "inspect",
+                    "--format",
+                    "{{.ConnectionInfo.PodmanSocket.Path}}",
+                ])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|path| !path.is_empty());
+            if let Some(socket) = socket {
+                let podman = Podman::unix(&socket);
+                if runtime.block_on(podman.ping()).is_ok() {
+                    return Ok(Engine::new(podman, runtime, None, None));
+                }
+            }
+            bail!(
+                "podman does not answer. On macOS Podman runs in a virtual machine: run `podman machine init` once and `podman machine start`, or set CONTAINER_HOST"
+            );
         }
         // The socket lives in the runtime folder of the user, which no cleanup of temporary files touches.
         let base = std::env::var("XDG_RUNTIME_DIR")

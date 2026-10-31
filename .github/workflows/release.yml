@@ -4,7 +4,8 @@
 #   1. builds pkgsmith and its plugins and checks the version of every crate against the tag,
 #   2. runs pkgsmith on its own manifest (pkgsmith.yaml) to build the rpm, deb, Arch and Alpine packages,
 #   3. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
-#   4. creates a GitHub release with the packages, a tarball per architecture (pkgsmith and its plugins) and checksums.
+#   4. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows,
+#   5. creates a GitHub release with the packages, a tarball per platform (pkgsmith and its plugins) and checksums.
 #
 # Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
 #
@@ -79,6 +80,43 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  binaries:
+    name: binaries (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, runner: macos-latest }
+          - { target: x86_64-apple-darwin, runner: macos-13 }
+          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release --workspace --locked
+      - name: Tarball of pkgsmith and its plugins
+        run: |
+          name="pkgsmith-${{ matrix.target }}"
+          mkdir -p "$name/plugins" dist
+          exe=""; if [[ "${{ matrix.target }}" == *windows* ]]; then exe=".exe"; fi
+          cp "target/release/pkgsmith$exe" LICENSE README.md "$name/"
+          # cargo names a library libpkgsmith_plugin_NAME.dylib on macOS and pkgsmith_plugin_NAME.dll on Windows. pkgsmith
+          # loads pkgsmith-plugin-NAME with the same suffix.
+          for f in target/release/*pkgsmith_plugin_*.dylib target/release/*pkgsmith_plugin_*.dll; do
+            [ -e "$f" ] || continue
+            base="${f##*/}"; base="${base#lib}"; base="${base#pkgsmith_plugin_}"
+            cp "$f" "$name/plugins/pkgsmith-plugin-$base"
+          done
+          tar -czf "dist/$name.tar.gz" "$name"
+          tar -tzf "dist/$name.tar.gz" | head -30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
   crates:
     name: crates.io
     needs: [packages]
@@ -108,7 +146,7 @@ jobs:
   release:
     name: GitHub release
     if: github.event_name == 'push'
-    needs: [packages, crates]
+    needs: [packages, binaries, crates]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4

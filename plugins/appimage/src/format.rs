@@ -21,6 +21,7 @@ use pkgsmith_plugin::{Host, Package};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::Cursor;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -365,6 +366,7 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
 
     let file = package.output(&file_name(package)?);
     std::fs::write(&file, bytes).with_context(|| format!("cannot write {}", file.display()))?;
+    #[cfg(unix)]
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))?;
     Ok(file)
 }

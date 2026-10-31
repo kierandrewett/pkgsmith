@@ -22,21 +22,21 @@ pub fn target() -> Result<&'static str> {
             "the plugin bundle is built for glibc and cannot load into this musl binary. Install the apk package of pkgsmith instead"
         );
     }
-    match std::env::consts::ARCH {
-        "x86_64" => Ok("x86_64-unknown-linux-gnu"),
-        "aarch64" => Ok("aarch64-unknown-linux-gnu"),
-        other => bail!("there is no plugin bundle for {other}"),
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
+        (os, arch) => bail!("there is no plugin bundle for {arch} {os}"),
     }
 }
 
 /// The folder `install` writes to when the user names none: the one under the user's data folder that pkgsmith searches.
 pub fn default_dir() -> Result<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .ok_or_else(|| {
-            anyhow!("neither XDG_DATA_HOME nor HOME is set; name a folder with --dir")
-        })?;
+    let data = crate::plugins::user_data_dir().ok_or_else(|| {
+        anyhow!("the data folder of the user is not known (HOME, XDG_DATA_HOME or LOCALAPPDATA); name a folder with --dir")
+    })?;
     Ok(data.join("pkgsmith/plugins"))
 }
 
@@ -77,7 +77,7 @@ fn listed_digest(sums: &str, file: &str) -> Option<String> {
     })
 }
 
-/// Copy `pkgsmith-plugin-*.so` from the `plugins/` folder of the archive into `dir`. Returns the files written.
+/// Copy `pkgsmith-plugin-*` libraries from the `plugins/` folder of the archive into `dir`. Returns the files written.
 fn extract(archive: &[u8], dir: &Path) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     let mut written = Vec::new();
@@ -97,7 +97,7 @@ fn extract(archive: &[u8], dir: &Path) -> Result<Vec<PathBuf>> {
         if !entry.header().entry_type().is_file()
             || !in_plugins
             || !name.starts_with("pkgsmith-plugin-")
-            || !name.ends_with(".so")
+            || !name.ends_with(crate::plugins::LIBRARY_SUFFIX)
         {
             continue;
         }
@@ -117,7 +117,10 @@ fn extract(archive: &[u8], dir: &Path) -> Result<Vec<PathBuf>> {
         written.push(target);
     }
     if written.is_empty() {
-        bail!("the archive holds no plugins/pkgsmith-plugin-*.so");
+        bail!(
+            "the archive holds no plugins/pkgsmith-plugin-*{}",
+            crate::plugins::LIBRARY_SUFFIX
+        );
     }
     Ok(written)
 }

@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     long_about = "Build distribution packages from one manifest per package.\n\nLike docker build, `pkgsmith build [PATH]` reads the manifest in PATH (pkgsmith.yaml), runs its build in a container, and writes the packages to ./dist."
 )]
 struct Cli {
-    /// A folder to search for plugins (pkgsmith-plugin-*.so) before the standard places. Repeatable. See `pkgsmith plugins`.
+    /// A folder to search for plugins (pkgsmith-plugin-*, a shared library) before the standard places. Repeatable. See `pkgsmith plugins`.
     #[arg(long, global = true, value_name = "DIR")]
     plugin_path: Vec<PathBuf>,
     #[command(subcommand)]
@@ -555,7 +555,7 @@ fn run() -> Result<()> {
             }
             if formats.is_empty() {
                 bail!(
-                    "no plugins found. Plugins are files named pkgsmith-plugin-*.so; run `pkgsmith plugins` to see where pkgsmith looks"
+                    "no plugins found. Plugins are shared libraries named pkgsmith-plugin-*; run `pkgsmith plugins` to see where pkgsmith looks"
                 );
             }
         }
