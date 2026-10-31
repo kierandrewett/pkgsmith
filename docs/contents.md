@@ -49,10 +49,11 @@ Files that a tracked build installs under `/etc` are marked as configuration wit
 
 ## Parent folders
 
-A folder that no entry names is not part of the package, for `rpm`. A package must not own `/usr` or `/usr/bin`.
-The formats that need folder entries to unpack files (`deb`, `ipk`, `apk`, `archlinux`) add the parents of every
-file as folders owned by root with mode `0755`. The package manager does not change the mode of a folder that
-already exists.
+A package must not own `/usr` or `/usr/bin`. A folder that no entry names is not part of the `rpm`.
+
+The formats that need folder entries to unpack files (`deb`, `ipk`, `apk`, `archlinux`) add the parents of every file
+as folders owned by root with mode `0755`. The package manager does not change the mode of a folder that already
+exists.
 
 ## Tracked files and excludes
 

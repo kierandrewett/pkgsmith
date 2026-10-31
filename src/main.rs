@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use pkgsmith::container::Engine;
 use pkgsmith::expand::Scope;
+use pkgsmith::install;
 use pkgsmith::manifest::Manifest;
 use pkgsmith::package::{self, Options};
 use pkgsmith::plan;
@@ -101,10 +102,34 @@ enum Command {
     },
     /// List the formats the installed plugins write.
     Formats,
-    /// List the plugins that are loaded and the folders pkgsmith searches for them.
-    Plugins,
+    /// List the plugins that are loaded and the folders pkgsmith searches for them. `plugins install` fetches them.
+    Plugins {
+        #[command(subcommand)]
+        action: Option<PluginsAction>,
+    },
     /// Remove the cached setup images.
     Prune,
+}
+
+#[derive(Subcommand)]
+enum PluginsAction {
+    /// Download the plugins of this version of pkgsmith from its GitHub release and install them.
+    ///
+    /// `cargo install pkgsmith` and `cargo binstall pkgsmith` install the program only. Run this once afterwards.
+    Install {
+        /// The release to take the plugins from. Default: the version of this pkgsmith.
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
+        /// The folder to install into. Default: the pkgsmith folder under XDG_DATA_HOME (~/.local/share/pkgsmith/plugins).
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Read this pkgsmith-TARGET.tar.gz instead of downloading one.
+        #[arg(long, value_name = "FILE")]
+        from: Option<PathBuf>,
+        /// Where the assets of a release are, for a mirror or a fork. {version} is replaced by the version.
+        #[arg(long, value_name = "URL", default_value = install::DEFAULT_RELEASE_URL)]
+        release_url: String,
+    },
 }
 
 fn default_jobs() -> usize {
@@ -429,7 +454,7 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let registry = Registry::discover(&cli.plugin_path);
-    if !matches!(cli.command, Command::Plugins) {
+    if !matches!(cli.command, Command::Plugins { .. }) {
         registry
             .warnings
             .iter()
@@ -442,7 +467,7 @@ fn run() -> Result<()> {
         )
     {
         bail!(
-            "no plugins found, so no package format is available. Plugins are files named pkgsmith-plugin-*.so; run `pkgsmith plugins` to see where pkgsmith looks"
+            "no plugins found, so no package format is available. Run `pkgsmith plugins install` to download them, or `pkgsmith plugins` to see where pkgsmith looks"
         );
     }
     match cli.command {
@@ -458,7 +483,34 @@ fn run() -> Result<()> {
                 );
             }
         }
-        Command::Plugins => {
+        Command::Plugins {
+            action:
+                Some(PluginsAction::Install {
+                    version,
+                    dir,
+                    from,
+                    release_url,
+                }),
+        } => {
+            let version = version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+            let dir = match dir {
+                Some(dir) => dir,
+                None => install::default_dir()?,
+            };
+            let written = install::install(&version, &dir, from.as_deref(), &release_url)?;
+            for file in &written {
+                println!("{}", file.display());
+            }
+            println!("Installed {} plugins into {}", written.len(), dir.display());
+            let searched = plugins::search_path(&cli.plugin_path);
+            if !searched.iter().any(|searched| searched == &dir) {
+                println!(
+                    "pkgsmith does not look there by default. Use --plugin-path {} or PKGSMITH_PLUGIN_PATH.",
+                    dir.display()
+                );
+            }
+        }
+        Command::Plugins { action: None } => {
             println!("Search path:");
             for dir in plugins::search_path(&cli.plugin_path) {
                 println!("  {}", dir.display());

@@ -73,10 +73,13 @@ overrides:
         echo "openSUSE"
 ```
 
-The keys of `overrides` are format names (`tar`, `zip`, `deb`, `rpm`, `archlinux`, `apk`, `ipk`) or distro names (`fedora`,
-`opensuse`, `debian`, `ubuntu`, `archlinux`). The format applies first and the distro on top of it. A list that is
-present replaces the whole list. It does not merge with the base list. The distro of a job comes from the matrix axis
-`distro`, or from `--distro`.
+The keys of `overrides` are format names or distro names:
+
+- Format names: `tar`, `zip`, `deb`, `rpm`, `archlinux`, `apk`, `ipk`.
+- Distro names: `fedora`, `opensuse`, `debian`, `ubuntu`, `archlinux`.
+
+The format applies first and the distro on top of it. A list that is present replaces the whole base list. It does not
+merge with it. The distro of a job comes from the matrix axis `distro`, or from `--distro`.
 
 ## Format options
 

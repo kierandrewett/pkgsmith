@@ -58,9 +58,22 @@ pkgsmith sends one JSON document, a package, for every package it builds. It hol
 | `mtime` | Seconds since the epoch for every time stamp, so equal input gives equal bytes |
 | `out` | The folder for the package. It exists |
 
-Each entry of `entries` has `path` (absolute, on the installed system), `type`, `mode`, `owner`, `group` and `config`.
-`type` is one of `file` (with `src`, the path of the bytes on this machine, and `size`), `dir`, `symlink` (with
-`target`) and `ghost` (owned by the package, not carried in it). Entries come sorted by path.
+Each item of `entries` describes one path:
+
+| Field | Meaning |
+| ----- | ------- |
+| `path` | Absolute path on the installed system |
+| `type` | `file`, `dir`, `symlink` or `ghost` |
+| `mode`, `owner`, `group` | Permissions as a number, and the owner and group names |
+| `config` | `true` for a file that the package manager keeps when the user changed it |
+
+Some fields depend on `type`:
+
+- `file` adds `src`, the path of the bytes on this machine, and `size`.
+- `symlink` adds `target`, the link target as it reads on the installed system.
+- `ghost` is a path that the package owns but does not carry.
+
+Entries come sorted by path.
 
 Run `pkgsmith build -F json` with the `json` plugin from [examples/plugins/rust-json](../examples/plugins/rust-json) to
 see a real document.
@@ -176,11 +189,23 @@ format section in the manifest, define a struct with `#[serde(deny_unknown_field
 [examples/plugins/rust-json](../examples/plugins/rust-json) is this plugin as a crate. The built-in formats in
 [plugins/](../plugins) are larger examples. Each one is a crate with a `lib.rs` that implements `Plugin`.
 
-## Installing a plugin
+## Installing plugins
 
-Copy the library to a folder on the search path and name it `pkgsmith-plugin-NAME.so`. For one user:
+Copy a library to a folder on the search path and name it `pkgsmith-plugin-NAME.so`. For one user:
 
 ```console
 $ mkdir -p ~/.local/share/pkgsmith/plugins
 $ cp target/release/libpkgsmith_plugin_json.so ~/.local/share/pkgsmith/plugins/pkgsmith-plugin-json.so
 ```
+
+The built-in plugins come with each release. `cargo install pkgsmith` and `cargo binstall pkgsmith` install the program
+only, because cargo cannot install libraries. Run this once afterwards:
+
+```console
+$ pkgsmith plugins install
+```
+
+It downloads the archive `pkgsmith-TARGET.tar.gz` of the release that matches the program, checks it against the
+`SHA256SUMS` file of the release, and copies the plugins into `~/.local/share/pkgsmith/plugins`. It downloads over
+https only. Loading a plugin runs its code, so install plugins only from a source you trust. See
+[command line](cli.md#plugins) for the options.

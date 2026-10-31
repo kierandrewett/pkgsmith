@@ -59,9 +59,8 @@ A list in `overrides` replaces the base list. See [manifest reference](manifest.
 
 ## Libraries the program needs
 
-pkgsmith does not look inside your binaries yet. It does not add the libraries a program links against. rpm and
-dpkg normally do that for you, so a package built here can miss a dependency that a spec file would have found.
+pkgsmith does not look inside your binaries. It does not add the libraries a program links against. rpm and dpkg
+normally do that for you, so a package built here can miss a dependency that a spec file would have found.
+
 List the libraries yourself. To see what a program needs, run `readelf -d /usr/bin/prog | grep NEEDED` in the build
 container and map each library to a package of that distro.
-
-pkgsmith does not detect library dependencies yet.

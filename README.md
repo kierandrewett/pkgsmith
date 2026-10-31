@@ -1,32 +1,32 @@
 # pkgsmith
 
-pkgsmith builds distribution packages from one manifest. You write the package name, the files, the install scripts
-and the dependencies once. pkgsmith builds your program in a container for each distro and writes the package.
+pkgsmith builds distribution packages from one manifest. You describe the package once. pkgsmith builds your program
+in a container for each distro and writes the rpm, deb, Arch, Alpine, OpenWrt, tar or zip package.
 
 ![pkgsmith builds one package for Fedora, Debian, Arch and Alpine in a single run](docs/media/demo.gif)
 
 ## Formats
 
-| Format      | File                             | Status  |
-| ----------- | -------------------------------- | ------- |
-| `rpm`       | `.rpm`                           | works   |
-| `deb`       | `.deb`                           | works   |
-| `archlinux` | `.pkg.tar.zst`                   | works   |
-| `apk`       | `.apk` (Alpine)                  | works   |
-| `ipk`       | `.ipk` (OpenWrt)                 | works   |
-| `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | works   |
-| `zip`       | `.zip`                           | works   |
+Every format is a plugin: a shared library that pkgsmith loads. You can add your own. See [plugins](docs/plugins.md).
 
-Every format is a plugin: a shared library named `pkgsmith-plugin-*.so` that pkgsmith finds and loads. The
-formats above come as plugins in [plugins/](plugins). You can add a format in Rust, C or any language that exports a C
-function. See [docs/plugins.md](docs/plugins.md).
+| Format      | File                             | For                        |
+| ----------- | -------------------------------- | -------------------------- |
+| `rpm`       | `.rpm`                           | Fedora, openSUSE, RHEL     |
+| `deb`       | `.deb`                           | Debian, Ubuntu             |
+| `archlinux` | `.pkg.tar.zst`                   | Arch Linux                 |
+| `apk`       | `.apk`                           | Alpine                     |
+| `ipk`       | `.ipk`                           | OpenWrt                    |
+| `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                 |
+| `zip`       | `.zip`                           | Any system                 |
 
-None of them calls `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`. The packages were checked by installing them: rpm on
-Fedora 43 and openSUSE Tumbleweed, deb on Debian 13, Arch with `pacman -Qkk`, apk on Alpine with apk-tools 3.
+pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`. The packages
+installed and ran in Fedora 43, Debian 13, Alpine 3.22 and Arch. The rpm also installed in openSUSE Tumbleweed.
 
 ## Install
 
-You need [Podman](https://podman.io/) to build. A user socket is enough.
+You need [Podman](https://podman.io/). A user socket is enough.
+
+There is no published release yet, so build from source:
 
 ```sh
 git clone https://github.com/kierandrewett/pkgsmith
@@ -34,28 +34,24 @@ cd pkgsmith
 cargo build --release --workspace
 ```
 
-This makes `target/release/pkgsmith` and the plugins `target/release/libpkgsmith_plugin_*.so`. pkgsmith looks for
-plugins in the folder of its binary, so run it from there, or copy the binary and the plugins together. To install for
-one user:
+This makes `target/release/pkgsmith` and the plugins `target/release/libpkgsmith_plugin_*.so`. pkgsmith loads plugins
+from the folder of its binary, so run it from `target/release`. To install it for one user, copy the plugins under the
+name `pkgsmith-plugin-NAME.so`:
 
 ```sh
 install -Dm755 target/release/pkgsmith ~/.local/bin/pkgsmith
 for f in target/release/libpkgsmith_plugin_*.so; do
-    name=${f##*/libpkgsmith_plugin_}
-    install -Dm755 "$f" ~/.local/share/pkgsmith/plugins/pkgsmith-plugin-$name
+    install -Dm755 "$f" ~/.local/share/pkgsmith/plugins/pkgsmith-plugin-${f##*/libpkgsmith_plugin_}
 done
-pkgsmith plugins        # lists the plugins that loaded
+pkgsmith plugins
 ```
+
+`pkgsmith plugins` lists what loaded. Once a release exists, `cargo binstall pkgsmith` installs the program and
+`pkgsmith plugins install` downloads its plugins. See [command line](docs/cli.md#plugins).
 
 ## Quick start
 
-```sh
-cd examples/demo
-pkgsmith build              # the packages go to ./dist
-```
-
-`examples/demo/pkgsmith.yaml` is the manifest in the recording above. A manifest has the package details, one `build`
-for all distros, and a `matrix` with one entry for each package:
+`examples/demo` holds a C program, a Makefile and this manifest:
 
 ```yaml
 name: hello
@@ -86,53 +82,61 @@ matrix:
       setup: apk add --no-cache gcc make musl-dev
 ```
 
-* `image` is the container the entry builds in.
-* `setup` runs once in that image, and the result is cached. It can be one command or a full script.
-* `build` runs in the image with your source folder at `/src`. pkgsmith records the files it installs and packages
-  them. Entries that share an image and scripts share one build.
-* To pick the files yourself, add a `contents` list. See [docs/contents.md](docs/contents.md).
+Build it:
 
-pkgsmith packages itself. See [pkgsmith.yaml](pkgsmith.yaml).
+```sh
+cd examples/demo
+pkgsmith build        # the packages go to ./dist
+```
+
+Each `matrix` entry is one package:
+
+- `image` is the container the entry builds in.
+- `setup` runs once in that image and the result is cached. It can be one command or a full script.
+- `build` runs in the image with your source at `/src`. pkgsmith records the files it installs and packages them.
+  Entries with the same image and scripts share one build.
+
+To choose the files yourself, add a `contents` list. See [contents](docs/contents.md). pkgsmith packages itself with
+[pkgsmith.yaml](pkgsmith.yaml).
 
 ## Commands
 
-```sh
-pkgsmith plan                           # a table of what would be built; starts no containers
-pkgsmith plan --json                    # the same, for scripts
-pkgsmith build                          # build every package
-pkgsmith build -j 4                     # four builds at a time
-pkgsmith build --format deb --job arch=arm64
-pkgsmith build --build-arg VERSION=0.4.2 -o out
-pkgsmith files                          # build, then list the files each package would carry
-pkgsmith formats                        # the formats the installed plugins write
-pkgsmith plugins                        # the loaded plugins, and where pkgsmith looks for them
-pkgsmith prune                          # remove the cached setup images
-```
+| Command           | What it does                                                  |
+| ----------------- | ------------------------------------------------------------- |
+| `build`           | Builds every package and writes it to `dist`                  |
+| `plan`            | Shows each package and its file name. Starts no container     |
+| `files`           | Lists the files each package would carry                      |
+| `formats`         | Lists the formats the installed plugins write                 |
+| `plugins`         | Lists the loaded plugins and the folders searched for them    |
+| `prune`           | Removes the cached setup images                               |
 
-Run `pkgsmith plan` after you change a matrix. It shows the file each job writes, and a `BUILD` letter that marks the
-jobs that share one build.
+Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter share one build. Every option is in
+[command line](docs/cli.md).
 
 ## Documentation
 
-* [Getting started](docs/getting-started.md)
-* [Manifest reference](docs/manifest.md)
-* [Contents: files, trees, links and config files](docs/contents.md)
-* [Build environment: images, setup, the tracked build](docs/build-environment.md)
-* [Matrix and expressions](docs/matrix-and-expressions.md)
-* [Versions and nightly builds](docs/versions.md)
-* [Install scripts](docs/scripts.md)
-* [Dependencies](docs/dependencies.md)
-* [Plugins: add a format, or see how the built-in ones work](docs/plugins.md)
+| Page                                              | Covers                                          |
+| ------------------------------------------------- | ----------------------------------------------- |
+| [Getting started](docs/getting-started.md)        | A package from scratch, step by step            |
+| [Manifest](docs/manifest.md)                      | Every key                                       |
+| [Contents](docs/contents.md)                      | Files, trees, links and config files            |
+| [Build environment](docs/build-environment.md)    | Images, setup, the tracked build, caching       |
+| [Matrix and expressions](docs/matrix-and-expressions.md) | One manifest for many distros and architectures |
+| [Versions](docs/versions.md)                      | How one version becomes each format's spelling  |
+| [Install scripts](docs/scripts.md)                | What runs when, per format                      |
+| [Dependencies](docs/dependencies.md)              | Names, version constraints, per-distro names    |
+| [Plugins](docs/plugins.md)                        | Where plugins live, and how to write one        |
+| [Command line](docs/cli.md)                       | Every command and option                        |
 
-Every file in [examples/](examples/) is a complete manifest. [examples/full.yaml](examples/full.yaml) uses every key
-and has a comment on each one.
+Every file in [examples](examples) is a complete manifest. [examples/full.yaml](examples/full.yaml) uses every key and
+comments each one.
 
 ## Limits
 
-* pkgsmith does not find the shared libraries a program needs. List them in `depends`.
-* Builds run for `linux/amd64` and `linux/arm64`.
-* Packages are not signed.
-* There is no built-in support for a language. Install the toolchain in `setup` and run its build in `build`.
+- pkgsmith does not find the shared libraries a program needs. List them in `depends`.
+- Builds run for `linux/amd64` and `linux/arm64`, and only with Podman. Docker is not supported.
+- Packages are not signed. An Alpine package needs `apk add --allow-untrusted`.
+- There is no built-in support for a language. Install the toolchain in `setup` and run its build in `build`.
   [examples/rust-cli.yaml](examples/rust-cli.yaml) does this for Cargo.
 
 ## Build and test

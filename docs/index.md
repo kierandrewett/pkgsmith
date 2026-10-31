@@ -54,9 +54,14 @@ Builds that need the same image, setup, script and environment run once, even wh
 
 ## Formats are plugins
 
-Every format is a shared library named `pkgsmith-plugin-*.so`. pkgsmith loads the ones it finds and each one adds
-formats. The plugins in this repository write `rpm`, `deb`, `ipk`, `archlinux`, `apk`, `tar` and `zip`. You can write
-your own in Rust, C or any language that exports a C function. See [plugins](plugins.md).
+Every format is a shared library named `pkgsmith-plugin-*.so`. pkgsmith loads the ones it finds, and each one adds
+formats. You can write your own in Rust, C or any language that exports a C function. See [plugins](plugins.md).
+
+The plugins in this repository write:
+
+- `rpm`, `deb` and `ipk`
+- `archlinux` and `apk`
+- `tar` and `zip`
 
 ## Read next
 

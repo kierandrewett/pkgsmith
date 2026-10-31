@@ -7,6 +7,7 @@
 pub mod container;
 pub mod expand;
 pub mod expr;
+pub mod install;
 pub mod manifest;
 pub mod package;
 pub mod plan;

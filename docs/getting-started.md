@@ -95,8 +95,10 @@ $ pkgsmith build -j 4
 ```
 
 On a terminal you see one lane per distro. Each lane shows its steps, a spinner, the time of each step, and the last
-lines of output of the step that runs. A step whose result is cached shows `CACHED`. The first run downloads the
-images and installs the compilers. The next run reuses the setup images and takes a few seconds.
+lines of output of the step that runs.
+
+A step whose result is cached shows `CACHED`. The first run downloads the images and installs the compilers. The next
+run reuses the setup images and takes a few seconds.
 
 When the build ends, the packages are in `./dist`:
 
