@@ -13,7 +13,7 @@ It works like [nFPM](https://nfpm.goreleaser.com/), with a manifest that behaves
 | `archlinux` | `.pkg.tar.zst`             | works       |
 | `ipk`       | `.ipk` (OpenWrt)           | works       |
 | `rpm`       | `.rpm`                     | works       |
-| `apk`       | `.apk` (Alpine)            | planned     |
+| `apk`       | `.apk` (Alpine)            | works       |
 | `snap`      | `.snap`                    | planned     |
 | `flatpak`   | `.flatpak`                 | planned     |
 | `nix`       | Nix expression             | planned     |

@@ -2,6 +2,7 @@
 
 use crate::tree::{Data, Entry};
 use anyhow::{Result, bail};
+use sha1::Digest;
 use std::io::{self, Write};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,9 +60,29 @@ pub struct Leading {
     pub mode: u32,
 }
 
+/// What differs between the tar flavours of the package formats.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TarStyle {
+    /// Write a pax header with `APK-TOOLS.checksum.SHA1` before every regular file, as Alpine packages do.
+    pub apk_checksums: bool,
+    /// Leave out the two zero blocks that end a tar. Alpine joins several tar streams into one package and the first
+    /// ones must not end.
+    pub open_ended: bool,
+}
+
 /// A tar of the entries with `prefix` before every path (`./` for deb, empty for Arch). Paths lose their leading `/`.
 /// Ghost entries are not carried. Owners are written by name, with the numeric id 0.
 pub fn tar(entries: &[Entry], prefix: &str, mtime: u64, leading: &[Leading]) -> Result<Vec<u8>> {
+    tar_styled(entries, prefix, mtime, leading, TarStyle::default())
+}
+
+pub fn tar_styled(
+    entries: &[Entry],
+    prefix: &str,
+    mtime: u64,
+    leading: &[Leading],
+    style: TarStyle,
+) -> Result<Vec<u8>> {
     let mut builder = tar::Builder::new(Vec::new());
     builder.mode(tar::HeaderMode::Complete);
     let header = |mode: u32,
@@ -70,7 +91,11 @@ pub fn tar(entries: &[Entry], prefix: &str, mtime: u64, leading: &[Leading]) -> 
                   owner: &str,
                   group: &str|
      -> Result<tar::Header> {
-        let mut header = tar::Header::new_gnu();
+        let mut header = if style.apk_checksums || style.open_ended {
+            tar::Header::new_ustar()
+        } else {
+            tar::Header::new_gnu()
+        };
         header.set_mode(mode);
         header.set_entry_type(kind);
         header.set_size(size);
@@ -116,6 +141,17 @@ pub fn tar(entries: &[Entry], prefix: &str, mtime: u64, leading: &[Leading]) -> 
                 builder.append_link(&mut h, &name, target)?;
             }
             Data::File { src, size } => {
+                if style.apk_checksums {
+                    let mut sha1 = sha1::Sha1::new();
+                    io::copy(&mut std::fs::File::open(src)?, &mut HashWriter(&mut sha1))?;
+                    let value = crate::hash::hex(&sha1.finalize());
+                    append_pax(
+                        &mut builder,
+                        &name,
+                        &format!("APK-TOOLS.checksum.SHA1={value}"),
+                        mtime,
+                    )?;
+                }
                 let mut h = header(
                     entry.mode,
                     tar::EntryType::Regular,
@@ -127,7 +163,63 @@ pub fn tar(entries: &[Entry], prefix: &str, mtime: u64, leading: &[Leading]) -> 
             }
         }
     }
-    Ok(builder.into_inner()?)
+    let mut bytes = builder.into_inner()?;
+    if style.open_ended {
+        let end = bytes.len() - 1024;
+        debug_assert!(
+            bytes[end..].iter().all(|b| *b == 0),
+            "tar ends with two zero blocks"
+        );
+        bytes.truncate(end);
+    }
+    Ok(bytes)
+}
+
+/// A pax extended header before a file, named `dir/PaxHeaders/file` and written as a ustar entry like abuild does.
+/// apk-tools reads its checksum record there.
+fn append_pax(
+    builder: &mut tar::Builder<Vec<u8>>,
+    path: &str,
+    record: &str,
+    mtime: u64,
+) -> Result<()> {
+    // A pax record is "<length> <key>=<value>\n", and the length counts its own digits.
+    let body = {
+        let mut length = record.len() + 3;
+        while format!("{length} {record}\n").len() != length {
+            length = format!("{length} {record}\n").len();
+        }
+        format!("{length} {record}\n")
+    };
+    let (dir, base) = path
+        .rsplit_once('/')
+        .map(|(d, b)| (format!("{d}/"), b))
+        .unwrap_or((String::new(), path));
+    let mut header = tar::Header::new_ustar();
+    header.set_entry_type(tar::EntryType::XHeader);
+    header.set_size(body.len() as u64);
+    header.set_mode(0o644);
+    header.set_mtime(mtime);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_path(format!("{dir}PaxHeaders/{base}"))?;
+    header.set_cksum();
+    builder.append(&header, body.as_bytes())?;
+    Ok(())
+}
+
+/// Lets `io::copy` feed a digest.
+struct HashWriter<'a, D: sha1::Digest>(&'a mut D);
+
+impl<D: sha1::Digest> Write for HashWriter<'_, D> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.0.update(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// A Unix `ar` archive: the container of deb packages.

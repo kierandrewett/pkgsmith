@@ -180,7 +180,7 @@ fn header(mut tags: Vec<(u32, Value)>, region: u32) -> Vec<u8> {
     let mut store = Vec::new();
     let mut index = Vec::new();
     for (tag, value) in &tags {
-        while store.len() % value.alignment() != 0 {
+        while !store.len().is_multiple_of(value.alignment()) {
             store.push(0);
         }
         index.push((*tag, value.type_code(), store.len() as u32, value.count()));
@@ -329,11 +329,11 @@ fn cpio_member(
         .bytes(),
     );
     out.extend(name.bytes());
-    while out.len() % 4 != 0 {
+    while !out.len().is_multiple_of(4) {
         out.push(0);
     }
     out.extend(data);
-    while out.len() % 4 != 0 {
+    while !out.len().is_multiple_of(4) {
         out.push(0);
     }
     Ok(())
@@ -642,7 +642,7 @@ pub fn build(package: &Package) -> Result<PathBuf> {
 
     let mut file = lead(&format!("{}-{nevr}", manifest.name), arch);
     file.extend(&signature);
-    while file.len() % 8 != 0 {
+    while !file.len().is_multiple_of(8) {
         file.push(0);
     }
     file.extend(&header_bytes);
