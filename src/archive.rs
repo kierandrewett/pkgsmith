@@ -11,6 +11,7 @@ pub enum Compression {
     Gzip,
     Xz,
     Zstd,
+    Bzip2,
 }
 
 impl Compression {
@@ -20,7 +21,8 @@ impl Compression {
             "gzip" | "gz" => Compression::Gzip,
             "xz" => Compression::Xz,
             "zstd" | "zst" => Compression::Zstd,
-            other => bail!("unknown compression {other:?}; use none, gzip, xz or zstd"),
+            "bzip2" | "bz2" => Compression::Bzip2,
+            other => bail!("unknown compression {other:?}; use none, gzip, xz, zstd or bzip2"),
         })
     }
 
@@ -30,6 +32,7 @@ impl Compression {
             Compression::Gzip => ".gz",
             Compression::Xz => ".xz",
             Compression::Zstd => ".zst",
+            Compression::Bzip2 => ".bz2",
         }
     }
 
@@ -49,6 +52,12 @@ impl Compression {
                 encoder.finish()?
             }
             Compression::Zstd => zstd::stream::encode_all(data, 19)?,
+            Compression::Bzip2 => {
+                let mut encoder =
+                    bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::best());
+                encoder.write_all(data)?;
+                encoder.finish()?
+            }
         })
     }
 }
@@ -262,7 +271,7 @@ mod tests {
     #[test]
     fn compression_round_trips_through_each_codec() {
         let data = b"gnoblin ".repeat(500);
-        for name in ["gzip", "xz", "zstd", "none"] {
+        for name in ["gzip", "xz", "zstd", "bzip2", "none"] {
             let packed = Compression::parse(name).unwrap().compress(&data).unwrap();
             let restored = match name {
                 "gzip" => io::Read::bytes(flate2::read::GzDecoder::new(packed.as_slice()))
@@ -272,6 +281,9 @@ mod tests {
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap(),
                 "zstd" => zstd::stream::decode_all(packed.as_slice()).unwrap(),
+                "bzip2" => io::Read::bytes(bzip2::read::BzDecoder::new(packed.as_slice()))
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
                 _ => packed.clone(),
             };
             assert_eq!(restored, data, "{name}");

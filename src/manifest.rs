@@ -98,7 +98,7 @@ pub struct IpkOptions {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TarOptions {
-    /// `gzip`, `xz` (default), `zstd`, `none`.
+    /// `gzip`, `xz` (default), `zstd`, `bzip2`, `none`.
     pub compression: Option<String>,
     /// Put every file below a top folder, `{name}-{version}` when `true`.
     #[serde(default)]
@@ -230,6 +230,14 @@ impl Matrix {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct ZipOptions {
+    /// Put every file below a top folder, `{name}-{version}` when `true`.
+    #[serde(default)]
+    pub top_folder: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub name: String,
     pub version: String,
@@ -286,6 +294,8 @@ pub struct Manifest {
     pub ipk: IpkOptions,
     #[serde(default)]
     pub tar: TarOptions,
+    #[serde(default)]
+    pub zip: ZipOptions,
     /// The folder of the manifest. Relative `src` paths and script files resolve against it.
     #[serde(skip)]
     pub base: PathBuf,
@@ -441,7 +451,8 @@ impl Manifest {
             if !content.dst.starts_with('/') {
                 bail!("dst {:?} must be an absolute path", content.dst);
             }
-            let needs_src = !matches!(content.kind, Kind::Dir | Kind::Ghost);
+            // A file or config entry without a src changes the tracked file at dst, so only the rest need a src.
+            let needs_src = matches!(content.kind, Kind::Tree | Kind::Symlink);
             if needs_src && content.src.is_none() {
                 bail!("{}: type {:?} needs a src", content.dst, content.kind);
             }
@@ -581,7 +592,7 @@ mod tests {
         );
         assert!(
             bind(
-                &format!("{BASE}contents:\n  - {{dst: /a}}\n"),
+                &format!("{BASE}contents:\n  - {{dst: /a, type: tree}}\n"),
                 Job::default(),
                 "deb"
             )

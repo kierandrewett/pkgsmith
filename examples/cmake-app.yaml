@@ -1,0 +1,16 @@
+# A C++ application built with CMake and Ninja. `exclude` leaves out headers and static libraries.
+#   pkgsmith build examples/cmake-app.yaml --format deb
+name: acme-viewer
+version: 2.1.0
+description: An image viewer
+image: debian:13
+setup: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build g++ libpng-dev
+build: |
+  cmake -S . -B /tmp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build /tmp/build
+  cmake --install /tmp/build
+exclude:
+  - /usr/include
+  - /usr/lib/*.a
+  - /usr/lib/cmake
+depends: [libpng16-16t64]

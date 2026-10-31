@@ -8,6 +8,7 @@
 use super::ensure_resolved;
 use crate::archive::{self, Compression, Leading, TarStyle};
 use crate::hash::hex;
+use crate::manifest::Manifest;
 use crate::package::Package;
 use crate::tree;
 use crate::version::Version;
@@ -66,6 +67,16 @@ fn pkginfo(package: &Package, version: &str, data_hash: &str) -> Result<String> 
     Ok(text)
 }
 
+/// `name-version-rRELEASE.apk`.
+pub fn file_name(manifest: &Manifest) -> Result<String> {
+    Ok(format!(
+        "{}-{}-r{}.apk",
+        manifest.name,
+        Version::parse(&manifest.version)?.apk(),
+        manifest.release
+    ))
+}
+
 pub fn build(package: &Package) -> Result<PathBuf> {
     let manifest = package.manifest;
     let mtime = package.options.mtime;
@@ -120,7 +131,7 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     let mut file = control;
     file.extend(data);
     std::fs::create_dir_all(&package.options.out)?;
-    let path = package.output(&format!("{}-{version}.apk", manifest.name));
+    let path = package.output(&file_name(manifest)?);
     std::fs::write(&path, file)?;
     Ok(path)
 }

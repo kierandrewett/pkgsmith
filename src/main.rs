@@ -6,7 +6,7 @@ use pkgsmith::formats;
 use pkgsmith::manifest::Manifest;
 use pkgsmith::package::{Options, Package};
 use pkgsmith::plan;
-use pkgsmith::runner::{Runner, lane};
+use pkgsmith::runner::{Runner, build_key, lane};
 use pkgsmith::ui::{Mode, Ui};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -76,11 +76,14 @@ enum Command {
         #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
         work: PathBuf,
     },
-    /// List what `build` would do, one line per matrix combination and format.
+    /// List what `build` would do as a table: one row per job, with the file it would write and which jobs share a build.
     #[command(alias = "ls")]
     Plan {
         #[command(flatten)]
         source: Source,
+        /// Print the jobs as JSON, for scripts.
+        #[arg(long)]
+        json: bool,
     },
     /// Build, then list the files each package would carry, without writing packages.
     Files {
@@ -231,6 +234,164 @@ fn run_all<T: Send>(
     )
 }
 
+/// One job as `plan` shows it.
+struct Row {
+    format: String,
+    distro: String,
+    arch: String,
+    image: String,
+    build: Option<String>,
+    file: Result<String, String>,
+}
+
+/// Letters for the distinct builds, in order of first use: a, b, c, ... aa, ab.
+fn build_letter(index: usize) -> String {
+    let mut n = index;
+    let mut letters = String::new();
+    loop {
+        letters.insert(0, (b'a' + (n % 26) as u8) as char);
+        if n < 26 {
+            return letters;
+        }
+        n = n / 26 - 1;
+    }
+}
+
+fn plan_table(manifest: &Manifest, items: &[plan::Item], scope: &Scope, json: bool) -> Result<()> {
+    use std::io::IsTerminal;
+    let mut keys: Vec<String> = Vec::new();
+    let mut rows = Vec::new();
+    for item in items {
+        let bound = manifest.bind(scope, &item.job, &item.format);
+        let (arch, image, build, file) = match &bound {
+            Ok(bound) => {
+                let letter = build_key(bound, &item.job).map(|key| {
+                    let index = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
+                        keys.push(key);
+                        keys.len() - 1
+                    });
+                    build_letter(index)
+                });
+                (
+                    bound.arch.clone(),
+                    bound.image.clone().unwrap_or_default(),
+                    letter,
+                    formats::file_name(bound, &item.format).map_err(|e| format!("{e:#}")),
+                )
+            }
+            Err(error) => (
+                item.job.arch().unwrap_or(&manifest.arch).to_string(),
+                String::new(),
+                None,
+                Err(format!("{error:#}")),
+            ),
+        };
+        rows.push(Row {
+            format: item.format.clone(),
+            distro: item.job.distro().unwrap_or("").to_string(),
+            arch,
+            image,
+            build,
+            file,
+        });
+    }
+    if json {
+        let list: Vec<serde_json::Value> = items
+            .iter()
+            .zip(&rows)
+            .map(|(item, row)| {
+                serde_json::json!({
+                    "format": row.format,
+                    "distro": row.distro,
+                    "arch": row.arch,
+                    "image": row.image,
+                    "build": row.build,
+                    "file": row.file.as_ref().ok(),
+                    "error": row.file.as_ref().err(),
+                    "values": item.job.values,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&list)?);
+        return Ok(());
+    }
+    let tty = std::io::stdout().is_terminal();
+    let (bold, dim, reset, red) = if tty {
+        ("\x1b[1m", "\x1b[2m", "\x1b[0m", "\x1b[31m")
+    } else {
+        ("", "", "", "")
+    };
+    let cell = |rows: &[Row], head: &str, get: &dyn Fn(&Row) -> String| {
+        rows.iter()
+            .map(|r| get(r).chars().count())
+            .chain([head.chars().count()])
+            .max()
+            .unwrap_or(0)
+    };
+    let w_format = cell(&rows, "FORMAT", &|r| r.format.clone());
+    let w_distro = cell(&rows, "DISTRO", &|r| r.distro.clone());
+    let w_arch = cell(&rows, "ARCH", &|r| r.arch.clone());
+    let w_image = cell(&rows, "IMAGE", &|r| r.image.clone());
+    let has_builds = rows.iter().any(|r| r.build.is_some());
+    println!(
+        "{bold}{:>3}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {:<w_image$}  {}FILE{reset}",
+        "#",
+        "FORMAT",
+        "DISTRO",
+        "ARCH",
+        "IMAGE",
+        if has_builds { "BUILD  " } else { "" },
+    );
+    for (number, row) in rows.iter().enumerate() {
+        let build = if has_builds {
+            format!("{:<5}  ", row.build.as_deref().unwrap_or("-"))
+        } else {
+            String::new()
+        };
+        let file = match &row.file {
+            Ok(name) => name.clone(),
+            Err(_) => format!("{red}?{reset}"),
+        };
+        println!(
+            "{dim}{:>3}{reset}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {:<w_image$}  {build}{file}",
+            number + 1,
+            row.format,
+            row.distro,
+            row.arch,
+            row.image,
+        );
+    }
+    let mut problems: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| {
+            row.file
+                .as_ref()
+                .err()
+                .map(|e| e.lines().next().unwrap_or(""))
+        })
+        .collect();
+    problems.dedup();
+    let builds = keys.len();
+    let shared = if builds > 0 && builds < rows.len() {
+        " Jobs with the same BUILD letter share one build."
+    } else {
+        ""
+    };
+    println!(
+        "\n{} packages{}.{shared}",
+        rows.len(),
+        if builds > 0 {
+            format!(" from {builds} builds")
+        } else {
+            String::new()
+        }
+    );
+    for problem in problems {
+        println!("{red}error:{reset} {problem}");
+    }
+    Ok(())
+}
+
 fn size(bytes: u64) -> String {
     match bytes {
         b if b < 1024 => format!("{b} B"),
@@ -253,9 +414,10 @@ fn run() -> Result<()> {
             let removed = Engine::connect()?.prune()?;
             println!("Removed {removed} cached setup images");
         }
-        Command::Plan { source } => {
-            let (_, items) = load(&source)?;
-            items.iter().for_each(|item| println!("{}", item.label()));
+        Command::Plan { source, json } => {
+            let scope = scope(&source.build_arg)?;
+            let (manifest, items) = load(&source)?;
+            plan_table(&manifest, &items, &scope, json)?;
         }
         Command::Files {
             source,

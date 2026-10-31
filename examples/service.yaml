@@ -1,0 +1,33 @@
+# A system service: unit file, configuration file, runtime folder, a service user and scripts.
+#   pkgsmith build examples/service.yaml --format rpm
+name: acme-agent
+version: 1.4.0
+description: A monitoring agent
+license: Apache-2.0
+image: fedora:43
+setup: dnf -y install golang
+build: |
+  go build -o /usr/bin/acme-agent ./cmd/agent
+
+contents:
+  # The unit file comes from the source tree. It is not part of the build output.
+  - { src: packaging/acme-agent.service, dst: /usr/lib/systemd/system/acme-agent.service, mode: "0644" }
+  # A configuration file: the package manager keeps the user's changes.
+  - { src: packaging/agent.yaml, dst: /etc/acme-agent/agent.yaml, type: config, mode: "0640", group: acme }
+  # A state folder owned by the service user.
+  - { dst: /var/lib/acme-agent, type: dir, mode: "0750", owner: acme, group: acme }
+  # A log file the package owns but does not carry. Only rpm records it.
+  - { dst: /var/log/acme-agent.log, type: ghost }
+
+scripts:
+  pre_install: |
+    getent group acme >/dev/null || groupadd --system acme
+    getent passwd acme >/dev/null || useradd --system --gid acme --no-create-home --shell /sbin/nologin acme
+  post_install: |
+    systemctl daemon-reload
+    systemctl enable acme-agent.service || true
+  pre_remove: |
+    systemctl stop acme-agent.service || true
+    systemctl disable acme-agent.service || true
+  post_remove: |
+    systemctl daemon-reload

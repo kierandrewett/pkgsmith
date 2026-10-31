@@ -1,0 +1,10 @@
+# The smallest manifest that builds something: one image, one setup, one build.
+#   pkgsmith build examples/hello.yaml     (the folder of the manifest is the build context)
+name: hello
+version: 1.0.0
+description: A small program
+image: fedora:43
+setup: dnf -y install gcc make
+build: |
+  make
+  make install PREFIX=/usr

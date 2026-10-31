@@ -88,7 +88,7 @@ impl Scope {
                 (Some(value), _) if !value.is_empty() => out.push_str(value),
                 (_, Some(default)) => out.push_str(default),
                 _ => bail!(
-                    "${{{name}}} is not set (in {text:?}); set it in the environment or with --set {name}=VALUE"
+                    "${{{name}}} is not set (in {text:?}); set it in the environment or with --build-arg {name}=VALUE"
                 ),
             }
             rest = &after[end + 1..];

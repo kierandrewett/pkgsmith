@@ -200,6 +200,22 @@ pub fn resolve_with(manifest: &Manifest, format: &str, tracked: Vec<Entry>) -> R
                 content,
                 &mut entries,
             )?,
+            Kind::File | Kind::Config if content.src.is_none() => {
+                // No src: change the file a tracked build installed, and keep its content.
+                let path = normalise(&content.dst);
+                let Some(entry) = found.get_mut(&path) else {
+                    bail!("{path}: no tracked file to change; name a src to add this file");
+                };
+                entry.config |= content.kind == Kind::Config;
+                entry.mode = content.mode.unwrap_or(entry.mode);
+                if let Some(owner) = &content.owner {
+                    entry.owner = owner.clone();
+                }
+                if let Some(group) = &content.group {
+                    entry.group = group.clone();
+                }
+                continue;
+            }
             Kind::File | Kind::Config => {
                 let config = content.kind == Kind::Config;
                 if has_glob(src) {
@@ -342,6 +358,33 @@ mod tests {
         assert_eq!(rpm.len(), 1);
         assert_eq!(rpm[0].size(), 2);
         assert_eq!(resolve(&manifest, "deb").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_entry_without_a_src_changes_the_tracked_file_and_keeps_its_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = manifest(
+            dir.path(),
+            "  - {dst: /etc/app.conf, type: config, mode: \"0600\", owner: app}\n",
+        );
+        let tracked = vec![Entry {
+            path: "/etc/app.conf".into(),
+            data: Data::File {
+                src: "/stage/etc/app.conf".into(),
+                size: 7,
+            },
+            mode: 0o644,
+            owner: "root".into(),
+            group: "root".into(),
+            config: false,
+        }];
+        let entries = resolve_with(&manifest, "deb", tracked).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].config);
+        assert_eq!((entries[0].mode, entries[0].owner.as_str()), (0o600, "app"));
+        assert_eq!(entries[0].size(), 7);
+        let missing = resolve(&manifest, "deb").unwrap_err().to_string();
+        assert!(missing.contains("no tracked file"), "{missing}");
     }
 
     #[test]

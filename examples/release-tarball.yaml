@@ -1,0 +1,13 @@
+# A release archive for people who unpack it themselves. `top_folder` puts everything below acme-tool-1.0.0/.
+#   pkgsmith build examples/release-tarball.yaml --format tar
+name: acme-tool
+version: 1.0.0
+description: A tool
+image: debian:13
+setup: apt-get update -qq && apt-get install -y gcc make
+build: |
+  make
+  make install PREFIX=/opt/acme-tool
+tar:
+  compression: zstd
+  top_folder: true

@@ -6,6 +6,7 @@
 use super::ensure_resolved;
 use crate::archive::Compression;
 use crate::hash::digests;
+use crate::manifest::Manifest;
 use crate::package::Package;
 use crate::tree::{Data, Entry};
 use crate::version::Version;
@@ -384,6 +385,20 @@ fn interpreter(script: &str) -> String {
         .to_string()
 }
 
+/// `name-version-release.arch.rpm`.
+pub fn file_name(manifest: &Manifest) -> Result<String> {
+    let nevr = format!(
+        "{}-{}",
+        Version::parse(&manifest.version)?.tilde(),
+        manifest.release
+    );
+    Ok(format!(
+        "{}-{nevr}.{}.rpm",
+        manifest.name,
+        architecture(&manifest.arch)
+    ))
+}
+
 pub fn build(package: &Package) -> Result<PathBuf> {
     let manifest = package.manifest;
     let effective = &package.effective;
@@ -406,6 +421,7 @@ pub fn build(package: &Package) -> Result<PathBuf> {
         Compression::Zstd => ("zstd", "19", Some(("rpmlib(PayloadIsZstd)", "5.4.18-1"))),
         Compression::Xz => ("xz", "6", Some(("rpmlib(PayloadIsXz)", "5.2-1"))),
         Compression::Gzip => ("gzip", "9", None),
+        Compression::Bzip2 => ("bzip2", "9", None),
         Compression::None => bail!("an rpm payload is compressed: use zstd, xz or gzip"),
     };
 
@@ -648,7 +664,7 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     file.extend(&header_bytes);
     file.extend(&compressed);
     std::fs::create_dir_all(&package.options.out)?;
-    let path = package.output(&format!("{}-{nevr}.{arch}.rpm", manifest.name));
+    let path = package.output(&file_name(manifest)?);
     std::fs::write(&path, file)?;
     Ok(path)
 }

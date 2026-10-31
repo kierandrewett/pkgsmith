@@ -3,6 +3,7 @@
 use super::ensure_resolved;
 use crate::archive::{self, Compression, Leading};
 use crate::hash::digests;
+use crate::manifest::Manifest;
 use crate::package::Package;
 use crate::tree::{self, Data};
 use crate::version::Version;
@@ -115,6 +116,20 @@ fn mtree(entries: &[tree::Entry], leading: &[Leading], mtime: u64) -> Result<Str
     Ok(text)
 }
 
+/// `name-pkgver-release-arch.pkg.tar.zst`.
+pub fn file_name(manifest: &Manifest) -> Result<String> {
+    let version = format!(
+        "{}-{}",
+        Version::parse(&manifest.version)?.arch(),
+        manifest.release
+    );
+    Ok(format!(
+        "{}-{version}-{}.pkg.tar.zst",
+        manifest.name,
+        architecture(&manifest.arch)
+    ))
+}
+
 pub fn build(package: &Package) -> Result<PathBuf> {
     let manifest = package.manifest;
     let version = format!(
@@ -160,11 +175,7 @@ pub fn build(package: &Package) -> Result<PathBuf> {
 
     let tar = archive::tar(&entries, "", mtime, &leading)?;
     std::fs::create_dir_all(&package.options.out)?;
-    let file = package.output(&format!(
-        "{}-{version}-{}.pkg.tar.zst",
-        manifest.name,
-        architecture(&manifest.arch)
-    ));
+    let file = package.output(&file_name(manifest)?);
     std::fs::write(&file, Compression::Zstd.compress(&tar)?)?;
     Ok(file)
 }

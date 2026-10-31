@@ -60,6 +60,8 @@ struct State {
     mode: Mode,
     started: Instant,
     lanes: Vec<String>,
+    /// When each lane last started a step, wrote output, or ended a step. A lane that is idle for a moment is finished.
+    activity: Vec<Instant>,
     steps: Vec<StepState>,
     /// Lines the last redraw printed, so the next one can move back over them.
     drawn: usize,
@@ -69,6 +71,12 @@ struct State {
 
 /// How many lines of output a running step shows.
 const TAIL: usize = 5;
+
+/// How long a lane has to be quiet before it shrinks to one line.
+const QUIET: Duration = Duration::from_millis(800);
+
+/// How many finished lanes keep their own line. Earlier ones are counted.
+const DONE_LANES: usize = 5;
 
 /// How many lines of a failed step's output the final report shows.
 const FAILURE_LINES: usize = 40;
@@ -122,19 +130,92 @@ impl State {
         } else {
             format!("{DIM}{running} running{RESET}")
         };
+        let lanes_done = (0..self.lanes.len())
+            .filter(|&l| self.finished_lane(l, finished))
+            .count();
         format!(
-            "{BOLD}[+] Building {}{RESET} ({done}/{}) {state}",
+            "{BOLD}[+] Building {}{RESET} ({done}/{} steps, {lanes_done}/{} lanes) {state}",
             seconds(self.started.elapsed()),
-            self.steps.len()
+            self.steps.len(),
+            self.lanes.len()
         )
     }
 
-    /// The block as lines of text: a header, then every lane with its steps.
+    /// A lane is finished when none of its steps runs, none failed, and it has been quiet for a moment (or the build
+    /// is over). A finished lane shrinks to one line.
+    fn finished_lane(&self, lane: usize, build_over: bool) -> bool {
+        let mut steps = self.steps.iter().filter(|s| s.lane == lane).peekable();
+        let any = steps.peek().is_some();
+        let running = self
+            .steps
+            .iter()
+            .any(|s| s.lane == lane && s.status == Status::Running);
+        let failed = self
+            .steps
+            .iter()
+            .any(|s| s.lane == lane && s.status == Status::Failed);
+        any && !running && !failed && (build_over || self.activity[lane].elapsed() > QUIET)
+    }
+
+    /// One line for a finished lane: its time and the time of each kind of step.
+    fn summary(&self, lane: usize, columns: usize) -> String {
+        let steps: Vec<&StepState> = self.steps.iter().filter(|s| s.lane == lane).collect();
+        let first = steps
+            .iter()
+            .map(|s| s.started)
+            .min()
+            .unwrap_or_else(Instant::now);
+        let last = steps.iter().filter_map(|s| s.ended).max().unwrap_or(first);
+        let parts: Vec<String> = steps
+            .iter()
+            .map(|s| {
+                let word = s.name.split_whitespace().next().unwrap_or("");
+                match s.status {
+                    Status::Cached => format!("{word} cached"),
+                    _ => format!(
+                        "{word} {}",
+                        seconds(s.ended.unwrap_or(s.started) - s.started)
+                    ),
+                }
+            })
+            .collect();
+        let name = &self.lanes[lane];
+        let detail = clip(
+            &parts.join(", "),
+            columns.saturating_sub(name.chars().count() + 16),
+        );
+        format!(
+            "   {GREEN}✔{RESET} {}{BOLD}{name}{RESET} {DIM}{:>6}  {detail}{RESET}",
+            self.colour_code(lane),
+            seconds(last - first)
+        )
+    }
+
+    fn colour_code(&self, lane: usize) -> &'static str {
+        self.colour(lane)
+    }
+
+    /// The block as lines of text: a header, one line per finished lane, then every other lane with its steps.
     fn block(&self, finished: bool) -> Vec<String> {
         let columns = width();
         let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][self.frame % 10];
         let mut lines = vec![self.header(finished)];
+        let done: Vec<usize> = (0..self.lanes.len())
+            .filter(|&l| self.finished_lane(l, finished))
+            .collect();
+        let hidden = done.len().saturating_sub(DONE_LANES);
+        if hidden > 0 {
+            lines.push(format!(
+                "   {GREEN}✔{RESET} {DIM}{hidden} earlier lanes finished{RESET}"
+            ));
+        }
+        for &lane in &done[hidden..] {
+            lines.push(self.summary(lane, columns));
+        }
         for (lane, name) in self.lanes.iter().enumerate() {
+            if done.contains(&lane) {
+                continue;
+            }
             let colour = self.colour(lane);
             lines.push(format!(" {colour}{BOLD}{name}{RESET}"));
             for step in self.steps.iter().filter(|s| s.lane == lane) {
@@ -224,6 +305,7 @@ impl Ui {
             mode,
             started: Instant::now(),
             lanes: Vec::new(),
+            activity: Vec::new(),
             steps: Vec::new(),
             drawn: 0,
             frame: 0,
@@ -258,9 +340,11 @@ impl Ui {
             Some(index) => index,
             None => {
                 state.lanes.push(lane.to_string());
+                state.activity.push(Instant::now());
                 state.lanes.len() - 1
             }
         };
+        state.activity[lane_index] = Instant::now();
         let index = state.steps.len();
         state.steps.push(StepState {
             lane: lane_index,
@@ -333,6 +417,7 @@ impl Step {
         }
         let mut state = self.ui.state.lock().unwrap();
         let lane = state.steps[self.index].lane;
+        state.activity[lane] = Instant::now();
         if state.mode == Mode::Plain {
             state.plain(lane, &format!("{DIM}{line}{RESET}"));
         }
@@ -352,6 +437,7 @@ impl Step {
         let took = step.ended.unwrap() - step.started;
         let lane = step.lane;
         let title = step.name.clone();
+        state.activity[lane] = Instant::now();
         if state.mode == Mode::Plain {
             let text = match status {
                 Status::Cached => format!("{BLUE}✔ {title} (cached){RESET}"),

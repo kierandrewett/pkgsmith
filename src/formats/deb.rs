@@ -3,6 +3,7 @@
 use super::ensure_resolved;
 use crate::archive::{self, Compression, Leading};
 use crate::hash::digests;
+use crate::manifest::Manifest;
 use crate::package::Package;
 use crate::tree::{self, Data};
 use crate::version::Version;
@@ -17,10 +18,10 @@ pub enum Flavour {
 }
 
 /// The architecture name the format uses.
-fn architecture(package: &Package, flavour: Flavour) -> String {
-    let arch = package.manifest.arch.as_str();
+fn architecture(manifest: &Manifest, flavour: Flavour) -> String {
+    let arch = manifest.arch.as_str();
     if flavour == Flavour::Ipk {
-        if let Some(own) = &package.manifest.ipk.arch {
+        if let Some(own) = &manifest.ipk.arch {
             return own.clone();
         }
         return match arch {
@@ -30,6 +31,25 @@ fn architecture(package: &Package, flavour: Flavour) -> String {
         };
     }
     arch.into()
+}
+
+/// `name_version-release_arch.deb` or `.ipk`.
+pub fn file_name(manifest: &Manifest, flavour: Flavour) -> Result<String> {
+    let version = format!(
+        "{}-{}",
+        Version::parse(&manifest.version)?.tilde(),
+        manifest.release
+    );
+    let extension = if flavour == Flavour::Ipk {
+        "ipk"
+    } else {
+        "deb"
+    };
+    Ok(format!(
+        "{}_{version}_{}.{extension}",
+        manifest.name,
+        architecture(manifest, flavour)
+    ))
 }
 
 /// `Description:` is a summary line, then the body with every line indented by one space and blank lines as ` .`.
@@ -64,7 +84,7 @@ fn control(package: &Package, flavour: Flavour, version: &str) -> Result<String>
     };
     field("Package", &manifest.name);
     field("Version", version);
-    field("Architecture", &architecture(package, flavour));
+    field("Architecture", &architecture(manifest, flavour));
     field(
         "Maintainer",
         manifest
@@ -166,19 +186,15 @@ pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
 
     let control_name = format!("control.tar{suffix}");
     let data_name = format!("data.tar{suffix}");
-    let arch = architecture(package, flavour);
-    let (extension, bytes) = match flavour {
-        Flavour::Deb => (
-            "deb",
-            archive::ar(
-                &[
-                    ("debian-binary", b"2.0\n"),
-                    (&control_name, &control_tar),
-                    (&data_name, &data_tar),
-                ],
-                mtime,
-            )?,
-        ),
+    let bytes = match flavour {
+        Flavour::Deb => archive::ar(
+            &[
+                ("debian-binary", b"2.0\n"),
+                (&control_name, &control_tar),
+                (&data_name, &data_tar),
+            ],
+            mtime,
+        )?,
         Flavour::Ipk => {
             // opkg reads a gzip tar that holds the three members, in this order.
             let members = [
@@ -198,14 +214,11 @@ pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
                     mode: 0o644,
                 },
             ];
-            (
-                "ipk",
-                Compression::Gzip.compress(&archive::tar(&[], "", mtime, &members)?)?,
-            )
+            Compression::Gzip.compress(&archive::tar(&[], "", mtime, &members)?)?
         }
     };
     std::fs::create_dir_all(&package.options.out)?;
-    let file = package.output(&format!("{}_{version}_{arch}.{extension}", manifest.name));
+    let file = package.output(&file_name(manifest, flavour)?);
     std::fs::write(&file, bytes)?;
     Ok(file)
 }

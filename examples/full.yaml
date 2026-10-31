@@ -1,0 +1,213 @@
+# pkgsmith: every key, with every value a key accepts.
+#
+# This file is valid. Run it through the parser with:
+#   pkgsmith plan  examples/full.yaml
+# Lines that start with "#" and then a key show the other values you can choose.
+# Numbers in square brackets point at docs/manifest.md sections.
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Package identity
+# ---------------------------------------------------------------------------------------------------------------------
+
+# Lowercase letters, digits and + - . _ ; starts with a letter or digit.
+name: acme-tool
+
+# MAJOR.MINOR.PATCH, or MAJOR.MINOR.PATCH-prerelease. pkgsmith spells it per format (docs/versions.md).
+#   release:  0.4.2
+#   nightly:  0.4.3-nightly.20261031.142.gabc1234   -> deb/rpm 0.4.3~nightly...  arch 0.4.3nightly20261031.142
+# ${VERSION} comes from the environment or from `pkgsmith build --build-arg VERSION=0.4.2`.
+version: ${VERSION:-0.4.2}
+
+# Package revision of one version. Reset to 1 when the version changes. Text, so "1" or 2 both work.
+release: 1
+
+# Architecture of the package.
+#   amd64  64-bit x86       (rpm x86_64, arch x86_64, apk x86_64, deb amd64)
+#   arm64  64-bit Arm       (rpm aarch64, arch aarch64, apk aarch64, deb arm64)
+#   all    no compiled code (rpm noarch, arch any, apk noarch, deb all)
+# A matrix axis called `arch` overrides this value, one job per architecture.
+arch: amd64
+
+# The first line is the summary. The rest is the long text.
+description: |
+  An example tool that shows every manifest key
+  The long description starts here. It may have several paragraphs.
+
+  A blank line becomes a paragraph break in the package.
+
+maintainer: Example Maintainer <maintainer@example.com>
+homepage: https://example.com/acme-tool
+license: Apache-2.0 # an SPDX expression, e.g. MIT, GPL-3.0-or-later, "MIT OR Apache-2.0"
+
+# Defaults for ${NAME} and ${{ env.NAME }}. The process environment and --build-arg win over these.
+env:
+  PREFIX: /usr
+  VENDOR: example
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Matrix: one job per combination, like strategy.matrix in GitHub Actions (docs/matrix-and-expressions.md)
+# ---------------------------------------------------------------------------------------------------------------------
+matrix:
+  # Axes. `format`, `arch` and `distro` steer the build. Any other name is a variable for ${{ matrix.NAME }}.
+  # Every combination of the axes is one job: 2 architectures x 6 distros = 12 jobs, minus `exclude`.
+  arch: [amd64, arm64]
+  distro: [fedora, opensuse, debian, ubuntu, arch, alpine]
+  #   arch values:   amd64 | arm64
+  #   distro values: fedora | opensuse | debian | ubuntu | arch | alpine  (any text works; an `overrides` key
+  #                  with the same name applies to the jobs of that distro)
+  #   format values: tar | deb | rpm | archlinux | apk | ipk  (add a `format` axis to fix the format per job)
+
+  # include: add keys to the jobs an entry matches. An entry matches a job when every key of the entry that is also an
+  # axis has the job's value. Here each distro gets its image and its format. An entry that matches no job becomes a
+  # new job.
+  include:
+    - { distro: fedora, image: "fedora:43", format: rpm }
+    - { distro: opensuse, image: "registry.opensuse.org/opensuse/tumbleweed", format: rpm }
+    - { distro: debian, image: "debian:13", format: deb }
+    - { distro: ubuntu, image: "ubuntu:24.04", format: deb }
+    - { distro: arch, image: "archlinux:base", format: archlinux }
+    - { distro: alpine, image: "alpine:3.22", format: apk }
+
+  # exclude: drop every job that matches all the keys of an entry.
+  exclude:
+    - { distro: alpine, arch: arm64 } # no arm64 Alpine build yet
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Build environment (docs/build-environment.md)
+# ---------------------------------------------------------------------------------------------------------------------
+
+# The container image the build runs in. Any image works. Expressions work here.
+image: ${{ matrix.image }}
+
+# Runs once, in the image, and is cached as an image. Install the build dependencies here.
+# Text with a "#!" first line runs as written. Other text runs with `sh -e`.
+setup: |
+  . /etc/os-release
+  case "$ID" in
+    fedora)   dnf -y install gcc make ;;
+    opensuse*) zypper -n install gcc make ;;
+    debian|ubuntu) apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make ;;
+    arch)     pacman -Sy --noconfirm gcc make ;;
+    alpine)   apk add --no-cache gcc make musl-dev ;;
+  esac
+
+# Runs in the image with the build context at /src. A throw-away overlay covers /src, so the build may write there.
+# Everything the build installs outside /src becomes the package.
+# Environment inside the build:
+#   PKGSMITH_NAME  PKGSMITH_VERSION  PKGSMITH_RELEASE  PKGSMITH_ARCH  PKGSMITH_DISTRO
+#   MATRIX_<AXIS>  one variable per matrix value except `format`, e.g. MATRIX_DISTRO, MATRIX_IMAGE
+build: |
+  #!/bin/sh
+  set -e
+  make
+  make install PREFIX=${PREFIX:-/usr}
+
+# Paths the package leaves out: path prefixes or globs. Defaults are listed in docs/contents.md.
+exclude:
+  - /usr/share/doc/** # glob
+  - /usr/lib/debug # prefix
+  - /usr/share/man
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Contents: add files, or change tracked ones (docs/contents.md)
+# ---------------------------------------------------------------------------------------------------------------------
+contents:
+  # type: file (default) - one file. mode as octal text or number. owner/group default to root.
+  - src: packaging/acme-tool.service
+    dst: /usr/lib/systemd/system/acme-tool.service
+    mode: "0644"
+    owner: root
+    group: root
+
+  # type: file with a glob - dst is a folder.
+  - src: packaging/man/*.1
+    dst: /usr/share/man/man1
+
+  # type: config - the package manager keeps the file when the user changed it.
+  - src: packaging/acme-tool.conf
+    dst: /etc/acme-tool.conf
+    type: config
+    mode: "0640"
+
+  # type: config without src - change a file the build installed and keep its content.
+  - { dst: /etc/acme-tool.d/defaults.conf, type: config }
+
+  # type: tree - a folder, copied recursively, including the folder and every folder below it.
+  - { src: packaging/share, dst: /usr/share/acme-tool, type: tree }
+
+  # type: dir - an empty folder the package owns.
+  - { dst: /var/lib/acme-tool, type: dir, mode: "0750", owner: acme, group: acme }
+
+  # type: symlink - src is the link target as it reads after install.
+  - { src: /usr/lib/acme-tool/bin/acme-tool, dst: /usr/bin/acme-tool, type: symlink }
+
+  # type: ghost - owned but not carried. Only rpm records it.
+  - { dst: /var/log/acme-tool.log, type: ghost }
+
+  # only: build this entry for these formats (tar, deb, rpm, archlinux, apk, ipk).
+  - { src: packaging/acme-tool.init, dst: /etc/init.d/acme-tool, mode: "0755", only: [ipk] }
+
+  # if: build this entry when the expression is true. Contexts: matrix.*, env.*, format, distro, arch.
+  - src: packaging/arm64-tuning.conf
+    dst: /etc/acme-tool.d/arm64.conf
+    if: matrix.arch == 'arm64' && format != 'tar'
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Relations: names in the syntax of the target format (docs/dependencies.md)
+# ---------------------------------------------------------------------------------------------------------------------
+depends: [libc.so.6]
+recommends: [acme-tool-docs]
+suggests: [acme-tool-extras]
+conflicts: [acme-tool-legacy]
+replaces: [acme-tool-legacy]
+provides: [acme]
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Scripts: inline text, or the name of a file next to the manifest (docs/scripts.md)
+# ---------------------------------------------------------------------------------------------------------------------
+scripts:
+  pre_install: |
+    getent passwd acme >/dev/null || useradd --system --no-create-home acme
+  post_install: |
+    systemctl daemon-reload || true
+  pre_remove: |
+    systemctl stop acme-tool || true
+  post_remove: packaging/post-remove.sh # a one-line value is a file name
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Overrides: replace lists and scripts for one format or one distro. A distro wins over a format.
+# ---------------------------------------------------------------------------------------------------------------------
+overrides:
+  # By format: tar | deb | rpm | archlinux | apk | ipk
+  deb:
+    depends: [libc6]
+  rpm:
+    depends: [glibc]
+  archlinux:
+    depends: [glibc]
+  apk:
+    depends: [musl]
+  # By distro: fedora | opensuse | debian | ubuntu | archlinux | alpine
+  opensuse:
+    depends: [glibc]
+    scripts:
+      post_install: |
+        echo "installed on openSUSE"
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Format options (docs/formats/)
+# ---------------------------------------------------------------------------------------------------------------------
+deb:
+  section: utils # Debian section; default misc
+  priority: optional # required | important | standard | optional | extra; default optional
+  compression: xz # xz (default) | zstd | gzip
+rpm:
+  group: Unspecified
+  compression: zstd # zstd (default) | xz | gzip
+archlinux:
+  packager: Example Maintainer <maintainer@example.com>
+ipk:
+  arch: aarch64_generic # OpenWrt architecture; default derived from `arch` (x86_64, aarch64_generic)
+tar:
+  compression: xz # xz (default) | gzip | zstd | none
+  top_folder: true # put everything below acme-tool-0.4.2/

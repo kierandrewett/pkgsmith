@@ -121,7 +121,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(labels(filtered), ["tar [arch=arm64]"]);
-        assert!(items(&manifest, &["zip".into()], &[], None).is_err());
+        assert!(items(&manifest, &["msi".into()], &[], None).is_err());
     }
 
     #[test]

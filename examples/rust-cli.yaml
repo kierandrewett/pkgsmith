@@ -1,0 +1,30 @@
+# A Rust command line tool for Fedora and Debian, built with cargo inside each distro.
+#   pkgsmith build examples/rust-cli.yaml -j 2
+name: ripfind
+version: ${VERSION:-0.3.0}
+description: |
+  Find files fast
+  ripfind searches a folder tree for names and contents.
+maintainer: Example Maintainer <maintainer@example.com>
+license: MIT
+
+matrix:
+  include:
+    - { distro: fedora, image: "fedora:43", format: rpm }
+    - { distro: debian, image: "debian:13", format: deb }
+
+image: ${{ matrix.image }}
+setup: |
+  . /etc/os-release
+  if [ "$ID" = fedora ]; then dnf -y install cargo gcc; else apt-get update -qq && apt-get install -y cargo gcc; fi
+build: |
+  cargo build --release --locked
+  install -Dm755 target/release/ripfind /usr/bin/ripfind
+  install -Dm644 docs/ripfind.1 /usr/share/man/man1/ripfind.1
+
+# glibc is on every Fedora and Debian system, but the dependency tells the package manager.
+overrides:
+  rpm:
+    depends: [glibc]
+  deb:
+    depends: [libc6]

@@ -1,0 +1,15 @@
+# A Python program with no compiled code: `arch: all` gives a package that installs on every architecture.
+#   pkgsmith build examples/python-app.yaml
+name: notes-cli
+version: 0.9.0
+arch: all
+description: A note taking tool
+image: debian:13
+setup: apt-get update -qq && apt-get install -y python3-pip
+build: |
+  pip install --break-system-packages --no-deps --root=/ --prefix=/usr .
+  # pip writes caches and bytecode that the package does not need
+exclude:
+  - "**/__pycache__"
+  - "**/*.pyc"
+depends: [python3]

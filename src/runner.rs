@@ -53,6 +53,21 @@ pub fn build_env(manifest: &Manifest, job: &Job) -> BTreeMap<String, String> {
     env
 }
 
+/// Identifies a tracked build. Jobs with the same key share one run. `None` for a manifest without an image.
+pub fn build_key(manifest: &Manifest, job: &Job) -> Option<String> {
+    let image = manifest.image.as_ref()?;
+    let build = manifest.build.as_ref()?;
+    let source =
+        std::fs::canonicalize(&manifest.context).unwrap_or_else(|_| manifest.context.clone());
+    Some(hex(&Sha256::digest(format!(
+        "{image}\0{:?}\0{build}\0{:?}\0{}\0{:?}",
+        manifest.setup,
+        manifest.exclude,
+        source.display(),
+        build_env(manifest, job)
+    ))))
+}
+
 /// The lane a job runs in: its distro and architecture, or the image name.
 pub fn lane(manifest: &Manifest, job: &Job) -> String {
     let name = job.distro().map(String::from).unwrap_or_else(|| {
@@ -96,12 +111,7 @@ impl Runner {
         };
         let env = build_env(manifest, job);
         let source = std::fs::canonicalize(&manifest.context)?;
-        let key = hex(&Sha256::digest(format!(
-            "{image}\0{:?}\0{build}\0{:?}\0{}\0{env:?}",
-            manifest.setup,
-            manifest.exclude,
-            source.display()
-        )));
+        let key = build_key(manifest, job).expect("image and build are set above");
         let slot = self
             .builds
             .lock()
