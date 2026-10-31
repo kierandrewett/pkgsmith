@@ -6,11 +6,11 @@
 //! builds may write into it without changing the checkout. When `build` ends, the container's changes against its
 //! image are exactly the files the build installed. They are exported into a stage folder, and the formats package that.
 
-use crate::hash::hex;
-use crate::tree::{Data, Entry};
 use crate::ui::{LineSplitter, Step, Ui};
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
+use pkgsmith_plugin::hash::hex;
+use pkgsmith_plugin::{Data, Entry};
 use podman_api::Podman;
 use podman_api::conn::TtyChunk;
 use podman_api::models::{ContainerMount, ContainerStatus, OverlayVolume};

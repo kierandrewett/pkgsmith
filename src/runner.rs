@@ -2,11 +2,11 @@
 //! also when those formats are built at the same time on different threads.
 
 use crate::container::{Engine, Tracking};
-use crate::hash::hex;
 use crate::manifest::{Job, Manifest};
-use crate::tree::Entry;
 use crate::ui::Ui;
 use anyhow::{Result, anyhow};
+use pkgsmith_plugin::Entry;
+use pkgsmith_plugin::hash::hex;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;

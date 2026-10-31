@@ -1,19 +1,16 @@
 //! pkgsmith builds distribution packages from one manifest per package.
 //!
 //! A manifest (YAML) names a package, its metadata, the files to install and its install scripts. `build` turns the
-//! same manifest into any supported format. The files come from a staged prefix, a directory laid out like the
-//! installed system, so the build of the program itself stays outside this tool.
+//! same manifest into every package format a plugin provides. The formats are shared libraries that `plugins` finds
+//! and loads, and `pkgsmith-plugin` is the API they implement.
 
-pub mod archive;
 pub mod container;
 pub mod expand;
 pub mod expr;
-pub mod formats;
-pub mod hash;
 pub mod manifest;
 pub mod package;
 pub mod plan;
+pub mod plugins;
 pub mod runner;
 pub mod tree;
 pub mod ui;
-pub mod version;

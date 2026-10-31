@@ -2,48 +2,11 @@
 
 use crate::manifest::{Content, Kind, Manifest};
 use anyhow::{Context, Result, bail};
+use pkgsmith_plugin::{Data, Entry};
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Data {
-    File {
-        src: PathBuf,
-        size: u64,
-    },
-    Dir,
-    Symlink {
-        target: String,
-    },
-    /// Owned by the package, not carried in it.
-    Ghost,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
-    /// Absolute path on the installed system, without a trailing slash.
-    pub path: String,
-    pub data: Data,
-    pub mode: u32,
-    pub owner: String,
-    pub group: String,
-    pub config: bool,
-}
-
-impl Entry {
-    pub fn is_dir(&self) -> bool {
-        self.data == Data::Dir
-    }
-
-    pub fn size(&self) -> u64 {
-        match self.data {
-            Data::File { size, .. } => size,
-            _ => 0,
-        }
-    }
-}
 
 fn has_glob(text: &str) -> bool {
     text.contains(['*', '?', '['])
@@ -256,32 +219,6 @@ pub fn resolve_with(manifest: &Manifest, format: &str, tracked: Vec<Entry>) -> R
     Ok(found.into_values().collect())
 }
 
-/// Every parent folder of an entry that the list does not already hold, as an entry owned by root with mode 0755.
-pub fn with_parents(entries: &[Entry]) -> Vec<Entry> {
-    let mut all: BTreeMap<String, Entry> = entries
-        .iter()
-        .map(|e| (e.path.clone(), e.clone()))
-        .collect();
-    for entry in entries {
-        let mut path = entry.path.as_str();
-        while let Some((parent, _)) = path.rsplit_once('/') {
-            if parent.is_empty() {
-                break;
-            }
-            all.entry(parent.to_string()).or_insert_with(|| Entry {
-                path: parent.to_string(),
-                data: Data::Dir,
-                mode: 0o755,
-                owner: "root".into(),
-                group: "root".into(),
-                config: false,
-            });
-            path = parent;
-        }
-    }
-    all.into_values().collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,7 +334,10 @@ mod tests {
             group: "root".into(),
             config: false,
         };
-        let paths: Vec<_> = with_parents(&[entry]).into_iter().map(|e| e.path).collect();
+        let paths: Vec<_> = pkgsmith_plugin::entry::with_parents(&[entry])
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
         assert_eq!(
             paths,
             ["/usr", "/usr/lib", "/usr/lib/gnoblin", "/usr/lib/gnoblin/x"]

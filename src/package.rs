@@ -1,8 +1,9 @@
-//! A package as one format sees it: the manifest, the files and the version of that format.
+//! A package as a plugin sees it: the manifest of one job and one format turned into a [`pkgsmith_plugin::Package`].
 
-use crate::manifest::{Effective, Manifest};
-use crate::tree::{self, Entry};
+use crate::manifest::Manifest;
+use crate::tree;
 use anyhow::{Context, Result};
+use pkgsmith_plugin::{Entry, Package, Scripts};
 use std::path::PathBuf;
 
 /// What the caller decides about a build.
@@ -30,74 +31,75 @@ impl Options {
     }
 }
 
-pub struct Package<'a> {
-    pub manifest: &'a Manifest,
-    pub format: &'a str,
-    pub effective: Effective,
-    /// The files, without the parent folders the format may need to add.
-    pub entries: Vec<Entry>,
-    pub options: &'a Options,
+/// The text of a script. A value with a line break is the script itself. A one-line value is a file next to the
+/// manifest. A script that has no `#!` line gets `#!/bin/sh` and `set -e`.
+fn script(manifest: &Manifest, value: &Option<String>) -> Result<Option<String>> {
+    let Some(value) = value else { return Ok(None) };
+    let text = if value.contains('\n') {
+        value.clone()
+    } else {
+        let path = manifest.base.join(value.trim());
+        std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read the script {}", path.display()))?
+    };
+    Ok(Some(if text.starts_with("#!") {
+        text
+    } else {
+        format!("#!/bin/sh\nset -e\n{text}")
+    }))
 }
 
-impl<'a> Package<'a> {
-    pub fn new(
-        manifest: &'a Manifest,
-        format: &'a str,
-        options: &'a Options,
-    ) -> Result<Package<'a>> {
-        Package::with_tracked(manifest, format, options, Vec::new())
+/// The package without its files and scripts. Enough to ask a plugin for the name of the file it would write.
+pub fn outline(manifest: &Manifest, format: &str, options: &Options) -> Package {
+    let effective = manifest.effective(format, options.distro.as_deref());
+    Package {
+        format: format.to_string(),
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        release: manifest.release.clone(),
+        arch: manifest.arch.clone(),
+        description: manifest.description.clone(),
+        maintainer: manifest.maintainer.clone(),
+        homepage: manifest.homepage.clone(),
+        license: manifest.license.clone(),
+        depends: effective.depends,
+        recommends: effective.recommends,
+        suggests: effective.suggests,
+        conflicts: effective.conflicts,
+        replaces: effective.replaces,
+        provides: effective.provides,
+        scripts: Scripts::default(),
+        entries: Vec::new(),
+        options: manifest
+            .options
+            .get(format)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+        distro: options.distro.clone(),
+        mtime: options.mtime,
+        out: options.out.clone(),
     }
+}
 
-    /// A package whose files start as what a tracked build installed (see `container`).
-    pub fn with_tracked(
-        manifest: &'a Manifest,
-        format: &'a str,
-        options: &'a Options,
-        tracked: Vec<Entry>,
-    ) -> Result<Package<'a>> {
-        Ok(Package {
-            manifest,
-            format,
-            effective: manifest.effective(format, options.distro.as_deref()),
-            entries: tree::resolve_with(manifest, format, tracked)
-                .with_context(|| format!("cannot collect the files for {format}"))?,
-            options,
-        })
-    }
-
-    /// Bytes the files take once installed.
-    pub fn installed_size(&self) -> u64 {
-        self.entries.iter().map(Entry::size).sum()
-    }
-
-    pub fn summary(&self) -> &str {
-        self.manifest
-            .description
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-    }
-
-    /// The text of a script. A value with a line break is the script itself. A one-line value is a file next to the
-    /// manifest. A script that has no `#!` line gets `#!/bin/sh` and `set -e`.
-    pub fn script(&self, value: &Option<String>) -> Result<Option<String>> {
-        let Some(value) = value else { return Ok(None) };
-        let text = if value.contains('\n') {
-            value.clone()
-        } else {
-            let path = self.manifest.base.join(value.trim());
-            std::fs::read_to_string(&path)
-                .with_context(|| format!("cannot read the script {}", path.display()))?
-        };
-        Ok(Some(if text.starts_with("#!") {
-            text
-        } else {
-            format!("#!/bin/sh\nset -e\n{text}")
-        }))
-    }
-
-    pub fn output(&self, file_name: &str) -> PathBuf {
-        self.options.out.join(file_name)
-    }
+/// The whole package. Its files start as what a tracked build installed (see `container`), then the `contents` of the
+/// manifest apply.
+pub fn assemble(
+    manifest: &Manifest,
+    format: &str,
+    options: &Options,
+    tracked: Vec<Entry>,
+) -> Result<Package> {
+    let mut package = outline(manifest, format, options);
+    let scripts = manifest
+        .effective(format, options.distro.as_deref())
+        .scripts;
+    package.scripts = Scripts {
+        pre_install: script(manifest, &scripts.pre_install)?,
+        post_install: script(manifest, &scripts.post_install)?,
+        pre_remove: script(manifest, &scripts.pre_remove)?,
+        post_remove: script(manifest, &scripts.post_remove)?,
+    };
+    package.entries = tree::resolve_with(manifest, format, tracked)
+        .with_context(|| format!("cannot collect the files for {format}"))?;
+    Ok(package)
 }

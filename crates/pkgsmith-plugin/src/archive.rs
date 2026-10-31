@@ -1,6 +1,6 @@
 //! tar and ar archives with the compression the package formats use.
 
-use crate::tree::{Data, Entry};
+use crate::entry::{Data, Entry};
 use anyhow::{Result, bail};
 use sha1::Digest;
 use std::io::{self, Write};

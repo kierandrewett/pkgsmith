@@ -1,0 +1,17 @@
+# A pkgsmith plugin in Rust. It is not part of the pkgsmith workspace: copy this folder, point the dependency at the
+# published crate (`pkgsmith-plugin = "0.1"`), and build with `cargo build --release`.
+[package]
+name = "pkgsmith-plugin-json"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1"
+pkgsmith-plugin = { path = "../../../crates/pkgsmith-plugin" }
+serde_json = "1"
+
+[workspace]

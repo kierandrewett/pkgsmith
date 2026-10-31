@@ -1,15 +1,32 @@
 //! Debian packages (`.deb`) and OpenWrt packages (`.ipk`), which share one control file layout.
 
-use super::ensure_resolved;
-use crate::archive::{self, Compression, Leading};
-use crate::hash::digests;
-use crate::manifest::Manifest;
-use crate::package::Package;
-use crate::tree::{self, Data};
-use crate::version::Version;
 use anyhow::Result;
+use pkgsmith_plugin::Package;
+use pkgsmith_plugin::archive::{self, Compression, Leading};
+use pkgsmith_plugin::entry::{self, Data};
+use pkgsmith_plugin::hash::digests;
+use pkgsmith_plugin::version::Version;
+use serde::Deserialize;
 use std::fmt::Write as _;
 use std::path::PathBuf;
+
+/// The `deb:` section of the manifest.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DebOptions {
+    section: Option<String>,
+    priority: Option<String>,
+    /// `xz` (default), `zstd`, `gzip`.
+    compression: Option<String>,
+}
+
+/// The `ipk:` section of the manifest.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IpkOptions {
+    /// The OpenWrt architecture, for example `x86_64` or `aarch64_generic`. Default: derived from `arch`.
+    arch: Option<String>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Flavour {
@@ -18,27 +35,28 @@ pub enum Flavour {
 }
 
 /// The architecture name the format uses.
-fn architecture(manifest: &Manifest, flavour: Flavour) -> String {
-    let arch = manifest.arch.as_str();
+fn architecture(package: &Package, flavour: Flavour) -> Result<String> {
+    let arch = package.arch.as_str();
     if flavour == Flavour::Ipk {
-        if let Some(own) = &manifest.ipk.arch {
-            return own.clone();
+        let options: IpkOptions = package.options()?;
+        if let Some(own) = options.arch {
+            return Ok(own);
         }
-        return match arch {
+        return Ok(match arch {
             "amd64" => "x86_64".into(),
             "arm64" => "aarch64_generic".into(),
             other => other.into(),
-        };
+        });
     }
-    arch.into()
+    Ok(arch.into())
 }
 
 /// `name_version-release_arch.deb` or `.ipk`.
-pub fn file_name(manifest: &Manifest, flavour: Flavour) -> Result<String> {
+pub fn file_name(package: &Package, flavour: Flavour) -> Result<String> {
     let version = format!(
         "{}-{}",
-        Version::parse(&manifest.version)?.tilde(),
-        manifest.release
+        Version::parse(&package.version)?.tilde(),
+        package.release
     );
     let extension = if flavour == Flavour::Ipk {
         "ipk"
@@ -47,14 +65,14 @@ pub fn file_name(manifest: &Manifest, flavour: Flavour) -> Result<String> {
     };
     Ok(format!(
         "{}_{version}_{}.{extension}",
-        manifest.name,
-        architecture(manifest, flavour)
+        package.name,
+        architecture(package, flavour)?
     ))
 }
 
 /// `Description:` is a summary line, then the body with every line indented by one space and blank lines as ` .`.
 fn description(package: &Package) -> String {
-    let mut lines = package.manifest.description.trim_end().lines();
+    let mut lines = package.description.trim_end().lines();
     let mut text = lines.next().unwrap_or("").trim().to_string();
     for line in lines {
         text.push_str("\n ");
@@ -68,26 +86,23 @@ fn description(package: &Package) -> String {
 }
 
 fn control(package: &Package, flavour: Flavour, version: &str) -> Result<String> {
-    let manifest = package.manifest;
-    let effective = &package.effective;
-    for (field, list) in [
-        ("depends", &effective.depends),
-        ("recommends", &effective.recommends),
-    ] {
-        ensure_resolved(list, field)?;
-    }
+    let options: DebOptions = if flavour == Flavour::Deb {
+        package.options()?
+    } else {
+        DebOptions::default()
+    };
     let mut text = String::new();
     let mut field = |name: &str, value: &str| {
         if !value.is_empty() {
             let _ = writeln!(text, "{name}: {value}");
         }
     };
-    field("Package", &manifest.name);
+    field("Package", &package.name);
     field("Version", version);
-    field("Architecture", &architecture(manifest, flavour));
+    field("Architecture", &architecture(package, flavour)?);
     field(
         "Maintainer",
-        manifest
+        package
             .maintainer
             .as_deref()
             .unwrap_or("Unknown <unknown@localhost>"),
@@ -96,27 +111,26 @@ fn control(package: &Package, flavour: Flavour, version: &str) -> Result<String>
         "Installed-Size",
         &package.installed_size().div_ceil(1024).to_string(),
     );
-    field("Depends", &effective.depends.join(", "));
-    field("Recommends", &effective.recommends.join(", "));
-    field("Suggests", &effective.suggests.join(", "));
-    field("Conflicts", &effective.conflicts.join(", "));
-    field("Replaces", &effective.replaces.join(", "));
-    field("Provides", &effective.provides.join(", "));
-    field("Section", manifest.deb.section.as_deref().unwrap_or("misc"));
+    field("Depends", &package.depends.join(", "));
+    field("Recommends", &package.recommends.join(", "));
+    field("Suggests", &package.suggests.join(", "));
+    field("Conflicts", &package.conflicts.join(", "));
+    field("Replaces", &package.replaces.join(", "));
+    field("Provides", &package.provides.join(", "));
+    field("Section", options.section.as_deref().unwrap_or("misc"));
     field(
         "Priority",
-        manifest.deb.priority.as_deref().unwrap_or("optional"),
+        options.priority.as_deref().unwrap_or("optional"),
     );
-    field("Homepage", manifest.homepage.as_deref().unwrap_or(""));
+    field("Homepage", package.homepage.as_deref().unwrap_or(""));
     field("Description", &description(package));
     Ok(text)
 }
 
 pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
-    let manifest = package.manifest;
-    let semver = Version::parse(&manifest.version)?;
-    let version = format!("{}-{}", semver.tilde(), manifest.release);
-    let mtime = package.options.mtime;
+    let semver = Version::parse(&package.version)?;
+    let version = format!("{}-{}", semver.tilde(), package.release);
+    let mtime = package.mtime;
 
     let mut control_files = vec![Leading {
         name: "./control".into(),
@@ -152,17 +166,17 @@ pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
             mode: 0o644,
         });
     }
-    let scripts = &package.effective.scripts;
+    let scripts = &package.scripts;
     for (name, value) in [
         ("preinst", &scripts.pre_install),
         ("postinst", &scripts.post_install),
         ("prerm", &scripts.pre_remove),
         ("postrm", &scripts.post_remove),
     ] {
-        if let Some(text) = package.script(value)? {
+        if let Some(text) = value {
             control_files.push(Leading {
                 name: format!("./{name}"),
-                data: text.into_bytes(),
+                data: text.clone().into_bytes(),
                 mode: 0o755,
             });
         }
@@ -170,7 +184,8 @@ pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
 
     let (compression, suffix) = match flavour {
         Flavour::Deb => {
-            let name = manifest.deb.compression.as_deref().unwrap_or("xz");
+            let options: DebOptions = package.options()?;
+            let name = options.compression.as_deref().unwrap_or("xz");
             let compression = Compression::parse(name)?;
             (compression, compression.extension())
         }
@@ -178,7 +193,7 @@ pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
     };
     let control_tar = compression.compress(&archive::tar(&[], "./", mtime, &control_files)?)?;
     let data_tar = compression.compress(&archive::tar(
-        &tree::with_parents(&package.entries),
+        &entry::with_parents(&package.entries),
         "./",
         mtime,
         &[],
@@ -217,8 +232,8 @@ pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
             Compression::Gzip.compress(&archive::tar(&[], "", mtime, &members)?)?
         }
     };
-    std::fs::create_dir_all(&package.options.out)?;
-    let file = package.output(&file_name(manifest, flavour)?);
+    std::fs::create_dir_all(&package.out)?;
+    let file = package.output(&file_name(package, flavour)?);
     std::fs::write(&file, bytes)?;
     Ok(file)
 }

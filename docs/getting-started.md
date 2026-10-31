@@ -5,7 +5,8 @@ This page builds a small C program into packages for four distributions and inst
 ## Requirements
 
 - Linux and [Podman](https://podman.io/). Rootless Podman is enough. It was tested with Podman 5.8.4.
-- A Rust toolchain, to build pkgsmith: `cargo build --release`. The binary is `target/release/pkgsmith`.
+- A Rust toolchain, to build pkgsmith: `cargo build --release --workspace`. The binary is `target/release/pkgsmith`.
+  The formats are plugins, and the same command builds them next to the binary, where pkgsmith finds them.
 
 pkgsmith talks to Podman through its API socket. It uses `$XDG_RUNTIME_DIR/podman/podman.sock` when that socket
 answers. Otherwise it starts `podman system service` for the length of the run and stops it afterwards. You do not
@@ -74,13 +75,18 @@ needs. The `build` is the same for all of them.
 
 ```console
 $ pkgsmith plan
-rpm [distro=fedora, format=rpm, image=fedora:43]
-deb [distro=debian, format=deb, image=debian:13]
-archlinux [distro=arch, format=archlinux, image=archlinux:base]
-apk [distro=alpine, format=apk, image=alpine:3.22]
+  #  FORMAT     DISTRO  ARCH   IMAGE           BUILD  FILE
+  1  rpm        fedora  amd64  fedora:43       a      hello-1.0.0-1.x86_64.rpm
+  2  deb        debian  amd64  debian:13       b      hello_1.0.0-1_amd64.deb
+  3  archlinux  arch    amd64  archlinux:base  c      hello-1.0.0-1-x86_64.pkg.tar.zst
+  4  apk        alpine  amd64  alpine:3.22     d      hello-1.0.0-r1.apk
+
+4 packages from 4 builds.
 ```
 
-`plan` lists the builds without running anything.
+`plan` shows each package and the file it would write, without starting a container. Jobs with the same `BUILD`
+letter share one build. If `plan` says that no plugin was found, run `pkgsmith plugins`: it lists the folders that
+pkgsmith searches. See [plugins](plugins.md).
 
 ## Build
 

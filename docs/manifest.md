@@ -73,20 +73,24 @@ overrides:
         echo "openSUSE"
 ```
 
-The keys of `overrides` are format names (`tar`, `deb`, `rpm`, `archlinux`, `apk`, `ipk`) or distro names (`fedora`,
+The keys of `overrides` are format names (`tar`, `zip`, `deb`, `rpm`, `archlinux`, `apk`, `ipk`) or distro names (`fedora`,
 `opensuse`, `debian`, `ubuntu`, `archlinux`). The format applies first and the distro on top of it. A list that is
 present replaces the whole list. It does not merge with the base list. The distro of a job comes from the matrix axis
 `distro`, or from `--distro`.
 
 ## Format options
 
-| Key         | Keys inside                                                     |
-| ----------- | --------------------------------------------------------------- |
-| `deb`       | `section` (default `misc`), `priority` (`optional`), `compression` (`xz`, `zstd`, `gzip`) |
-| `rpm`       | `group` (`Unspecified`), `compression` (`zstd`, `xz`, `gzip`)   |
-| `archlinux` | `packager`                                                      |
-| `ipk`       | `arch`: the OpenWrt architecture, for example `aarch64_generic` |
-| `tar`       | `compression` (`xz`, `gzip`, `zstd`, `none`), `top_folder`: put everything below `{name}-{version}/` |
+A top-level key with the name of a format holds the options of that format, for example `deb:` or `tar:`. The plugin
+that writes the format defines the keys. A top-level key that is neither a field of the manifest nor a format of a
+loaded plugin is an error. See [plugins](plugins.md#format-options) for the keys of the built-in formats.
+
+```yaml
+deb:
+  section: utils
+tar:
+  compression: zstd
+  top_folder: true
+```
 
 ## A complete example
 

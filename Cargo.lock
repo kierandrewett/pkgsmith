@@ -817,6 +817,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1000,7 +1010,9 @@ dependencies = [
  "flate2",
  "futures-util",
  "glob",
+ "libloading",
  "md-5",
+ "pkgsmith-plugin",
  "podman-api",
  "serde",
  "serde_json",
@@ -1014,6 +1026,82 @@ dependencies = [
  "xz2",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "pkgsmith-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bzip2",
+ "flate2",
+ "md-5",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tar",
+ "xz2",
+ "zstd",
+]
+
+[[package]]
+name = "pkgsmith-plugin-apk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "pkgsmith-plugin-arch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
+name = "pkgsmith-plugin-deb"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
+name = "pkgsmith-plugin-rpm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "md-5",
+ "pkgsmith-plugin",
+ "serde",
+ "sha1",
+ "sha2",
+]
+
+[[package]]
+name = "pkgsmith-plugin-tar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
+name = "pkgsmith-plugin-zip"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+ "zip",
 ]
 
 [[package]]

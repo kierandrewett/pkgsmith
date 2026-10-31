@@ -3,18 +3,26 @@
 //!
 //! The package is not signed with a key. The signature header holds only the digests that `rpm -K` checks.
 
-use super::ensure_resolved;
-use crate::archive::Compression;
-use crate::hash::digests;
-use crate::manifest::Manifest;
-use crate::package::Package;
-use crate::tree::{Data, Entry};
-use crate::version::Version;
 use anyhow::{Result, bail};
 use md5::Md5;
+use pkgsmith_plugin::archive::Compression;
+use pkgsmith_plugin::hash::digests;
+use pkgsmith_plugin::version::Version;
+use pkgsmith_plugin::{Data, Entry, Package};
+use serde::Deserialize;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+
+/// The `rpm:` section of the package.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Options {
+    /// The `Group` tag. Default: `Unspecified`.
+    group: Option<String>,
+    /// `zstd` (default), `xz`, `gzip`, `bzip2`.
+    compression: Option<String>,
+}
 
 const HEADER_MAGIC: [u8; 8] = [0x8e, 0xad, 0xe8, 0x01, 0, 0, 0, 0];
 
@@ -386,43 +394,32 @@ fn interpreter(script: &str) -> String {
 }
 
 /// `name-version-release.arch.rpm`.
-pub fn file_name(manifest: &Manifest) -> Result<String> {
+pub fn file_name(package: &Package) -> Result<String> {
     let nevr = format!(
         "{}-{}",
-        Version::parse(&manifest.version)?.tilde(),
-        manifest.release
+        Version::parse(&package.version)?.tilde(),
+        package.release
     );
     Ok(format!(
         "{}-{nevr}.{}.rpm",
-        manifest.name,
-        architecture(&manifest.arch)
+        package.name,
+        architecture(&package.arch)
     ))
 }
 
 pub fn build(package: &Package) -> Result<PathBuf> {
-    let manifest = package.manifest;
-    let effective = &package.effective;
-    for (field, list) in [
-        ("depends", &effective.depends),
-        ("recommends", &effective.recommends),
-        ("suggests", &effective.suggests),
-        ("conflicts", &effective.conflicts),
-        ("replaces", &effective.replaces),
-        ("provides", &effective.provides),
-    ] {
-        ensure_resolved(list, field)?;
-    }
-    let mtime = package.options.mtime;
-    let arch = architecture(&manifest.arch);
-    let version = Version::parse(&manifest.version)?.tilde();
+    let options: Options = package.options()?;
+    let mtime = package.mtime;
+    let arch = architecture(&package.arch);
+    let version = Version::parse(&package.version)?.tilde();
     let entries = &package.entries;
-    let compression = Compression::parse(manifest.rpm.compression.as_deref().unwrap_or("zstd"))?;
+    let compression = Compression::parse(options.compression.as_deref().unwrap_or("zstd"))?;
     let (compressor, flags, rpmlib) = match compression {
         Compression::Zstd => ("zstd", "19", Some(("rpmlib(PayloadIsZstd)", "5.4.18-1"))),
         Compression::Xz => ("xz", "6", Some(("rpmlib(PayloadIsXz)", "5.2-1"))),
         Compression::Gzip => ("gzip", "9", None),
         Compression::Bzip2 => ("bzip2", "9", None),
-        Compression::None => bail!("an rpm payload is compressed: use zstd, xz or gzip"),
+        Compression::None => bail!("an rpm payload is compressed: use zstd, xz, gzip or bzip2"),
     };
 
     // Files.
@@ -481,32 +478,22 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     if let Some((name, needed)) = rpmlib {
         requires.add(name, RPMLIB | LESS | EQUAL, needed);
     }
-    effective.depends.iter().for_each(|d| requires.add_text(d));
-    let scripts = &effective.scripts;
+    package.depends.iter().for_each(|d| requires.add_text(d));
+    let scripts = &package.scripts;
     let script_values = [
-        (
-            PREIN,
-            PREINPROG,
-            SCRIPT_PRE,
-            package.script(&scripts.pre_install)?,
-        ),
+        (PREIN, PREINPROG, SCRIPT_PRE, scripts.pre_install.clone()),
         (
             POSTIN,
             POSTINPROG,
             SCRIPT_POST,
-            package.script(&scripts.post_install)?,
+            scripts.post_install.clone(),
         ),
-        (
-            PREUN,
-            PREUNPROG,
-            SCRIPT_PREUN,
-            package.script(&scripts.pre_remove)?,
-        ),
+        (PREUN, PREUNPROG, SCRIPT_PREUN, scripts.pre_remove.clone()),
         (
             POSTUN,
             POSTUNPROG,
             SCRIPT_POSTUN,
-            package.script(&scripts.post_remove)?,
+            scripts.post_remove.clone(),
         ),
     ];
     let mut tags: Vec<(u32, Value)> = Vec::new();
@@ -518,63 +505,56 @@ pub fn build(package: &Package) -> Result<PathBuf> {
             tags.push((*program_tag, Value::Str(program)));
         }
     }
-    let nevr = format!("{version}-{}", manifest.release);
+    let nevr = format!("{version}-{}", package.release);
     let mut provides = Deps::new();
-    provides.add(&manifest.name, EQUAL, &nevr);
+    provides.add(&package.name, EQUAL, &nevr);
     if arch != "noarch" {
         provides.add(
             &format!(
                 "{}({})",
-                manifest.name,
+                package.name,
                 if arch == "x86_64" { "x86-64" } else { arch }
             ),
             EQUAL,
             &nevr,
         );
     }
-    effective.provides.iter().for_each(|d| provides.add_text(d));
+    package.provides.iter().for_each(|d| provides.add_text(d));
     let mut conflicts = Deps::new();
-    effective
-        .conflicts
-        .iter()
-        .for_each(|d| conflicts.add_text(d));
+    package.conflicts.iter().for_each(|d| conflicts.add_text(d));
     let mut obsoletes = Deps::new();
-    effective
-        .replaces
-        .iter()
-        .for_each(|d| obsoletes.add_text(d));
+    package.replaces.iter().for_each(|d| obsoletes.add_text(d));
     let mut recommends = Deps::new();
-    effective
+    package
         .recommends
         .iter()
         .for_each(|d| recommends.add_text(d));
     let mut suggests = Deps::new();
-    effective.suggests.iter().for_each(|d| suggests.add_text(d));
+    package.suggests.iter().for_each(|d| suggests.add_text(d));
 
     // Header.
     let installed = package.installed_size();
     let text = |value: &str| Value::Str(value.to_string());
     tags.extend([
         (HEADERI18NTABLE, Value::StrArray(vec!["C".into()])),
-        (NAME, text(&manifest.name)),
+        (NAME, text(&package.name)),
         (VERSION, text(&version)),
-        (RELEASE, text(&manifest.release)),
+        (RELEASE, text(&package.release)),
         (SUMMARY, Value::I18n(package.summary().to_string())),
         (
             DESCRIPTION,
-            Value::I18n(manifest.description.trim().to_string()),
+            Value::I18n(package.description.trim().to_string()),
         ),
         (BUILDTIME, Value::Int32(vec![mtime as u32])),
         (BUILDHOST, text("pkgsmith")),
         (
             LICENSE,
-            text(manifest.license.as_deref().unwrap_or("Unknown")),
+            text(package.license.as_deref().unwrap_or("Unknown")),
         ),
         (
             GROUP,
             Value::I18n(
-                manifest
-                    .rpm
+                options
                     .group
                     .clone()
                     .unwrap_or_else(|| "Unspecified".into()),
@@ -594,10 +574,10 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     } else {
         tags.push((LONGSIZE, Value::Int64(vec![installed])));
     }
-    if let Some(packager) = &manifest.maintainer {
+    if let Some(packager) = &package.maintainer {
         tags.push((PACKAGER, text(packager)));
     }
-    if let Some(url) = &manifest.homepage {
+    if let Some(url) = &package.homepage {
         tags.push((URL, text(url)));
     }
     if count > 0 {
@@ -631,7 +611,9 @@ pub fn build(package: &Package) -> Result<PathBuf> {
     let compressed = compression.compress(&cpio)?;
     tags.push((
         PAYLOADDIGEST,
-        Value::StrArray(vec![crate::hash::hex(&Sha256::digest(&compressed))]),
+        Value::StrArray(vec![pkgsmith_plugin::hash::hex(&Sha256::digest(
+            &compressed,
+        ))]),
     ));
     tags.push((PAYLOADDIGESTALGO, Value::Int32(vec![8])));
     let header_bytes = header(tags, HEADERIMMUTABLE);
@@ -649,22 +631,28 @@ pub fn build(package: &Package) -> Result<PathBuf> {
                 Value::Int32(vec![(header_bytes.len() + compressed.len()) as u32]),
             ),
             (SIG_MD5, Value::Bin(md5.finalize().to_vec())),
-            (SIG_SHA1, Value::Str(crate::hash::hex(&sha1.finalize()))),
-            (SIG_SHA256, Value::Str(crate::hash::hex(&sha256.finalize()))),
+            (
+                SIG_SHA1,
+                Value::Str(pkgsmith_plugin::hash::hex(&sha1.finalize())),
+            ),
+            (
+                SIG_SHA256,
+                Value::Str(pkgsmith_plugin::hash::hex(&sha256.finalize())),
+            ),
             (SIG_PAYLOADSIZE, Value::Int32(vec![cpio.len() as u32])),
         ],
         HEADERSIGNATURES,
     );
 
-    let mut file = lead(&format!("{}-{nevr}", manifest.name), arch);
+    let mut file = lead(&format!("{}-{nevr}", package.name), arch);
     file.extend(&signature);
     while !file.len().is_multiple_of(8) {
         file.push(0);
     }
     file.extend(&header_bytes);
     file.extend(&compressed);
-    std::fs::create_dir_all(&package.options.out)?;
-    let path = package.output(&file_name(manifest)?);
+    std::fs::create_dir_all(&package.out)?;
+    let path = package.output(&file_name(package)?);
     std::fs::write(&path, file)?;
     Ok(path)
 }

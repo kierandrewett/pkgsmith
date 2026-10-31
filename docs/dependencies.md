@@ -64,4 +64,4 @@ dpkg normally do that for you, so a package built here can miss a dependency tha
 List the libraries yourself. To see what a program needs, run `readelf -d /usr/bin/prog | grep NEEDED` in the build
 container and map each library to a package of that distro.
 
-Detection of library dependencies is planned. See the [roadmap](roadmap.md).
+pkgsmith does not detect library dependencies yet.

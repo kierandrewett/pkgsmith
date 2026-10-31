@@ -17,24 +17,40 @@ and the dependencies once. pkgsmith builds your program in a container for each 
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | works   |
 | `zip`       | `.zip`                           | works   |
 
-pkgsmith writes each format itself. It does not call `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`. The packages were
-checked by installing them: rpm on Fedora 43 and openSUSE Tumbleweed, deb on Debian 13, Arch with `pacman -Qkk`, apk on
-Alpine with apk-tools 3.
+Every format is a plugin: a shared library named `pkgsmith-plugin-*.so` that pkgsmith finds and loads. The
+formats above come as plugins in [plugins/](plugins). You can add a format in Rust, C or any language that exports a C
+function. See [docs/plugins.md](docs/plugins.md).
+
+None of them calls `rpmbuild`, `dpkg-deb`, `makepkg` or `abuild`. The packages were checked by installing them: rpm on
+Fedora 43 and openSUSE Tumbleweed, deb on Debian 13, Arch with `pacman -Qkk`, apk on Alpine with apk-tools 3.
 
 ## Install
 
 You need [Podman](https://podman.io/) to build. A user socket is enough.
 
 ```sh
-cargo binstall pkgsmith     # a release binary for Linux x86_64 or aarch64
-cargo install pkgsmith      # or build it from source
+git clone https://github.com/kierandrewett/pkgsmith
+cd pkgsmith
+cargo build --release --workspace
+```
+
+This makes `target/release/pkgsmith` and the plugins `target/release/libpkgsmith_plugin_*.so`. pkgsmith looks for
+plugins in the folder of its binary, so run it from there, or copy the binary and the plugins together. To install for
+one user:
+
+```sh
+install -Dm755 target/release/pkgsmith ~/.local/bin/pkgsmith
+for f in target/release/libpkgsmith_plugin_*.so; do
+    name=${f##*/libpkgsmith_plugin_}
+    install -Dm755 "$f" ~/.local/share/pkgsmith/plugins/pkgsmith-plugin-$name
+done
+pkgsmith plugins        # lists the plugins that loaded
 ```
 
 ## Quick start
 
 ```sh
-git clone https://github.com/kierandrewett/pkgsmith
-cd pkgsmith/examples/demo
+cd examples/demo
 pkgsmith build              # the packages go to ./dist
 ```
 
@@ -88,7 +104,8 @@ pkgsmith build -j 4                     # four builds at a time
 pkgsmith build --format deb --job arch=arm64
 pkgsmith build --build-arg VERSION=0.4.2 -o out
 pkgsmith files                          # build, then list the files each package would carry
-pkgsmith formats
+pkgsmith formats                        # the formats the installed plugins write
+pkgsmith plugins                        # the loaded plugins, and where pkgsmith looks for them
 pkgsmith prune                          # remove the cached setup images
 ```
 
@@ -105,6 +122,7 @@ jobs that share one build.
 * [Versions and nightly builds](docs/versions.md)
 * [Install scripts](docs/scripts.md)
 * [Dependencies](docs/dependencies.md)
+* [Plugins: add a format, or see how the built-in ones work](docs/plugins.md)
 
 Every file in [examples/](examples/) is a complete manifest. [examples/full.yaml](examples/full.yaml) uses every key
 and has a comment on each one.
@@ -120,8 +138,8 @@ and has a comment on each one.
 ## Build and test
 
 ```sh
-cargo build --release
-cargo test
+cargo build --workspace
+cargo test --workspace
 ```
 
 ## Licence

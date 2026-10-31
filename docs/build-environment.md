@@ -116,8 +116,7 @@ once and packages the result three times.
 
 ## Concurrency
 
-`-j N` runs up to `N` jobs at the same time. Each distro and architecture is a lane in the progress output. See
-[command line](cli.md). Jobs that wait for a shared build do not use a slot of their own.
+`-j N` runs up to `N` jobs at the same time. Each distro and architecture is a lane in the progress output. Jobs that wait for a shared build do not use a slot of their own.
 
 ## Troubleshooting
 

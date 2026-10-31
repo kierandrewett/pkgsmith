@@ -2,10 +2,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use pkgsmith::container::Engine;
 use pkgsmith::expand::Scope;
-use pkgsmith::formats;
 use pkgsmith::manifest::Manifest;
-use pkgsmith::package::{Options, Package};
+use pkgsmith::package::{self, Options};
 use pkgsmith::plan;
+use pkgsmith::plugins::{self, Registry};
 use pkgsmith::runner::{Runner, build_key, lane};
 use pkgsmith::ui::{Mode, Ui};
 use std::path::{Path, PathBuf};
@@ -20,6 +20,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     long_about = "Build distribution packages from one manifest per package.\n\nLike docker build, `pkgsmith build [PATH]` reads the manifest in PATH (pkgsmith.yaml), runs its build in a container, and writes the packages to ./dist."
 )]
 struct Cli {
+    /// A folder to search for plugins (pkgsmith-plugin-*.so) before the standard places. Repeatable. See `pkgsmith plugins`.
+    #[arg(long, global = true, value_name = "DIR")]
+    plugin_path: Vec<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -96,8 +99,10 @@ enum Command {
         #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
         work: PathBuf,
     },
-    /// List the supported formats.
+    /// List the formats the installed plugins write.
     Formats,
+    /// List the plugins that are loaded and the folders pkgsmith searches for them.
+    Plugins,
     /// Remove the cached setup images.
     Prune,
 }
@@ -137,7 +142,7 @@ fn platform_arch(platform: &str) -> Result<String> {
 }
 
 /// The manifest and what to build from it.
-fn load(source: &Source) -> Result<(Manifest, Vec<plan::Item>)> {
+fn load(source: &Source, registry: &Registry) -> Result<(Manifest, Vec<plan::Item>)> {
     let (file, context) = if source.path.is_file() {
         (
             source.path.clone(),
@@ -175,8 +180,10 @@ fn load(source: &Source) -> Result<(Manifest, Vec<plan::Item>)> {
         .iter()
         .map(|p| platform_arch(p))
         .collect::<Result<_>>()?;
+    manifest.check_options(&registry.format_names())?;
     let mut items = plan::items(
         &manifest,
+        &registry.format_names(),
         &source.format,
         &pairs(&source.job, "--job")?,
         source.distro.as_deref(),
@@ -257,7 +264,13 @@ fn build_letter(index: usize) -> String {
     }
 }
 
-fn plan_table(manifest: &Manifest, items: &[plan::Item], scope: &Scope, json: bool) -> Result<()> {
+fn plan_table(
+    registry: &Registry,
+    manifest: &Manifest,
+    items: &[plan::Item],
+    scope: &Scope,
+    json: bool,
+) -> Result<()> {
     use std::io::IsTerminal;
     let mut keys: Vec<String> = Vec::new();
     let mut rows = Vec::new();
@@ -276,7 +289,13 @@ fn plan_table(manifest: &Manifest, items: &[plan::Item], scope: &Scope, json: bo
                     bound.arch.clone(),
                     bound.image.clone().unwrap_or_default(),
                     letter,
-                    formats::file_name(bound, &item.format).map_err(|e| format!("{e:#}")),
+                    registry
+                        .file_name(&package::outline(
+                            bound,
+                            &item.format,
+                            &Options::new(PathBuf::from("."), item.job.distro().map(String::from)),
+                        ))
+                        .map_err(|e| format!("{e:#}")),
                 )
             }
             Err(error) => (
@@ -408,16 +427,70 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    match Cli::parse().command {
-        Command::Formats => formats::ALL.iter().for_each(|name| println!("{name}")),
+    let cli = Cli::parse();
+    let registry = Registry::discover(&cli.plugin_path);
+    if !matches!(cli.command, Command::Plugins) {
+        registry
+            .warnings
+            .iter()
+            .for_each(|warning| eprintln!("warning: {warning}"));
+    }
+    if registry.format_names().is_empty()
+        && matches!(
+            cli.command,
+            Command::Build { .. } | Command::Plan { .. } | Command::Files { .. }
+        )
+    {
+        bail!(
+            "no plugins found, so no package format is available. Plugins are files named pkgsmith-plugin-*.so; run `pkgsmith plugins` to see where pkgsmith looks"
+        );
+    }
+    match cli.command {
+        Command::Formats => {
+            let formats = registry.formats();
+            let width = formats.iter().map(|f| f.name.len()).max().unwrap_or(0);
+            for format in &formats {
+                println!("{:<width$}  {}", format.name, format.description);
+            }
+            if formats.is_empty() {
+                bail!(
+                    "no plugins found. Plugins are files named pkgsmith-plugin-*.so; run `pkgsmith plugins` to see where pkgsmith looks"
+                );
+            }
+        }
+        Command::Plugins => {
+            println!("Search path:");
+            for dir in plugins::search_path(&cli.plugin_path) {
+                println!("  {}", dir.display());
+            }
+            println!("\nLoaded:");
+            let mut any = false;
+            for (info, path) in registry.plugins() {
+                any = true;
+                let formats: Vec<&str> = info.formats.iter().map(|f| f.name.as_str()).collect();
+                println!(
+                    "  {} {}  {}  ({})",
+                    info.name,
+                    info.version,
+                    formats.join(", "),
+                    path.display()
+                );
+            }
+            if !any {
+                println!("  none");
+            }
+            for warning in &registry.warnings {
+                println!("\nwarning: {warning}");
+            }
+        }
         Command::Prune => {
             let removed = Engine::connect()?.prune()?;
             println!("Removed {removed} cached setup images");
         }
         Command::Plan { source, json } => {
             let scope = scope(&source.build_arg)?;
-            let (manifest, items) = load(&source)?;
-            plan_table(&manifest, &items, &scope, json)?;
+            let (manifest, items) = load(&source, &registry)?;
+            plan_table(&registry, &manifest, &items, &scope, json)?;
         }
         Command::Files {
             source,
@@ -426,14 +499,14 @@ fn run() -> Result<()> {
             work,
         } => {
             let scope = scope(&source.build_arg)?;
-            let (manifest, items) = load(&source)?;
+            let (manifest, items) = load(&source, &registry)?;
             let ui = Ui::new(Mode::parse(&progress).map_err(|e| anyhow!(e))?);
             let runner = Runner::new(work, ui.clone(), true);
             let (listings, errors) = run_all(&items, jobs, |item| {
                 let bound = manifest.bind(&scope, &item.job, &item.format)?;
                 let options = Options::new(PathBuf::from("."), item.job.distro().map(String::from));
                 let tracked = runner.tracked(&bound, &item.job)?;
-                let package = Package::with_tracked(&bound, &item.format, &options, tracked)?;
+                let package = package::assemble(&bound, &item.format, &options, tracked)?;
                 let mut text = format!("== {}\n", item.label());
                 for entry in &package.entries {
                     text += &format!(
@@ -464,7 +537,7 @@ fn run() -> Result<()> {
             work,
         } => {
             let scope = scope(&source.build_arg)?;
-            let (manifest, items) = load(&source)?;
+            let (manifest, items) = load(&source, &registry)?;
             let mode = if quiet {
                 Mode::Quiet
             } else {
@@ -476,9 +549,9 @@ fn run() -> Result<()> {
                 let bound = manifest.bind(&scope, &item.job, &item.format)?;
                 let options = Options::new(output.clone(), item.job.distro().map(String::from));
                 let tracked = runner.tracked(&bound, &item.job)?;
-                let package = Package::with_tracked(&bound, &item.format, &options, tracked)?;
+                let package = package::assemble(&bound, &item.format, &options, tracked)?;
                 let step = ui.step(&lane(&bound, &item.job), format!("package {}", item.format));
-                match formats::build(&package) {
+                match registry.build(&package, &|_, message| step.log(message)) {
                     Ok(file) => {
                         step.log(&file.display().to_string());
                         step.done();

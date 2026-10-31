@@ -1,18 +1,26 @@
 //! A zip archive of the files, for Windows and macOS users and for anyone who does not unpack tar files.
 
-use crate::manifest::Manifest;
-use crate::package::Package;
-use crate::tree::Data;
-use crate::version::Version;
 use anyhow::{Context, Result};
+use pkgsmith_plugin::version::Version;
+use pkgsmith_plugin::{Data, Package};
+use serde::Deserialize;
 use std::io::Write;
 use std::path::PathBuf;
 use zip::write::SimpleFileOptions;
 
+/// The `zip:` section of the manifest.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Options {
+    /// Put every file below a top folder, `{name}-{version}` when `true`.
+    #[serde(default)]
+    top_folder: bool,
+}
+
 /// `name-version-arch.zip`.
-pub fn file_name(manifest: &Manifest) -> Result<String> {
-    let version = Version::parse(&manifest.version)?.plain();
-    Ok(format!("{}-{version}-{}.zip", manifest.name, manifest.arch))
+pub fn file_name(package: &Package) -> Result<String> {
+    let version = Version::parse(&package.version)?.plain();
+    Ok(format!("{}-{version}-{}.zip", package.name, package.arch))
 }
 
 /// Civil date and time of a Unix time, in UTC. A zip cannot hold a date before 1980, so earlier times become 1980.
@@ -48,14 +56,14 @@ fn civil(seconds: u64) -> (u16, u8, u8, u8, u8, u8) {
 }
 
 pub fn build(package: &Package) -> Result<PathBuf> {
-    let manifest = package.manifest;
-    let version = Version::parse(&manifest.version)?.plain();
-    let top = if manifest.zip.top_folder {
-        format!("{}-{version}/", manifest.name)
+    let options: Options = package.options()?;
+    let version = Version::parse(&package.version)?.plain();
+    let top = if options.top_folder {
+        format!("{}-{version}/", package.name)
     } else {
         String::new()
     };
-    let (year, month, day, hour, minute, second) = civil(package.options.mtime);
+    let (year, month, day, hour, minute, second) = civil(package.mtime);
     let time = zip::DateTime::from_date_and_time(year, month, day, hour, minute, second)
         .map_err(|_| anyhow::anyhow!("the build time is not a valid zip date"))?;
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -78,8 +86,8 @@ pub fn build(package: &Package) -> Result<PathBuf> {
         }
     }
     let bytes = writer.finish()?.into_inner();
-    std::fs::create_dir_all(&package.options.out)?;
-    let path = package.output(&file_name(manifest)?);
+    std::fs::create_dir_all(&package.out)?;
+    let path = package.output(&file_name(package)?);
     std::fs::File::create(&path)?.write_all(&bytes)?;
     Ok(path)
 }

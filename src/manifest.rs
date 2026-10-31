@@ -65,46 +65,6 @@ pub struct Overrides {
     pub scripts: Option<Scripts>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct DebOptions {
-    pub section: Option<String>,
-    pub priority: Option<String>,
-    /// `xz` (default), `zstd`, `gzip`.
-    pub compression: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct RpmOptions {
-    pub group: Option<String>,
-    /// `zstd` (default), `xz`, `gzip`.
-    pub compression: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ArchOptions {
-    pub packager: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct IpkOptions {
-    /// The OpenWrt architecture, for example `x86_64` or `aarch64_generic`. Default: derived from `arch`.
-    pub arch: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct TarOptions {
-    /// `gzip`, `xz` (default), `zstd`, `bzip2`, `none`.
-    pub compression: Option<String>,
-    /// Put every file below a top folder, `{name}-{version}` when `true`.
-    #[serde(default)]
-    pub top_folder: bool,
-}
-
 /// A matrix value: text, a number or a flag, all kept as text.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
@@ -230,15 +190,6 @@ impl Matrix {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ZipOptions {
-    /// Put every file below a top folder, `{name}-{version}` when `true`.
-    #[serde(default)]
-    pub top_folder: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub name: String,
     pub version: String,
@@ -285,18 +236,10 @@ pub struct Manifest {
     /// By format (`deb`, `rpm`, ...) or by distro (`fedora`, `opensuse`, `debian`, `ubuntu`, `arch`). A distro wins.
     #[serde(default)]
     pub overrides: BTreeMap<String, Overrides>,
-    #[serde(default)]
-    pub deb: DebOptions,
-    #[serde(default)]
-    pub rpm: RpmOptions,
-    #[serde(default, rename = "archlinux")]
-    pub arch_linux: ArchOptions,
-    #[serde(default)]
-    pub ipk: IpkOptions,
-    #[serde(default)]
-    pub tar: TarOptions,
-    #[serde(default)]
-    pub zip: ZipOptions,
+    /// Options of a format, in a section named like the format (`deb:`, `rpm:`, ...). The plugin that writes the format
+    /// defines what the section may hold. `check_options` refuses a key that no format owns, so a typo is an error.
+    #[serde(flatten)]
+    pub options: BTreeMap<String, serde_json::Value>,
     /// The folder of the manifest. Relative `src` paths and script files resolve against it.
     #[serde(skip)]
     pub base: PathBuf,
@@ -349,6 +292,20 @@ impl Manifest {
         }
         manifest.context = manifest.base.clone();
         Ok(manifest)
+    }
+
+    /// Refuse a top-level key that is neither a field of the manifest nor the name of a format, so a typo such as
+    /// `dependz:` does not vanish. `formats` are the names the loaded plugins write.
+    pub fn check_options(&self, formats: &[String]) -> Result<()> {
+        for key in self.options.keys() {
+            if !formats.contains(key) {
+                bail!(
+                    "unknown key {key:?} in the manifest: it is not a field, and no plugin writes a format with that name (formats: {})",
+                    formats.join(", ")
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn jobs(&self) -> Vec<Job> {
@@ -570,8 +527,20 @@ mod tests {
     }
 
     #[test]
-    fn unknown_keys_are_rejected_so_a_typo_does_not_vanish() {
-        assert!(parse(&format!("{BASE}dependz: [a]\n")).is_err());
+    fn a_key_that_is_not_a_field_or_a_format_is_refused_so_a_typo_does_not_vanish() {
+        let formats = ["deb".to_string(), "rpm".to_string()];
+        assert!(
+            parse(&format!("{BASE}deb: {{section: utils}}\n"))
+                .unwrap()
+                .check_options(&formats)
+                .is_ok()
+        );
+        assert!(
+            parse(&format!("{BASE}dependz: [a]\n"))
+                .unwrap()
+                .check_options(&formats)
+                .is_err()
+        );
     }
 
     #[test]

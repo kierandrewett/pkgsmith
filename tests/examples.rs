@@ -11,6 +11,10 @@ fn every_example_manifest_binds_for_every_job() {
     let mut scope = Scope::default();
     scope.set("VERSION", "1.2.3");
     scope.set("STAGE", "/tmp/stage");
+    // The formats of the plugins in this repository.
+    let known: Vec<String> = ["tar", "zip", "deb", "ipk", "archlinux", "rpm", "apk"]
+        .map(String::from)
+        .to_vec();
     let mut seen = 0;
     for entry in std::fs::read_dir(&folder).unwrap() {
         let path = entry.unwrap().path();
@@ -19,7 +23,10 @@ fn every_example_manifest_binds_for_every_job() {
         }
         let manifest =
             Manifest::parse(&path).unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
-        let items = plan::items(&manifest, &[], &[], None).unwrap();
+        manifest
+            .check_options(&known)
+            .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+        let items = plan::items(&manifest, &known, &[], &[], None).unwrap();
         assert!(!items.is_empty(), "{} describes no job", path.display());
         for item in items {
             manifest

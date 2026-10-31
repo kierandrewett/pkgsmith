@@ -2,8 +2,22 @@
 name = "pkgsmith"
 version = "0.1.0"
 edition = "2024"
+description = "Build rpm, deb, Arch, Alpine, OpenWrt, tar and zip packages from one manifest, in containers"
+license = "MIT"
+repository = "https://github.com/kierandrewett/pkgsmith"
+homepage = "https://github.com/kierandrewett/pkgsmith"
+readme = "README.md"
+keywords = ["packaging", "rpm", "deb", "apk", "pacman"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["/docs/media", "/.github"]
+
+[workspace]
+members = ["crates/pkgsmith-plugin", "plugins/*"]
+resolver = "3"
 
 [dependencies]
+pkgsmith-plugin = { path = "crates/pkgsmith-plugin", version = "0.1.0" }
+libloading = "0.8"
 anyhow = "1.0.104"
 bzip2 = "0.6.1"
 clap = { version = "4.6.7", features = ["derive"] }
