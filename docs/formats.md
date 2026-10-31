@@ -15,6 +15,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `oci`       | `.oci.tar`                       | podman, docker, containerd           | `podman load` and `run`             |
 | `appimage`  | `.AppImage`                      | Linux desktops                       | The runtime, without FUSE           |
 | `wheel`     | `.whl`                           | pip                                  | `pip`, `twine` in Python 3.14       |
+| `xbps`      | `.xbps`                          | Void Linux                           | `xbps-install` in Void              |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
 | `zip`       | `.zip`                           | Any system                           | `unzip`                             |
@@ -189,3 +190,25 @@ be a number.
 
 Scripts map to the pkg phases: `pre_install` to `pre-install`, `post_install` to `post-install`, `pre_remove` to
 `pre-deinstall` and `post_remove` to `post-deinstall`.
+
+## xbps
+
+An xbps package is a tar with `props.plist`, `files.plist` and the files, plus an `INSTALL` and a `REMOVE` script. The
+revision in the file name comes from `release`, which must be a positive integer, and the version cannot hold `-` or `_`.
+
+- A dependency without a version is written `name>=0`, because xbps refuses a bare name.
+- `pre_install` and `post_install` share one `INSTALL` script, and `pre_remove` and `post_remove` share one `REMOVE`.
+  xbps calls each with `pre` or `post` as the first argument.
+- `recommends`, `suggests` and ghost files are ignored with a warning.
+
+| Key           | Values                                  | Default | Effect                                                   |
+| ------------- | --------------------------------------- | ------- | -------------------------------------------------------- |
+| `compression` | `zstd`, `xz`, `gzip`, `bzip2`, `none`   | `zstd`  | Compression of the outer tar                             |
+| `libc`        | `glibc`, `musl`                         | `glibc` | `musl` adds `-musl` to the architecture, as Void does    |
+
+Checked in the Void glibc image with the real tools:
+
+- `xbps-rindex -a`, `xbps-install` and `xbps-remove`
+- The install script, `xbps-query -f` and `xbps-reconfigure`
+
+Not checked: a real install on a musl system, `aarch64`, `noarch` and upgrades.

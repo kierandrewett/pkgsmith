@@ -17,6 +17,8 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `apk`       | `.apk`                           | Alpine                     |
 | `ipk`       | `.ipk`                           | OpenWrt                    |
 | `slackware` | `.txz`                           | Slackware                  |
+| `xbps`      | `.xbps`                          | Void Linux                 |
+| `freebsd`   | `.pkg`                           | FreeBSD                    |
 | `snap`      | `.snap`                          | snapd                      |
 | `oci`       | `.oci.tar`                       | podman, docker             |
 | `appimage`  | `.AppImage`                      | Linux desktops             |

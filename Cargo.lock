@@ -2254,6 +2254,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-xbps"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
 name = "pkgsmith-plugin-zip"
 version = "0.1.0"
 dependencies = [
