@@ -1,0 +1,30 @@
+# One manifest, every format, every architecture. The file reads like a GitHub Actions workflow: `matrix` runs the
+# build once per combination, and `${{ }}` and `if:` see the combination as `matrix.*`.
+#
+#   pkgsmith plan  examples/bingux-config.yaml
+#   pkgsmith build examples/bingux-config.yaml --set STAGE=/path/to/stage --set VERSION=0.1.0 -o out
+#   pkgsmith build examples/bingux-config.yaml --job arch=arm64 --format deb ...
+name: bingux-config
+version: ${VERSION}
+maintainer: Kieran Drewett <kieran@drewett.dev>
+homepage: https://github.com/kierandrewett/bingux
+license: GPL-3.0-or-later
+description: |
+  Configuration command for the Bingux desktop
+  bingux-config reads, changes and checks the Bingux configuration file in the
+  user's configuration folder. The shell, the search daemon and Settings use it,
+  and it can be run by hand.
+
+matrix:
+  arch: [amd64, arm64]
+  format: [tar, deb, archlinux, ipk]
+
+contents:
+  # One staged prefix per architecture: ${STAGE}-amd64, ${STAGE}-arm64.
+  - src: ${STAGE}-${{ matrix.arch }}/usr/bin/bingux-config
+    dst: /usr/bin/bingux-config
+    mode: 0755
+
+scripts:
+  post_install: |
+    echo "bingux-config installed"
