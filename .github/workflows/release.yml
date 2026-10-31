@@ -1,0 +1,124 @@
+# Releasing: bump the version in Cargo.toml, crates/pkgsmith-plugin/Cargo.toml and the plugin crates, commit, then push
+# a tag `vMAJOR.MINOR.PATCH` that matches it. This workflow
+#
+#   1. builds pkgsmith and its plugins and checks the version of every crate against the tag,
+#   2. runs pkgsmith on its own manifest (pkgsmith.yaml) to build the rpm, deb, Arch and Alpine packages,
+#   3. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
+#   4. creates a GitHub release with the packages, a tarball per architecture (pkgsmith and its plugins) and checksums.
+#
+# Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
+#
+# Needs the secret CARGO_REGISTRY_TOKEN: a crates.io token that may publish new crates.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  packages:
+    name: packages (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, target: x86_64-unknown-linux-gnu, runner: ubuntu-24.04 }
+          - { arch: arm64, target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Every crate of the workspace must carry the version of the release.
+          bad="$(cargo metadata --no-deps --format-version 1 | jq -r --arg v "$version" '.packages[] | select(.version != $v) | "\(.name) \(.version)"')"
+          if [ -n "$bad" ]; then echo "version $version expected, but: $bad"; exit 1; fi
+
+      - name: Build pkgsmith and the plugins
+        run: cargo build --release --workspace --locked
+
+      - name: Build the packages with pkgsmith
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          sudo mkdir -p "$XDG_RUNTIME_DIR" && sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          target/release/pkgsmith plugins
+          target/release/pkgsmith plan .
+          target/release/pkgsmith build . --platform "linux/${{ matrix.arch }}" --build-arg "VERSION=$VERSION" -o dist --progress plain
+
+      - name: Tarball of pkgsmith and its plugins
+        run: |
+          name="pkgsmith-${{ matrix.target }}"
+          mkdir -p "$name/plugins"
+          cp target/release/pkgsmith LICENSE README.md "$name/"
+          for f in target/release/libpkgsmith_plugin_*.so; do
+            cp "$f" "$name/plugins/pkgsmith-plugin-${f##*/libpkgsmith_plugin_}"
+          done
+          tar -czf "dist/$name.tar.gz" "$name"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  crates:
+    name: crates.io
+    needs: [packages]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dry run
+        if: github.event_name != 'push'
+        run: cargo publish --dry-run --locked -p pkgsmith-plugin
+      - name: Publish pkgsmith-plugin
+        if: github.event_name == 'push'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked -p pkgsmith-plugin
+      - name: Publish pkgsmith
+        if: github.event_name == 'push'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          # pkgsmith depends on the plugin crate that was just published. Wait until the index serves it.
+          for attempt in $(seq 1 30); do
+            if cargo publish --locked -p pkgsmith; then exit 0; fi
+            echo "attempt $attempt failed, waiting for the crates.io index"; sleep 20
+          done
+          exit 1
+
+  release:
+    name: GitHub release
+    if: github.event_name == 'push'
+    needs: [packages, crates]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          ls -l
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes ./*

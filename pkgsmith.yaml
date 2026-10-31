@@ -1,0 +1,73 @@
+# pkgsmith packages itself. Build the packages for every distro with:
+#
+#   pkgsmith build --build-arg VERSION=0.1.0
+#
+# or one distro with `--job distro=fedora`. The packages are written to ./dist.
+name: pkgsmith
+version: ${VERSION:-0.1.0}
+description: |
+  Build distribution packages from one manifest
+  pkgsmith builds your program in a container for each distro and writes the rpm, deb, Arch, Alpine, OpenWrt, tar
+  or zip package. It needs Podman.
+maintainer: Kieran Drewett <kieran@drewett.dev>
+homepage: https://github.com/kierandrewett/pkgsmith
+license: MIT
+
+# The build installs the binary, and every plugin under the name pkgsmith looks for. The distro Rust is too old for
+# the dependencies, so setup installs a pinned one with rustup. -crt-static makes the Alpine binary a dynamic one,
+# which it must be to load plugins.
+build: |
+  export PATH="$HOME/.cargo/bin:$PATH"
+  export RUSTFLAGS="-C target-feature=-crt-static"
+  export CARGO_TARGET_DIR=/tmp/pkgsmith-target
+  cargo build --release --workspace --locked
+  install -Dm755 /tmp/pkgsmith-target/release/pkgsmith /usr/bin/pkgsmith
+  for f in /tmp/pkgsmith-target/release/libpkgsmith_plugin_*.so; do
+    install -Dm755 "$f" "/usr/lib/pkgsmith/plugins/pkgsmith-plugin-${f##*/libpkgsmith_plugin_}"
+  done
+  install -Dm644 LICENSE /usr/share/licenses/pkgsmith/LICENSE
+  install -Dm644 README.md /usr/share/doc/pkgsmith/README.md
+
+matrix:
+  arch: [amd64, arm64]
+  distro: [fedora, debian, arch, alpine]
+  include:
+    - format: rpm
+      distro: fedora
+      image: fedora:43
+      setup: |
+        dnf -y install curl gcc make
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+    - format: deb
+      distro: debian
+      image: debian:13
+      setup: |
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gcc make
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+    - format: archlinux
+      distro: arch
+      image: archlinux:base
+      setup: |
+        pacman -Sy --noconfirm curl gcc make
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+    - format: apk
+      distro: alpine
+      image: alpine:3.22
+      setup: |
+        apk add --no-cache curl gcc make musl-dev
+        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+
+  # The archlinux image has no arm64 build.
+  exclude:
+    - { distro: arch, arch: arm64 }
+
+# pkgsmith starts containers through Podman, and it does not look inside the binary for libraries.
+depends: [podman]
+overrides:
+  deb:
+    depends: [podman, libc6]
+  rpm:
+    depends: [podman, glibc]
+  archlinux:
+    depends: [podman, glibc]
