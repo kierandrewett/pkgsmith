@@ -1,25 +1,21 @@
 # pkgsmith
 
-pkgsmith builds distribution packages. You write one manifest for a package. pkgsmith runs the build in a
+pkgsmith builds distribution packages. You write one script for a package. pkgsmith runs the build in a
 container for each distro, finds the files the build installed, and writes the package.
 
 ![One build for Fedora, Debian, Arch and Alpine](media/demo.gif)
 
-```yaml
-# pkgsmith.yaml
-name: hello
-version: 1.0.0
-description: A small program
-targets:
-  - format: rpm
-    distro: fedora
-jobs:
-  fedora:
-    runs-on: fedora:43
-    setup:
-      - run: dnf -y install gcc make
-    steps:
-      - run: make && make install PREFIX=/usr
+```python
+# pkgsmith.star
+pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+
+build = job(
+    runs_on = "fedora:43",
+    setup = [step("dnf -y install gcc make")],
+    steps = [step("make && make install PREFIX=/usr")],
+)
+
+target(pkg, "rpm", distro = "fedora", job = build)
 ```
 
 ```console
@@ -37,13 +33,13 @@ information in one place.
 
 | You write                                 | pkgsmith does                                                              |
 | ----------------------------------------- | -------------------------------------------------------------------------- |
-| A `job` for each build environment: a `runs-on` image and its `steps` | Runs them in a container and tracks which files the build installed |
+| A `job` for each build environment: a `runs_on` image and its `steps` | Runs them in a container and tracks which files the build installed |
 | `name`, `version`, `depends`, `scripts`   | Writes them in the way each format wants them                              |
-| A `matrix` of distros, architectures, formats | Builds every combination, side by side, with `-j`                      |
+| A loop over distros, architectures and formats | Builds every combination, side by side, with `-j`                    |
 
 ## How it works
 
-1. **Read.** pkgsmith reads the manifest and expands the matrix into jobs, like a GitHub Actions workflow.
+1. **Read.** pkgsmith runs the script. It collects every target the script declares.
 2. **Set up.** For a target that needs a job, it runs the `setup` steps in a container once and keeps the result as an
    image. The next run starts from that image.
 3. **Build.** It runs the `steps` on top of that image. The source folder is mounted at `/src` as a
@@ -67,9 +63,9 @@ The plugins in this repository write:
 ## Read next
 
 - [Getting started](getting-started.md): build a package from scratch.
-- [Manifest reference](manifest.md): every key.
+- [Script reference](manifest.md): every function and field.
 - [Contents](contents.md): choose the files yourself.
 - [Build environment](build-environment.md): jobs, steps, tracking, caching.
-- [Matrix and expressions](matrix-and-expressions.md): one manifest for many distros and architectures.
+- [Scripting](scripting.md): one script for many distros and architectures.
 - [Versions](versions.md), [install scripts](scripts.md) and [dependencies](dependencies.md).
 - [Plugins](plugins.md): where pkgsmith looks for them, and how to write one.

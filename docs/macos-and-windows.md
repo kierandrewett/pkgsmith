@@ -16,48 +16,45 @@ or check the result.
 pkgsmith packages files that already exist. It does not care where they came from. Use one of these ways.
 
 - **Compile on the target system, then package there.** Build your program on a Mac or on Windows with its own
-  toolchain, as the release workflow of pkgsmith does. Run pkgsmith on the same machine with targets that have `needs: []`. This is the way to prefer, because
+  toolchain, as the release workflow of pkgsmith does. Run pkgsmith on the same machine with targets that have no `job`. This is the way to prefer, because
   the program is built and tested on the system it runs on.
 - **Package on Linux.** Copy the files you compiled for macOS or Windows to a Linux machine, or download them from CI.
-  Run pkgsmith there with targets that have `needs: []`. The `dmg` format needs no other tool. A format that runs an
+  Run pkgsmith there with targets that have no `job`. The `dmg` format needs no other tool. A format that runs an
   external program, such as `flatpak`, needs that program on the machine that builds.
 
-A target with `needs: []` runs nothing. It packages the files that `contents` names, so it needs no Podman on any
-system. See [manifest](manifest.md) and [contents](contents.md).
+A target without a `job` runs nothing. It packages the files that `contents` names, so it needs no Podman on any
+system. See the [script reference](manifest.md) and [contents](contents.md).
 
 ## Example
 
-The `pkgsmith.yaml` of this repository packages pkgsmith for Linux, macOS and Windows in one file. The Linux targets need
-a job and run its steps. The macOS and Windows targets work differently:
+The `pkgsmith.star` of this repository packages pkgsmith for Linux, macOS and Windows in one file. The Linux targets
+have a job and run its steps. The macOS and Windows targets work differently:
 
-- They have `needs: []`, so they need no job and run no steps.
-- They pack the files in `STAGE`. A `tree` entry in `contents` that applies to `dmg` adds those files.
-- An `if` on the target drops it when you do not pass `STAGE`. A plain `pkgsmith build` then builds only the Linux
-  packages.
+- They have no `job`, so they run no steps.
+- They pack the files in `STAGE`. A `tree` entry in `contents` adds those files.
+- An `if STAGE:` around them drops them when you do not pass `STAGE`. A plain `pkgsmith build` then builds only the
+  Linux packages.
 
-```yaml
-targets:
-  - format: dmg
-    distro: macos
-    needs: []
-    if: env.STAGE
-contents:
-  - type: tree
-    src: "${STAGE:-stage}"
-    dst: /pkgsmith
-    only:
-      - dmg
-dmg:
-  volume_name: pkgsmith
+```python
+pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+STAGE = arg("STAGE")
+
+if STAGE:
+    for arch in ["amd64", "arm64"]:
+        target(
+            pkg, "dmg", distro = "macos", arch = arch,
+            contents = [tree(STAGE, "/hello")],
+            options = {"volume_name": "hello"},
+        )
 ```
 
 Compile on a Mac, put the program and its files in a folder, and name that folder with `STAGE`:
 
 ```console
-$ pkgsmith build -F dmg --job arch=arm64 --build-arg STAGE=stage
+$ pkgsmith build -F dmg --where arch=arm64 --build-arg STAGE=stage
 ```
 
-The package is written to `./dist`. You should see a file such as `pkgsmith-0.1.0-1-arm64.dmg`. Use `-F dmg` to build
+The package is written to `./dist`. You should see a file such as `hello-1.0.0-1-arm64.dmg`. Use `-F dmg` to build
 the disk image only.
 
 ## Formats

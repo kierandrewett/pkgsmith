@@ -42,13 +42,14 @@ refused() { # refused NAME COMMAND...: the command must fail
 mkdir -p stage/usr/bin
 printf '#!/bin/sh\necho signed-hi\n' > stage/usr/bin/hi
 chmod 755 stage/usr/bin/hi
-cat > pkgsmith.yaml <<'YAML'
-name: hi
-version: 1.0.0
-description: A tiny signing test
-contents:
-  - { src: stage/usr/bin/hi, dst: /usr/bin/hi }
-YAML
+cat > pkgsmith.star <<'STAR'
+pkg = package(
+    name = "hi", version = "1.0.0", description = "A tiny signing test",
+    contents = [file("stage/usr/bin/hi", "/usr/bin/hi")],
+)
+for fmt in ["tar", "rpm", "apk"]:
+    target(pkg, fmt)
+STAR
 
 # Keys: an OpenPGP key, an OpenPGP key with a passphrase, an RSA key, an RSA key with a passphrase.
 gpg --batch --passphrase '' --quick-gen-key 'Plain <plain@example.org>' rsa3072 sign never 2>/dev/null

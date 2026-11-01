@@ -2,40 +2,54 @@
 
 The files of a package come from two places, and `contents` joins them.
 
-1. **Tracked files.** When a target needs a job, each file its steps install outside `/src` is in
+1. **Tracked files.** When a target has a job, each file its steps install outside `/src` is in
    the package. See [build environment](build-environment.md).
 2. **`contents` entries.** Each entry adds a file, or replaces the tracked entry that has the same path.
 
 An entry that names the same `dst` as a tracked file replaces it. This is how you mark a tracked file as
 configuration, or change its mode, without listing every other file.
 
-## Entry keys
+## Entries
 
-| Key     | Meaning                                                                                       |
-| ------- | --------------------------------------------------------------------------------------------- |
-| `dst`   | Absolute path on the installed system. Required                                               |
-| `src`   | Where the content comes from. Required for `tree` and `symlink`. Not used by `dir` and `ghost`. A `file` or `config` entry without `src` changes the tracked file at `dst` |
-| `type`  | `file` (default), `config`, `tree`, `dir`, `symlink`, `ghost`                                 |
-| `mode`  | Permissions as octal text, for example `"0755"`. Default: the mode of the source file         |
-| `owner` | User name. Default `root`                                                                     |
-| `group` | Group name. Default `root`                                                                    |
-| `only`  | A list of formats. The entry applies to those formats only, for example `[deb, ipk]`          |
-| `if`    | An [expression](matrix-and-expressions.md). The entry applies when it is true                 |
+Each helper returns one entry. Put the entries in the `contents` list of `package`, or of one `target`.
 
-`src` is relative to the folder of the manifest. Variables and expressions work in `src` and `dst`.
+| Function                                        | Entry                                                       |
+| ----------------------------------------------- | ----------------------------------------------------------- |
+| `file(src, dst, mode, owner, group, config=False)` | A file, or the files that a glob matches                 |
+| `config(src, dst, mode, owner, group)`          | A configuration file                                        |
+| `tree(src, dst, mode, owner, group)`            | A folder, copied recursively                                |
+| `symlink(link_target, dst)`                     | A symbolic link                                             |
+| `directory(dst, mode, owner, group)`            | An empty folder that the package owns                       |
+| `ghost(dst)`                                    | A path the package owns but does not carry                  |
+
+| Argument | Meaning                                                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| `dst`    | Absolute path on the installed system. Required                                                         |
+| `src`    | Where the content comes from, relative to the folder of the script. For `symlink`, the link target. `None` changes the tracked file at `dst` |
+| `mode`   | Permissions as octal text, for example `"0755"`. Default: the mode of the source file                   |
+| `owner`  | User name. Default `root`                                                                               |
+| `group`  | Group name. Default `root`                                                                              |
+
+To apply an entry to some formats only, build the list in the script:
+
+```python
+extra = []
+if fmt in ["deb", "rpm"]:
+    extra.append(file("packaging/app.service", "/usr/lib/systemd/system/app.service"))
+```
 
 ## Types
 
-| `type`    | `src` is                                    | Result                                                                                  |
-| --------- | ------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `file`    | A file, or a glob such as `man/*.1`         | One file at `dst`. For a glob, or when `dst` ends with `/`, `dst` is a folder           |
-| `config`  | A file                                      | A file the package manager keeps when the user changed it                               |
-| `tree`    | A folder                                    | The folder, copied recursively, including the folder and every folder below it          |
-| `dir`     | none                                        | An empty folder that the package owns                                                   |
-| `symlink` | The link target as it reads after install   | A symbolic link at `dst`                                                                |
-| `ghost`   | none                                        | A path the package owns but does not carry. Only `rpm` records it                       |
+| Entry       | `src` is                                    | Result                                                                                  |
+| ----------- | ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `file`      | A file, or a glob such as `man/*.1`         | One file at `dst`. For a glob, or when `dst` ends with `/`, `dst` is a folder           |
+| `config`    | A file                                      | A file the package manager keeps when the user changed it                               |
+| `tree`      | A folder                                    | The folder, copied recursively, including the folder and every folder below it          |
+| `directory` | none                                        | An empty folder that the package owns                                                   |
+| `symlink`   | The link target as it reads after install   | A symbolic link at `dst`                                                                |
+| `ghost`     | none                                        | A path the package owns but does not carry. Only `rpm` records it                       |
 
-How a format records `config`:
+How a format records a configuration file:
 
 | Format      | Record                          |
 | ----------- | ------------------------------- |
@@ -66,53 +80,54 @@ These paths are never packaged:
 `/var/lib/rpm`, `/var/lib/pacman`, `/var/lib/dpkg`, `/var/lib/apk`, `/var/lib/zypp`, `/usr/lib/sysimage`,
 `/etc/ld.so.cache`, `/etc/mtab`, `/etc/resolv.conf`, `/etc/hosts`, `/etc/hostname`, `/lib/apk`, `/src`
 
-Add your own with `exclude`. An entry is a path prefix or a glob:
+Add your own with the `exclude` list of the job. An entry is a path prefix or a glob:
 
-```yaml
-exclude:
-  - /usr/share/doc/**
-  - /usr/lib/debug
-  - /usr/share/man
+```python
+build = job(
+    runs_on = "debian:13",
+    steps = [step("make install PREFIX=/usr")],
+    exclude = ["/usr/share/doc/**", "/usr/lib/debug", "/usr/share/man"],
+)
 ```
 
 ## Examples
 
 Mark one tracked file as configuration, keep everything else:
 
-```yaml
-contents:
-  - { dst: /etc/app.conf, type: config }
+```python
+contents = [config(None, "/etc/app.conf")]
 ```
 
-An entry without `src` keeps the content of the tracked file and changes its flags. `mode`, `owner` and `group` work
+An entry with `src=None` keeps the content of the tracked file and changes its flags. `mode`, `owner` and `group` work
 the same way. It is an error when the build did not install `dst`.
 
-Add a file from the source tree for Debian and OpenWrt only:
+Add a file from the source tree for Debian and Fedora only:
 
-```yaml
-contents:
-  - src: packaging/app.service
-    dst: /usr/lib/systemd/system/app.service
-    only: [deb, rpm]
+```python
+pkg = package(name = "app", version = "1.0.0", description = "An app")
+unit = file("packaging/app.service", "/usr/lib/systemd/system/app.service")
+
+for fmt in ["deb", "rpm", "tar"]:
+    contents = [unit] if fmt in ["deb", "rpm"] else []
+    target(pkg, fmt, contents = contents)
 ```
 
 Link a command name:
 
-```yaml
-contents:
-  - { type: symlink, src: /usr/lib/app/bin/app, dst: /usr/bin/app }
+```python
+contents = [symlink("/usr/lib/app/bin/app", "/usr/bin/app")]
 ```
 
 ## Without a container
 
-A target with `needs: []` lists every file itself. Build the program yourself and stage it with `DESTDIR`, then point
+A target without a `job` lists every file itself. Build the program yourself and stage it with `DESTDIR`, then point
 `src` at the stage:
 
-```yaml
-contents:
-  - src: ${STAGE}/usr/bin/tool
-    dst: /usr/bin/tool
-    mode: 0755
+```python
+pkg = package(name = "tool", version = "1.0.0", description = "A tool")
+stage = arg("STAGE", "/tmp/stage")
+
+target(pkg, "tar", contents = [file(stage + "/usr/bin/tool", "/usr/bin/tool", mode = "0755")])
 ```
 
 ```console

@@ -2,10 +2,10 @@
 # a tag `vMAJOR.MINOR.PATCH` that matches it. This workflow
 #
 #   1. builds pkgsmith and its plugins and checks the version of every crate against the tag,
-#   2. runs pkgsmith on its own manifest (pkgsmith.yaml) to build the rpm, deb, Arch and Alpine packages,
+#   2. runs pkgsmith on its own manifest (pkgsmith.star) to build the rpm, deb, Arch and Alpine packages,
 #   3. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
 #   4. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows, and runs pkgsmith on its own
-#      manifest (pkgsmith.yaml) to pack them: a disk image on macOS and a Windows Installer package on Windows,
+#      manifest (pkgsmith.star) to pack them: a disk image on macOS and a Windows Installer package on Windows,
 #   5. creates a GitHub release with the packages, a tarball per platform (pkgsmith and its plugins) and checksums.
 #
 # Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
@@ -129,8 +129,8 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = tag ]; then version="${GITHUB_REF_NAME#v}"; else
             version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"; fi
           arch=amd64; if [[ "${{ matrix.target }}" == aarch64* ]]; then arch=arm64; fi
-          # A manifest without an image packages files that exist, so no container is needed.
-          target/release/pkgsmith build . -F dmg --job "arch=$arch" \
+          # A target without a job packages files that exist, so no container is needed.
+          target/release/pkgsmith build . -F dmg --where "arch=$arch" \
             --build-arg "VERSION=$version" --build-arg "ARCH=$arch" --build-arg "STAGE=$name" -o dist --progress plain
           ls -l dist
       - uses: actions/upload-artifact@v4

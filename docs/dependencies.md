@@ -1,16 +1,22 @@
 # Dependencies
 
-```yaml
-depends: [glibc, "libssl3 >= 3.0"]
-recommends: [acme-docs]
-suggests: [acme-extras]
-conflicts: [acme-legacy]
-replaces: [acme-legacy]
-provides: [acme]
+```python
+pkg = package(
+    name = "acme-tool",
+    version = "1.0.0",
+    description = "A tool",
+    depends = ["glibc", "libssl3 >= 3.0"],
+    recommends = ["acme-docs"],
+    suggests = ["acme-extras"],
+    conflicts = ["acme-legacy"],
+    replaces = ["acme-legacy"],
+    provides = ["acme"],
+)
+
+target(pkg, "rpm", distro = "fedora")
 ```
 
-pkgsmith writes the names as you give them. It does not translate a name between distros. That is your job, with
-`overrides`.
+pkgsmith writes the names as you give them. It does not translate a name between distros. That is your job, in the script.
 
 ## Name and version syntax
 
@@ -42,20 +48,21 @@ Alpine has no weak dependencies, so `recommends` and `suggests` are left out of 
 
 ## One name per distro
 
-The library names differ between distros. Use `overrides`:
+The library names differ between distros. Give each target its own list:
 
-```yaml
-depends: [glibc]          # fedora, opensuse, arch
-overrides:
-  deb:
-    depends: [libc6]
-  apk:
-    depends: [musl]
-  opensuse:
-    depends: [glibc, libopenssl3]
+```python
+pkg = package(name = "acme-tool", version = "1.0.0", description = "A tool", depends = ["glibc"])
+
+target(pkg, "rpm", distro = "fedora")                              # uses the list of pkg
+target(pkg, "archlinux", distro = "arch")
+target(pkg, "deb", distro = "debian", depends = ["libc6"])
+target(pkg, "apk", distro = "alpine", depends = ["musl"])
+target(pkg, "rpm", distro = "opensuse", depends = ["glibc", "libopenssl3"], file = "opensuse-{file}")
 ```
 
-A list in `overrides` replaces the base list. See [manifest reference](manifest.md#overrides).
+A list on a target replaces the list of `pkg`. It does not merge with it. See the
+[target reference](manifest.md#target). To keep the shared names and add one, write
+`depends = pkg["depends"] + ["libopenssl3"]`.
 
 ## Libraries the program needs
 

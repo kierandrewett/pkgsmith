@@ -1,13 +1,12 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use pkgsmith::container::Engine;
-use pkgsmith::expand::Scope;
 use pkgsmith::install;
-use pkgsmith::manifest::Manifest;
 use pkgsmith::package::{self, Options};
-use pkgsmith::plan;
+use pkgsmith::plan::{self, Selection};
 use pkgsmith::plugins::{self, Registry, Signer};
 use pkgsmith::runner::{Runner, build_key, lane};
+use pkgsmith::script;
 use pkgsmith::signing::Signing;
 use pkgsmith::ui::{Mode, Ui};
 use std::path::{Path, PathBuf};
@@ -18,8 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[command(
     name = "pkgsmith",
     version,
-    about = "Build distribution packages from one manifest per package",
-    long_about = "Build distribution packages from one manifest per package.\n\nLike docker build, `pkgsmith build [PATH]` reads the manifest in PATH (pkgsmith.yaml), runs its build in a container, and writes the packages to ./dist."
+    about = "Build distribution packages from one script per project",
+    long_about = "Build distribution packages from one script per project.\n\nLike docker build, `pkgsmith build [PATH]` runs the script in PATH (pkgsmith.star), runs its jobs in containers, and writes the packages to ./dist."
 )]
 struct Cli {
     /// A folder to search for plugins (pkgsmith-plugin-*, a shared library) before the standard places. Repeatable. See `pkgsmith plugins`.
@@ -29,29 +28,27 @@ struct Cli {
     command: Command,
 }
 
-/// What every command that reads a manifest takes.
+/// What every command that reads the script takes.
 #[derive(Args)]
 struct Source {
-    /// The build context: a folder that holds pkgsmith.yaml, or the manifest itself. The folder is mounted at /src
-    /// in a tracked build.
+    /// The build context: a folder that holds pkgsmith.star, or the script itself. The folder is mounted at /src in a
+    /// tracked build.
     #[arg(default_value = ".")]
     path: PathBuf,
-    /// The manifest, when it is not PATH/pkgsmith.yaml.
+    /// The script, when it is not PATH/pkgsmith.star.
     #[arg(short = 'f', long, value_name = "FILE")]
     file: Option<PathBuf>,
-    /// Formats, comma separated. See `pkgsmith formats`. Default: every format the matrix allows.
+    /// Formats, comma separated. See `pkgsmith formats`. Default: every format the script declares.
     #[arg(short = 'F', long, value_delimiter = ',', value_name = "LIST")]
     format: Vec<String>,
-    /// Only the matrix combinations with this value, as KEY=VALUE, for example `--job distro=fedora`. Repeatable.
-    #[arg(long = "job", value_name = "KEY=VALUE")]
-    job: Vec<String>,
-    /// Only these platforms, for example `linux/arm64,linux/amd64`. Selects the matrix `arch`.
+    /// Only the targets with this value, as KEY=VALUE, for example `--where distro=fedora`. The keys are format, distro,
+    /// arch, name and the keys of the tags of a target. Repeatable.
+    #[arg(long = "where", value_name = "KEY=VALUE")]
+    filter: Vec<String>,
+    /// Only these platforms, for example `linux/arm64,linux/amd64`. Selects the `arch` of the targets.
     #[arg(long, value_delimiter = ',', value_name = "LIST")]
     platform: Vec<String>,
-    /// Distro for `overrides` when the matrix names none: fedora, opensuse, debian, ubuntu, archlinux.
-    #[arg(long)]
-    distro: Option<String>,
-    /// NAME=VALUE for ${NAME} in the manifest, on top of the environment. Repeatable.
+    /// NAME=VALUE for arg("NAME") in the script, on top of the environment. Repeatable.
     #[arg(long = "build-arg", visible_alias = "set", value_name = "NAME=VALUE")]
     build_arg: Vec<String>,
 }
@@ -164,17 +161,10 @@ fn signing_setup<'a>(
     Signing::new(registry, &keys, passphrase_file)
 }
 
-/// The file name each item would write: the name the plugin picks, or the `file` template of the matrix entry.
-fn planned_name(
-    registry: &Registry,
-    manifest: &Manifest,
-    scope: &Scope,
-    output: &Path,
-    item: &plan::Item,
-) -> Result<String> {
-    let bound = manifest.bind(scope, &item.job, &item.format)?;
+/// The file name each item would write: the name the plugin picks, or the `file` template of the target.
+fn planned_name(registry: &Registry, output: &Path, item: &plan::Item) -> Result<String> {
     let outline = package::outline(
-        &bound,
+        &item.manifest,
         &item.format,
         &Options::new(output.to_path_buf(), item.job.distro().map(String::from)),
     );
@@ -182,20 +172,14 @@ fn planned_name(
     package::output_name(&item.job, &outline, &name)
 }
 
-/// Two jobs that write the same file would overwrite each other while they run side by side. Stop before any build.
-fn check_unique_names(
-    registry: &Registry,
-    manifest: &Manifest,
-    scope: &Scope,
-    output: &Path,
-    items: &[plan::Item],
-) -> Result<()> {
+/// Two targets that write the same file would overwrite each other while they run side by side. Stop before any build.
+fn check_unique_names(registry: &Registry, output: &Path, items: &[plan::Item]) -> Result<()> {
     let mut seen: std::collections::HashMap<String, &plan::Item> = std::collections::HashMap::new();
     for item in items {
-        let name = planned_name(registry, manifest, scope, output, item)?;
+        let name = planned_name(registry, output, item)?;
         if let Some(first) = seen.insert(name.clone(), item) {
             bail!(
-                "{} and {} would both write {name}. Give one of the matrix entries a `file` template, for example `file: \"{{distro}}-{{file}}\"`",
+                "{} and {} would both write {name}. Give one of the targets a `file` template, for example `file = \"{{distro}}-{{file}}\"`",
                 first.label(),
                 item.label()
             );
@@ -222,12 +206,9 @@ fn pairs(items: &[String], flag: &str) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-fn scope(set: &[String]) -> Result<Scope> {
-    let mut scope = Scope::from_environment();
-    for (name, value) in pairs(set, "--build-arg")? {
-        scope.set(name, value);
-    }
-    Ok(scope)
+/// The `--build-arg`s as a map. They win over the environment inside the script.
+fn build_args(set: &[String]) -> Result<std::collections::BTreeMap<String, String>> {
+    Ok(pairs(set, "--build-arg")?.into_iter().collect())
 }
 
 /// `linux/arm64` -> `arm64`.
@@ -238,8 +219,8 @@ fn platform_arch(platform: &str) -> Result<String> {
     }
 }
 
-/// The manifest and what to build from it.
-fn load(source: &Source, registry: &Registry) -> Result<(Manifest, Vec<plan::Item>)> {
+/// The script and what to build from it.
+fn load(source: &Source, registry: &Registry) -> Result<Vec<plan::Item>> {
     let (file, context) = if source.path.is_file() {
         (
             source.path.clone(),
@@ -248,55 +229,44 @@ fn load(source: &Source, registry: &Registry) -> Result<(Manifest, Vec<plan::Ite
     } else {
         let file = match &source.file {
             Some(file) => file.clone(),
-            None => ["pkgsmith.yaml", "pkgsmith.yml"]
-                .iter()
-                .map(|name| source.path.join(name))
-                .find(|path| path.is_file())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "no pkgsmith.yaml in {}; name the manifest with -f",
+            None => {
+                let file = source.path.join("pkgsmith.star");
+                if !file.is_file() {
+                    bail!(
+                        "no pkgsmith.star in {}; name the script with -f",
                         source.path.display()
-                    )
-                })?,
+                    );
+                }
+                file
+            }
         };
         (file, source.path.clone())
     };
-    let file = source
-        .file
-        .clone()
-        .filter(|_| source.path.is_file())
-        .unwrap_or(file);
-    let mut manifest = Manifest::parse(&file)?;
-    manifest.context = if context.as_os_str().is_empty() {
+    let context = if context.as_os_str().is_empty() {
         PathBuf::from(".")
     } else {
         context
     };
-    let arches: Vec<String> = source
-        .platform
-        .iter()
-        .map(|p| platform_arch(p))
-        .collect::<Result<_>>()?;
-    manifest.check_options(&registry.format_names())?;
-    let mut items = plan::items(
-        &manifest,
-        &registry.format_names(),
-        &source.format,
-        &pairs(&source.job, "--job")?,
-        source.distro.as_deref(),
-        &scope(&source.build_arg)?,
-    )?;
-    if !arches.is_empty() {
-        items.retain(|item| {
-            item.job
-                .arch()
-                .is_none_or(|arch| arches.iter().any(|a| a == arch))
-        });
-    }
+    let base = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let specs = script::evaluate(&file, build_args(&source.build_arg)?)?;
+    let selection = Selection {
+        formats: source.format.clone(),
+        filters: pairs(&source.filter, "--where")?,
+        arches: source
+            .platform
+            .iter()
+            .map(|p| platform_arch(p))
+            .collect::<Result<_>>()?,
+    };
+    let items = plan::items(specs, &base, &context, &registry.format_names(), &selection)?;
     if items.is_empty() {
-        bail!("nothing to build: no matrix combination of this manifest matches the selection");
+        bail!("nothing to build: no target of this script matches the selection");
     }
-    Ok((manifest, items))
+    Ok(items)
 }
 
 /// Run `work` for every item, `jobs` at a time. The first failure stops new items from starting.
@@ -362,51 +332,33 @@ fn build_letter(index: usize) -> String {
     }
 }
 
-fn plan_table(
-    registry: &Registry,
-    manifest: &Manifest,
-    items: &[plan::Item],
-    scope: &Scope,
-    json: bool,
-) -> Result<()> {
+fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<()> {
     use std::io::IsTerminal;
     let mut keys: Vec<String> = Vec::new();
     let mut rows = Vec::new();
     for item in items {
-        let bound = manifest.bind(scope, &item.job, &item.format);
-        let (arch, image, build, file) = match &bound {
-            Ok(bound) => {
-                let letter = build_key(bound, &item.job).map(|key| {
-                    let index = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
-                        keys.push(key);
-                        keys.len() - 1
-                    });
-                    build_letter(index)
-                });
-                (
-                    bound.arch.clone(),
-                    bound.image.clone().unwrap_or_default(),
-                    letter,
-                    {
-                        let outline = package::outline(
-                            bound,
-                            &item.format,
-                            &Options::new(PathBuf::from("."), item.job.distro().map(String::from)),
-                        );
-                        registry
-                            .file_name(&outline)
-                            .and_then(|name| package::output_name(&item.job, &outline, &name))
-                            .map_err(|e| format!("{e:#}"))
-                    },
-                )
-            }
-            Err(error) => (
-                item.job.arch().unwrap_or(&manifest.arch).to_string(),
-                String::new(),
-                None,
-                Err(format!("{error:#}")),
-            ),
-        };
+        let bound = &item.manifest;
+        let letter = build_key(bound).map(|key| {
+            let index = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
+                keys.push(key);
+                keys.len() - 1
+            });
+            build_letter(index)
+        });
+        let outline = package::outline(
+            bound,
+            &item.format,
+            &Options::new(PathBuf::from("."), item.job.distro().map(String::from)),
+        );
+        let file = registry
+            .file_name(&outline)
+            .and_then(|name| package::output_name(&item.job, &outline, &name))
+            .map_err(|e| format!("{e:#}"));
+        let (arch, image, build) = (
+            bound.arch.clone(),
+            bound.image.clone().unwrap_or_default(),
+            letter,
+        );
         rows.push(Row {
             format: item.format.clone(),
             distro: item.job.distro().unwrap_or("").to_string(),
@@ -617,9 +569,8 @@ fn run() -> Result<()> {
             println!("Removed {removed} cached setup images");
         }
         Command::Plan { source, json } => {
-            let scope = scope(&source.build_arg)?;
-            let (manifest, items) = load(&source, &registry)?;
-            plan_table(&registry, &manifest, &items, &scope, json)?;
+            let items = load(&source, &registry)?;
+            plan_table(&registry, &items, json)?;
         }
         Command::Files {
             source,
@@ -627,15 +578,14 @@ fn run() -> Result<()> {
             progress,
             work,
         } => {
-            let scope = scope(&source.build_arg)?;
-            let (manifest, items) = load(&source, &registry)?;
+            let items = load(&source, &registry)?;
             let ui = Ui::new(Mode::parse(&progress).map_err(|e| anyhow!(e))?);
             let runner = Runner::new(work, ui.clone(), true);
             let (listings, errors) = run_all(&items, jobs, |item| {
-                let bound = manifest.bind(&scope, &item.job, &item.format)?;
+                let bound = &item.manifest;
                 let options = Options::new(PathBuf::from("."), item.job.distro().map(String::from));
-                let tracked = runner.tracked(&bound, &item.job)?;
-                let package = package::assemble(&bound, &item.format, &options, tracked)?;
+                let tracked = runner.tracked(bound, &item.job)?;
+                let package = package::assemble(bound, &item.format, &options, tracked)?;
                 let mut text = format!("== {}\n", item.label());
                 for entry in &package.entries {
                     text += &format!(
@@ -668,9 +618,8 @@ fn run() -> Result<()> {
             sign_passphrase_file,
             sign_armor,
         } => {
-            let scope = scope(&source.build_arg)?;
-            let (manifest, items) = load(&source, &registry)?;
-            check_unique_names(&registry, &manifest, &scope, &output, &items)?;
+            let items = load(&source, &registry)?;
+            check_unique_names(&registry, &output, &items)?;
             let signing = signing_setup(&registry, sign_key, sign_passphrase_file)?;
             let signer: Option<&Signing> = (!signing.is_off()).then_some(&signing);
             if let Some(signing) = signer {
@@ -692,7 +641,7 @@ fn run() -> Result<()> {
             let runner = Runner::new(work, ui.clone(), !no_cache);
             let job_number = AtomicUsize::new(0);
             let (written, errors) = run_all(&items, jobs, |item| {
-                let bound = manifest.bind(&scope, &item.job, &item.format)?;
+                let bound = &item.manifest;
                 // Each job builds in a private folder inside the output folder. Two jobs can make a file of the same default
                 // name, and the `file` template gives them different final names. The destinations were checked to be
                 // different before the first build started.
@@ -702,9 +651,9 @@ fn run() -> Result<()> {
                     job_number.fetch_add(1, Ordering::Relaxed)
                 ));
                 let options = Options::new(private.clone(), item.job.distro().map(String::from));
-                let tracked = runner.tracked(&bound, &item.job)?;
-                let package = package::assemble(&bound, &item.format, &options, tracked)?;
-                let step = ui.step(&lane(&bound, &item.job), format!("package {}", item.format));
+                let tracked = runner.tracked(bound, &item.job)?;
+                let package = package::assemble(bound, &item.format, &options, tracked)?;
+                let step = ui.step(&lane(bound, &item.job), format!("package {}", item.format));
                 let built = registry
                     .build(
                         &package,
@@ -712,7 +661,7 @@ fn run() -> Result<()> {
                         signer.map(|k| k as &dyn Signer),
                     )
                     .and_then(|file| {
-                        // A `file` template in the matrix entry renames the result before it is signed.
+                        // A `file` template of the target renames the result before it is signed.
                         let name = package::output_name(
                             &item.job,
                             &package,

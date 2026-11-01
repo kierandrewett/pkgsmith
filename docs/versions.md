@@ -1,6 +1,6 @@
 # Versions
 
-Write one version in the manifest. pkgsmith spells it in the way each format orders versions.
+Write one version in the script. pkgsmith spells it in the way each format orders versions.
 
 A version is `MAJOR.MINOR.PATCH`, or `MAJOR.MINOR.PATCH-prerelease`. The pre-release text may contain letters, digits,
 dots and hyphens. Anything else is an error: `1.2`, `v1.2.3`, `1.2.3-` and `1.2.x` are refused.
@@ -44,11 +44,17 @@ For one package, these are in increasing order in every format:
 For Arch, the rule drops the commit identifier (`g` and hexadecimal text of 7 to 40 digits), because pacman compares
 runs of letters and digits and the commit text would break the order that the date and the commit count already give.
 
-## In the manifest
+## In the script
 
-```yaml
-version: ${VERSION:-0.4.2}
-release: 1
+```python
+pkg = package(
+    name = "hello",
+    version = arg("VERSION", "0.4.2"),
+    release = "1",
+    description = "A small program",
+)
+
+target(pkg, "tar")
 ```
 
 ```console
@@ -65,9 +71,10 @@ when the version changes.
 An epoch makes a version sort above every version with a lower epoch, whatever the numbers are. Use it only to repair
 a version that went the wrong way, for example after a project changed its numbering.
 
-```yaml
-version: 0.1.12
-epoch: 1
+```python
+pkg = package(name = "hello", version = "0.1.12", epoch = 1, description = "A small program")
+
+target(pkg, "rpm", distro = "fedora")
 ```
 
 | Format      | Where the epoch goes                                              |

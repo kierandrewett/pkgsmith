@@ -1,15 +1,15 @@
-//! What a build will do: the matrix of a manifest crossed with the formats that were asked for.
+//! What a build will do: the targets of a script, narrowed by what was asked for.
 
-use crate::expand::Scope;
-use crate::expr;
-use crate::manifest::{Job, Manifest};
-use anyhow::{Context, Result, bail};
+use crate::manifest::{Job, Manifest, TargetSpec};
+use anyhow::{Result, bail};
+use std::path::Path;
 
-/// One build: a matrix combination and one format.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One package to write.
+#[derive(Debug, Clone)]
 pub struct Item {
     pub job: Job,
     pub format: String,
+    pub manifest: Manifest,
 }
 
 impl Item {
@@ -18,72 +18,71 @@ impl Item {
     }
 }
 
-/// Every build the manifest describes. A job that names its `format` runs that format only. A job without one runs each
-/// format in `wanted` (all formats when `wanted` is empty). `wanted` also drops jobs whose format it does not list.
-/// `known` are the formats the loaded plugins write. `filters` are `key=value` pairs that a job must match, like the matrix values of `--job arch=arm64`.
-///
-/// A matrix `include` entry may carry `if:`, an expression like the `if:` of a `contents` entry. It sees `env` (the
-/// environment and `--build-arg`), the matrix values, `format`, `distro` and `arch`. A job whose condition is false is
-/// dropped, and `if` is not a matrix value.
+/// What the command line selects.
+#[derive(Debug, Default)]
+pub struct Selection {
+    /// Formats to write. Empty means every format the script declares.
+    pub formats: Vec<String>,
+    /// `KEY=VALUE` pairs that a target must match: `format`, `distro`, `arch`, `name` or a key of its `tags`.
+    pub filters: Vec<(String, String)>,
+    /// Architectures to keep. A package with arch `all` is always kept. Empty means all.
+    pub arches: Vec<String>,
+}
+
+/// Every package the targets describe. `known` are the formats the loaded plugins write. `base` is the folder of the
+/// script and `context` the folder that a tracked build mounts at `/src`.
 pub fn items(
-    manifest: &Manifest,
+    specs: Vec<TargetSpec>,
+    base: &Path,
+    context: &Path,
     known: &[String],
-    wanted: &[String],
-    filters: &[(String, String)],
-    default_distro: Option<&str>,
-    scope: &Scope,
+    selection: &Selection,
 ) -> Result<Vec<Item>> {
-    if let Some(unknown) = wanted.iter().find(|f| !known.contains(f)) {
+    if let Some(unknown) = selection.formats.iter().find(|f| !known.contains(f)) {
         bail!(
             "unknown format {unknown:?}; installed: {}",
             known.join(", ")
         );
     }
-    let everything = known.to_vec();
     let mut out = Vec::new();
-    for mut job in manifest.jobs() {
-        if let Some(distro) = default_distro {
-            job.values
-                .entry("distro".into())
-                .or_insert_with(|| distro.to_string());
+    for (n, spec) in specs.into_iter().enumerate() {
+        if !known.contains(&spec.format) {
+            bail!(
+                "target {} ({}) asks for the format {:?}; installed: {}",
+                n + 1,
+                spec.name,
+                spec.format,
+                known.join(", ")
+            );
         }
-        let condition = job.values.remove("if");
-        if !filters
+        let format = spec.format.clone();
+        let mut values = spec.tags.clone();
+        values.insert("format".into(), format.clone());
+        values.insert("name".into(), spec.name.clone());
+        if let Some(distro) = &spec.distro {
+            values.insert("distro".into(), distro.clone());
+        }
+        if let Some(file) = &spec.file {
+            values.insert("file".into(), file.clone());
+        }
+        let label = format!("target {} ({} as {format})", n + 1, spec.name);
+        let manifest = Manifest::from_spec(spec, base.to_path_buf(), context.to_path_buf())
+            .map_err(|error| anyhow::anyhow!("{label}: {error:#}"))?;
+        values.insert("arch".into(), manifest.arch.clone());
+        let job = Job { values };
+        let wanted = selection.formats.is_empty() || selection.formats.contains(&format);
+        let matches = selection
+            .filters
             .iter()
-            .all(|(key, value)| job.values.get(key) == Some(value))
-        {
-            continue;
-        }
-        if let Some(condition) = condition {
-            let mut context = scope.clone();
-            context.matrix = job.values.clone();
-            context.distro = job.distro().unwrap_or_default().to_string();
-            context.arch = job.arch().unwrap_or_default().to_string();
-            context.format = job.format().unwrap_or_default().to_string();
-            let keep = expr::eval(&condition, &context)
-                .with_context(|| format!("the matrix entry has the condition if: {condition}"))?;
-            if !keep.truthy() {
-                continue;
-            }
-        }
-        let formats: Vec<String> = match job.format() {
-            Some(format) if wanted.is_empty() || wanted.iter().any(|w| w == format) => {
-                vec![format.to_string()]
-            }
-            Some(_) => continue,
-            None if wanted.is_empty() => everything.clone(),
-            None => wanted.to_vec(),
-        };
-        for format in formats {
-            if !known.contains(&format) {
-                bail!(
-                    "the matrix asks for the format {format:?}; installed: {}",
-                    known.join(", ")
-                );
-            }
+            .all(|(key, value)| job.values.get(key) == Some(value));
+        let arch_ok = selection.arches.is_empty()
+            || manifest.arch == "all"
+            || selection.arches.contains(&manifest.arch);
+        if wanted && matches && arch_ok {
             out.push(Item {
-                job: job.clone(),
+                job,
                 format,
+                manifest,
             });
         }
     }
@@ -93,147 +92,100 @@ pub fn items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    fn manifest(matrix: &str) -> Manifest {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pkg.yaml");
-        std::fs::write(
-            &path,
-            format!("name: demo\nversion: 1.0.0\ndescription: d\nmatrix:\n{matrix}"),
-        )
-        .unwrap();
-        Manifest::parse(&path).unwrap()
+    fn specs() -> Vec<TargetSpec> {
+        let target = |format: &str, distro: &str, arch: &str| {
+            Manifest::parse_spec(json!({
+                "name": "demo", "version": "1", "description": "d", "format": format,
+                "distro": distro, "arch": arch, "tags": {"stage": "one"},
+            }))
+            .unwrap()
+        };
+        vec![
+            target("deb", "debian", "amd64"),
+            target("deb", "debian", "arm64"),
+            target("rpm", "fedora", "amd64"),
+            target("tar", "any", "all"),
+        ]
     }
 
     fn known() -> Vec<String> {
         ["tar", "deb", "rpm"].map(String::from).to_vec()
     }
 
-    fn labels(items: Vec<Item>) -> Vec<String> {
-        items.iter().map(Item::label).collect()
+    fn labels(selection: Selection) -> Vec<String> {
+        items(
+            specs(),
+            Path::new("."),
+            Path::new("."),
+            &known(),
+            &selection,
+        )
+        .unwrap()
+        .iter()
+        .map(Item::label)
+        .collect()
     }
 
     #[test]
-    fn a_format_axis_fixes_the_format_and_the_command_line_narrows_it() {
-        let manifest = manifest("  arch: [amd64, arm64]\n  format: [deb, tar]\n");
+    fn formats_filters_and_architectures_narrow_the_targets() {
+        assert_eq!(labels(Selection::default()).len(), 4);
+        let deb = labels(Selection {
+            formats: vec!["deb".into()],
+            ..Selection::default()
+        });
         assert_eq!(
-            items(&manifest, &known(), &[], &[], None, &Scope::default())
-                .unwrap()
-                .len(),
-            4
-        );
-        let only_deb = items(
-            &manifest,
-            &known(),
-            &["deb".into()],
-            &[],
-            None,
-            &Scope::default(),
-        )
-        .unwrap();
-        assert_eq!(
-            labels(only_deb),
+            deb,
             [
-                "deb [arch=amd64, format=deb]",
-                "deb [arch=arm64, format=deb]"
+                "deb [arch=amd64, distro=debian, format=deb, name=demo, stage=one]",
+                "deb [arch=arm64, distro=debian, format=deb, name=demo, stage=one]"
             ]
         );
+        let arm = labels(Selection {
+            filters: vec![
+                ("distro".into(), "debian".into()),
+                ("stage".into(), "one".into()),
+            ],
+            arches: vec!["arm64".into()],
+            ..Selection::default()
+        });
+        assert_eq!(arm.len(), 1, "{arm:?}");
+        let all = labels(Selection {
+            arches: vec!["arm64".into()],
+            ..Selection::default()
+        });
+        assert_eq!(
+            all.len(),
+            2,
+            "the arm64 deb, and the tar of arch all: {all:?}"
+        );
     }
 
     #[test]
-    fn without_a_format_axis_each_requested_format_runs_for_every_job() {
-        let manifest = manifest("  arch: [amd64, arm64]\n");
-        let all = items(
-            &manifest,
-            &known(),
-            &["deb".into(), "tar".into()],
-            &[],
-            None,
-            &Scope::default(),
+    fn a_format_that_no_plugin_writes_is_refused_by_name() {
+        let error = items(
+            specs(),
+            Path::new("."),
+            Path::new("."),
+            &["tar".to_string()],
+            &Selection::default(),
         )
-        .unwrap();
-        assert_eq!(all.len(), 4);
-    }
-
-    #[test]
-    fn job_filters_select_by_value_and_an_unknown_format_is_refused() {
-        let manifest = manifest("  arch: [amd64, arm64]\n");
-        let filtered = items(
-            &manifest,
-            &known(),
-            &["tar".into()],
-            &[("arch".into(), "arm64".into())],
-            None,
-            &Scope::default(),
-        )
-        .unwrap();
-        assert_eq!(labels(filtered), ["tar [arch=arm64]"]);
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("\"deb\""), "{error:#}");
+        let selection = Selection {
+            formats: vec!["msi".into()],
+            ..Selection::default()
+        };
         assert!(
             items(
-                &manifest,
+                specs(),
+                Path::new("."),
+                Path::new("."),
                 &known(),
-                &["msi".into()],
-                &[],
-                None,
-                &Scope::default()
+                &selection
             )
             .is_err()
         );
-    }
-
-    #[test]
-    fn a_default_distro_fills_in_jobs_that_name_none() {
-        let manifest =
-            manifest("  arch: [amd64]\n  include:\n    - {arch: amd64, distro: opensuse}\n");
-        let jobs = items(
-            &manifest,
-            &known(),
-            &["tar".into()],
-            &[],
-            Some("fedora"),
-            &Scope::default(),
-        )
-        .unwrap();
-        assert_eq!(jobs[0].job.distro(), Some("opensuse"));
-    }
-
-    #[test]
-    fn an_include_entry_with_a_false_condition_is_dropped_and_if_is_not_a_matrix_value() {
-        let manifest = manifest(
-            "  arch: [amd64]\n  include:\n    - { format: dmg, distro: macos, arch: arm64, if: env.STAGE }\n",
-        );
-        let without = items(
-            &manifest,
-            &known_with_dmg(),
-            &[],
-            &[],
-            None,
-            &Scope::default(),
-        )
-        .unwrap();
-        assert!(
-            without.iter().all(|i| i.job.distro() != Some("macos")),
-            "the gated entry is dropped"
-        );
-        let mut staged = Scope::default();
-        staged.set("STAGE", "stage");
-        let with = items(&manifest, &known_with_dmg(), &[], &[], None, &staged).unwrap();
-        let dmg: Vec<_> = with
-            .iter()
-            .filter(|i| i.job.distro() == Some("macos"))
-            .collect();
-        assert_eq!(dmg.len(), 1);
-        assert!(!dmg[0].job.values.contains_key("if"));
-        assert_eq!(dmg[0].label(), "dmg [arch=arm64, distro=macos, format=dmg]");
-    }
-
-    #[test]
-    fn a_condition_that_cannot_be_evaluated_is_an_error() {
-        let manifest = manifest("  include:\n    - { format: tar, if: \"(\" }\n");
-        assert!(items(&manifest, &known(), &[], &[], None, &Scope::default()).is_err());
-    }
-
-    fn known_with_dmg() -> Vec<String> {
-        ["tar", "deb", "rpm", "dmg"].map(String::from).to_vec()
     }
 }

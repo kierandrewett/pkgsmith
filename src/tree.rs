@@ -123,26 +123,19 @@ fn walk(src: &Path, dst: &str, content: &Content, out: &mut Vec<Entry>) -> Resul
     Ok(())
 }
 
-/// Resolve the manifest's `contents` for one format. Later entries replace earlier ones with the same path.
-pub fn resolve(manifest: &Manifest, format: &str) -> Result<Vec<Entry>> {
-    resolve_with(manifest, format, Vec::new())
+/// Resolve the `contents` of a target. Later entries replace earlier ones with the same path.
+pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
+    resolve_with(manifest, Vec::new())
 }
 
 /// Like `resolve`, starting from the files a tracked build installed. The manifest's `contents` then add to them or
 /// replace them, for example to mark a file as configuration or to change its mode.
-pub fn resolve_with(manifest: &Manifest, format: &str, tracked: Vec<Entry>) -> Result<Vec<Entry>> {
+pub fn resolve_with(manifest: &Manifest, tracked: Vec<Entry>) -> Result<Vec<Entry>> {
     let mut found: BTreeMap<String, Entry> = tracked
         .into_iter()
         .map(|entry| (entry.path.clone(), entry))
         .collect();
     for content in &manifest.contents {
-        if content
-            .only
-            .as_ref()
-            .is_some_and(|only| !only.iter().any(|f| f == format))
-        {
-            continue;
-        }
         let mut entries = Vec::new();
         let src = content.src.as_deref().unwrap_or("");
         let source = |text: &str| -> PathBuf {
@@ -246,20 +239,14 @@ pub fn resolve_with(manifest: &Manifest, format: &str, tracked: Vec<Entry>) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expand::Scope;
-    use crate::manifest::Job;
+    use serde_json::json;
 
-    fn manifest(dir: &Path, contents: &str) -> Manifest {
-        let path = dir.join("pkg.yaml");
-        fs::write(
-            &path,
-            format!("name: demo\nversion: 1.0.0\ndescription: d\ncontents:\n{contents}"),
-        )
+    fn manifest(dir: &Path, contents: serde_json::Value) -> Manifest {
+        let spec = Manifest::parse_spec(json!({
+            "name": "demo", "version": "1.0.0", "description": "d", "format": "deb", "contents": contents,
+        }))
         .unwrap();
-        Manifest::parse(&path)
-            .unwrap()
-            .bind(&Scope::default(), &Job::default(), "deb")
-            .unwrap()
+        Manifest::from_spec(spec, dir.to_path_buf(), dir.to_path_buf()).unwrap()
     }
 
     #[cfg(unix)]
@@ -274,9 +261,9 @@ mod tests {
         std::os::unix::fs::symlink("lib/a.so", root.join("link")).unwrap();
         let manifest = manifest(
             dir.path(),
-            "  - {src: stage/opt/app, dst: /opt/app, type: tree}\n",
+            json!([{"src": "stage/opt/app", "dst": "/opt/app", "type": "tree"}]),
         );
-        let entries = resolve(&manifest, "deb").unwrap();
+        let entries = resolve(&manifest).unwrap();
         let by_path: BTreeMap<_, _> = entries.iter().map(|e| (e.path.as_str(), e)).collect();
         assert!(by_path["/opt/app"].is_dir() && by_path["/opt/app/lib"].is_dir());
         assert_eq!(by_path["/opt/app/run"].mode, 0o755);
@@ -295,8 +282,11 @@ mod tests {
         fs::create_dir_all(dir.path().join("man")).unwrap();
         fs::write(dir.path().join("man/a.1"), "x").unwrap();
         fs::write(dir.path().join("man/b.1"), "x").unwrap();
-        let manifest = manifest(dir.path(), "  - {src: man/*.1, dst: /usr/share/man/man1}\n");
-        let paths: Vec<_> = resolve(&manifest, "rpm")
+        let manifest = manifest(
+            dir.path(),
+            json!([{"src": "man/*.1", "dst": "/usr/share/man/man1"}]),
+        );
+        let paths: Vec<_> = resolve(&manifest)
             .unwrap()
             .into_iter()
             .map(|e| e.path)
@@ -308,18 +298,17 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_limited_to_other_formats_is_skipped_and_a_later_entry_wins() {
+    fn a_later_entry_replaces_an_earlier_one_with_the_same_path() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("one"), "1").unwrap();
         fs::write(dir.path().join("two"), "22").unwrap();
         let manifest = manifest(
             dir.path(),
-            "  - {src: one, dst: /f}\n  - {src: two, dst: /f}\n  - {src: one, dst: /only-deb, only: [deb]}\n",
+            json!([{"src": "one", "dst": "/f"}, {"src": "two", "dst": "/f"}]),
         );
-        let rpm = resolve(&manifest, "rpm").unwrap();
-        assert_eq!(rpm.len(), 1);
-        assert_eq!(rpm[0].size(), 2);
-        assert_eq!(resolve(&manifest, "deb").unwrap().len(), 2);
+        let entries = resolve(&manifest).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].size(), 2);
     }
 
     #[test]
@@ -327,7 +316,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let manifest = manifest(
             dir.path(),
-            "  - {dst: /etc/app.conf, type: config, mode: \"0600\", owner: app}\n",
+            json!([{"dst": "/etc/app.conf", "type": "config", "mode": "0600", "owner": "app"}]),
         );
         let tracked = vec![Entry {
             path: "/etc/app.conf".into(),
@@ -340,12 +329,12 @@ mod tests {
             group: "root".into(),
             config: false,
         }];
-        let entries = resolve_with(&manifest, "deb", tracked).unwrap();
+        let entries = resolve_with(&manifest, tracked).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].config);
         assert_eq!((entries[0].mode, entries[0].owner.as_str()), (0o600, "app"));
         assert_eq!(entries[0].size(), 7);
-        let missing = resolve(&manifest, "deb").unwrap_err().to_string();
+        let missing = resolve(&manifest).unwrap_err().to_string();
         assert!(missing.contains("no tracked file"), "{missing}");
     }
 

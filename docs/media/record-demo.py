@@ -94,7 +94,7 @@ def wait_for(pattern, timeout):
 
 random.seed(7)
 pump(2.5)  # the shell starts
-type_text("vi pkgsmith.yaml")
+type_text("vi pkgsmith.star")
 os.write(fd, b"\r")
 pump(3.5)  # the editor shows the manifest
 for _ in range(3):  # scroll down a little, as if reading

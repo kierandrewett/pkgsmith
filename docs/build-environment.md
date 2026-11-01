@@ -1,21 +1,17 @@
 # Build environment
 
-A manifest with `jobs` builds in a container. pkgsmith watches what the build installs and packages that. This page
+A target with a `job` builds in a container. pkgsmith watches what the build installs and packages that. This page
 explains each part and its limits.
 
 A container is Linux, so this build makes Linux programs only. For macOS and Windows, see
 [macOS and Windows](macos-and-windows.md).
 
-```yaml
-jobs:
-  build:
-    runs-on: fedora:43              # which container
-    setup:                          # runs once, cached
-      - run: dnf -y install gcc make
-    steps:                          # runs on every build
-      - run: |
-          make
-          make install PREFIX=/usr
+```python
+build = job(
+    runs_on = "fedora:43",                                  # which container
+    setup = [step("dnf -y install gcc make")],              # runs once, cached
+    steps = [step("make && make install PREFIX=/usr")],     # runs on every build
+)
 ```
 
 ## Requirements
@@ -27,79 +23,77 @@ jobs:
 
 ## Jobs
 
-A job builds a tree of files. It works like a job in a GitHub Actions workflow. The packages are written from the tree,
-so one job can feed many packages.
+`job(...)` describes a build. It returns a dict, and `target(..., job=build)` uses it. The packages are written from the
+files the job installs, so one job can feed many packages.
 
-| Key        | Meaning                                                                     |
-| ---------- | --------------------------------------------------------------------------- |
-| `runs-on`  | The container image. pkgsmith pulls it when it is not on the machine        |
-| `steps`    | The scripts that make the files, in order. Required                         |
-| `setup`    | Scripts that prepare the image first. They run once and are cached          |
-| `matrix`   | The variants of the job, such as `arch`                                     |
-| `env`      | Variables for every step. The values are literal text                       |
-| `exclude`  | Paths the package leaves out. See [contents](contents.md)                   |
+| Argument   | Type | Default | Meaning                                                                     |
+| ---------- | ---- | ------- | --------------------------------------------------------------------------- |
+| `runs_on`  | text | required | The container image. pkgsmith pulls it when it is not on the machine      |
+| `steps`    | list | required | The scripts that make the files, in order. At least one                    |
+| `setup`    | list | `[]`    | Scripts that prepare the image first. They run once and are cached          |
+| `env`      | dict | `{}`    | Variables for every step. The values are literal text                       |
+| `exclude`  | list | `[]`    | Paths the package leaves out. See [contents](contents.md)                   |
+| `arch`     | text | the arch of the target | `amd64`, `arm64` or `all`. The architecture the job runs for |
 
 ### Which job a package uses
 
-A package target names its job with `needs`. See [matrix and expressions](matrix-and-expressions.md#targets).
+A target takes a job with `job=`:
 
-- `needs: build`: the package is written from the tree of the job `build`.
-- `needs` left out: allowed when the manifest has exactly one job, and an error when it has several.
-- `needs: []`: no job. The target packs `contents` only and needs no Podman. The `dmg`, `msi` and `nsis` targets of
-  `pkgsmith.yaml` work this way.
+- `target(pkg, "rpm", job = build)`: the package is written from the files that `build` installs.
+- No `job`: no build runs. The target packs its `contents` only and needs no Podman. The `dmg`, `msi` and `nsis` targets
+  of `pkgsmith.star` in this repository work this way.
 
 ### What a job can see
 
-A job sees its own `matrix`, the architecture and `env`. It cannot read the format or the distro of a target, because
-a build must not depend on the package it ends up in. That is what lets targets of different distros share one run.
+A job sees its own fields and the architecture. It cannot read the format or the distro of a target, because a build
+must not depend on the package it ends up in. That is what lets targets of different distros share one run.
 
-A `matrix` of the job works like the matrix of the manifest. A target takes the run of the job whose cell agrees with the
-target on every axis of the job's matrix. Without an `arch` axis, the job runs for the architecture of each target that
-needs it.
+Without `arch`, the job runs for the architecture of each target that uses it. To build for several architectures,
+declare one target for each architecture. See [scripting](scripting.md#every-architecture).
+
+To give a job a value that differs by architecture, make the job in a function:
+
+```python
+def make_job(arch):
+    triple = "aarch64-linux-gnu" if arch == "arm64" else "x86_64-linux-gnu"
+    return job(
+        runs_on = "debian:13",
+        env = {"TRIPLE": triple},
+        steps = [step('echo "building for $TRIPLE"')],
+    )
+```
+
+Two jobs with different `env` do not share a run. Only add a value to the job when the build needs it.
 
 ## Steps
 
-A step is one script.
+`step(run, name=None, env={})` is one script.
 
-| Key    | Meaning                                                                       |
-| ------ | ----------------------------------------------------------------------------- |
-| `run`  | The script. Required                                                          |
-| `name` | Shown in the progress output                                                  |
-| `if`   | An expression over `matrix.NAME` of the job, `arch` and `env.NAME`            |
-| `env`  | Variables for this step, after those of the job. The values are literal text  |
+| Argument | Type | Default | Meaning                                                                       |
+| -------- | ---- | ------- | ----------------------------------------------------------------------------- |
+| `run`    | text | required | The script                                                                   |
+| `name`   | text | `None`  | Shown in the progress output                                                  |
+| `env`    | dict | `{}`    | Variables for this step, after those of the job. The values are literal text  |
 
 - Every step runs in a **fresh `sh -e`** with the build context at `/src`. It does not see what an earlier step
   exported or where it changed directory. It does see the files that earlier steps wrote.
 - `sh` is `dash` on Debian and `ash` on Alpine. A `#!` line is not special: the text always runs with `sh -e`. Call
   `bash script.sh` when you need bash.
-- Variables are written as single-quoted text, so quotes, `$` and backticks in a value stay literal. A step that needs a
-  value built from another variable sets it with the next method.
+- Variables are written as single-quoted text, so quotes, `$` and backticks in a value stay literal.
 
-### Named steps
+### Sharing a step
 
-A step that several jobs use is defined once in the top-level `steps` and used by name:
+A step is a value. Put it in a variable and use it in several jobs:
 
-```yaml
-steps:
-  build:
-    name: Build
-    run: make && make install PREFIX=/usr
-jobs:
-  glibc:
-    runs-on: debian:13
-    steps:
-      - uses: build
-  musl:
-    runs-on: alpine:3.22
-    steps:
-      - uses: build
-        env:
-          CFLAGS: -O2
+```python
+build = step(name = "Build", run = "make && make install PREFIX=/usr")
+
+glibc = job(runs_on = "debian:13", steps = [build])
+musl = job(runs_on = "alpine:3.22", steps = [build], env = {"CFLAGS": "-O2"})
 ```
 
-A step with `uses` takes the `run` of the named step. It also takes the `name`, `if` and `env` of the named step, unless
-the step sets its own. The `env` of the two are merged, and the step's value wins. A step has `run` or `uses`, not both,
-and a named step cannot use another one.
+A function that returns a step or a list of steps works the same way. To share steps between files, `load` them. See
+[scripting](scripting.md#loading-other-files).
 
 ### Changing what later steps see
 
@@ -143,10 +137,9 @@ They run on top of the setup image.
 | Variable           | Value                                                          |
 | ------------------ | -------------------------------------------------------------- |
 | `PKGSMITH_NAME`    | `name`                                                         |
-| `PKGSMITH_VERSION` | `version`, as written in the manifest                          |
+| `PKGSMITH_VERSION` | `version`, as written in the script                          |
 | `PKGSMITH_RELEASE` | `release`                                                      |
 | `PKGSMITH_ARCH`    | `amd64` or `arm64`                                             |
-| `MATRIX_<KEY>`     | The value of every key of the job's own matrix cell            |
 
 ### Architecture
 
@@ -179,35 +172,26 @@ Then `contents` entries are applied on top. See [contents](contents.md).
 
 ## One build, many packages
 
-Two packages share a run when they have all of these in common:
+Two packages share a run when their jobs are equal. That means all of these are the same:
 
-- The same job, and the same cell of its matrix. With no `arch` axis, the same architecture.
-- The same steps, after the conditions are decided.
-- The same `exclude` list and the same source folder.
+- The image (`runs_on`) and the architecture. With no `arch` on the job, the architecture of the target.
+- The `setup` steps, the `steps` and the `env`.
+- The `exclude` list and the source folder.
 
-The format is not part of that, and neither is the distro. A job that three targets need runs once per architecture:
+The format is not part of that, and neither is the distro. Declare the job once and use the same value for every target.
+A job that three targets use runs once per architecture:
 
-```yaml
-jobs:
-  glibc:
-    runs-on: debian:13
-    steps: [...]
-  musl:
-    runs-on: alpine:3.22
-    steps: [...]
-targets:
-  - format: rpm
-    distro: fedora
-    needs: glibc
-  - format: deb
-    distro: debian
-    needs: glibc
-  - format: apk
-    distro: alpine
-    needs: musl
+```python
+pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+glibc = job(runs_on = "debian:13", steps = [step("make && make install PREFIX=/usr")])
+musl = job(runs_on = "alpine:3.22", steps = [step("make && make install PREFIX=/usr")])
+
+target(pkg, "rpm", distro = "fedora", job = glibc)
+target(pkg, "deb", distro = "debian", job = glibc)
+target(pkg, "apk", distro = "alpine", job = musl)
 ```
 
-`pkgsmith plan` shows one `BUILD` letter for the rpm and deb packages of an architecture.
+`pkgsmith plan` shows one `BUILD` letter for the rpm and deb packages.
 
 A program built on one distro runs on distros with the same or a newer glibc. Build on the one with the oldest glibc,
 and test the packages on the others. A distro with another libc, such as Alpine with musl, needs its own job. Name a job
@@ -225,6 +209,6 @@ after the reason it is separate, as `glibc` and `musl` do here.
 | `podman did not answer on its API socket within 10 seconds`| `podman system service` failed to start. Run it by hand to see why    |
 | `the setup script failed`                                  | The last 40 lines of its output are printed under the progress block  |
 | `the build installed no files outside /src`                | The build wrote only into `/src`. Install to `/usr` or `/opt`          |
-| `no tracked file to change; name a src to add this file`   | A `contents` entry without `src` names a path the build did not install |
+| `no tracked file to change; name a src to add this file`   | A `contents` entry with `src=None` names a path the build did not install |
 | A package contains too much                                | Add `exclude` entries. `pkgsmith files` shows the list                |
 | Setup runs every time                                      | The script text changes between runs, for example with a timestamp    |

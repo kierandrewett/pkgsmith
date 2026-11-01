@@ -1,6 +1,6 @@
 # Plugins
 
-Every package format of pkgsmith is a plugin. pkgsmith itself only reads the manifest, runs the builds and sends the
+Every package format of pkgsmith is a plugin. pkgsmith itself only reads the script, runs the builds and sends the
 result to a plugin. The formats that come with pkgsmith use the same interface that you can use.
 
 ```console
@@ -67,13 +67,13 @@ pkgsmith sends one JSON document, a package, for every package it builds. It hol
 | Field | Meaning |
 | ----- | ------- |
 | `format` | The format to write, one the plugin lists |
-| `name`, `version`, `release`, `arch` | Identity. `version` is as written in the manifest. `arch` is `amd64`, `arm64` or `all` |
+| `name`, `version`, `release`, `arch` | Identity. `version` is as written in the script. `arch` is `amd64`, `arm64` or `all` |
 | `description` | The first line is the summary, the rest is the long text |
 | `maintainer`, `homepage`, `license` | Text, or `null` |
-| `depends`, `recommends`, `suggests`, `conflicts`, `replaces`, `provides` | Lists of package names, after the `overrides` for this format and distro |
+| `depends`, `recommends`, `suggests`, `conflicts`, `replaces`, `provides` | Lists of package names, as the target gives them |
 | `scripts` | `pre_install`, `post_install`, `pre_remove`, `post_remove`. The text of each script, which starts with `#!`, or `null` |
 | `entries` | The files, see below |
-| `options` | The section of the manifest named like the format, for example `deb:`, or `null` |
+| `options` | The `options` dict of the target, for example `{"section": "utils"}`. An empty object when the target sets none |
 | `distro` | The distro of the job, or `null` |
 | `mtime` | Seconds since the epoch for every time stamp, so equal input gives equal bytes |
 | `out` | The folder for the package. It exists |
@@ -100,16 +100,16 @@ see a real document.
 
 ### Format options
 
-A top-level key of the manifest that has the name of a format is passed to that format as `options`:
+The `options` dict of a target is passed to its format as `options`:
 
-```yaml
-deb:
-  section: utils
-  compression: gzip
+```python
+pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+
+target(pkg, "deb", distro = "debian", options = {"section": "utils", "compression": "gzip"})
 ```
 
-pkgsmith does not know the keys. The plugin decides, and a good plugin refuses a key it does not know. A top-level key
-that is neither a manifest field nor a format of a loaded plugin is an error, so `dependz:` does not go unnoticed.
+pkgsmith does not know the keys. The plugin decides, and a good plugin refuses a key it does not know, so `sectoin` does
+not go unnoticed.
 
 The options of the plugins in this repository are in [formats](formats.md).
 
@@ -248,7 +248,7 @@ pkgsmith_plugin::export_plugin!(Json);
 ```
 
 `export_plugin!` writes `pkgsmith_plugin_entry`, catches panics so they become an error, and frees buffers. For a
-format section in the manifest, define a struct with `#[serde(deny_unknown_fields)]` and read it with
+format options in the script, define a struct with `#[serde(deny_unknown_fields)]` and read it with
 `package.options::<MyOptions>()?`.
 
 [examples/plugins/rust-json](../examples/plugins/rust-json) is this plugin as a crate. The built-in formats in

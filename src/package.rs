@@ -1,4 +1,4 @@
-//! A package as a plugin sees it: the manifest of one job and one format turned into a [`pkgsmith_plugin::Package`].
+//! A package as a plugin sees it: the target of a script turned into a [`pkgsmith_plugin::Package`].
 
 use crate::manifest::{Job, Manifest};
 use crate::tree;
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct Options {
     pub out: PathBuf,
-    /// `fedora`, `opensuse`, `debian`, `ubuntu`, `archlinux`: picks the matching `overrides`.
+    /// `fedora`, `opensuse`, `debian`, `ubuntu`, `archlinux`: the distro a plugin may adapt to.
     pub distro: Option<String>,
     /// Seconds since the epoch for every file time in the package. `SOURCE_DATE_EPOCH` when set, else the time now.
     pub mtime: u64,
@@ -32,7 +32,7 @@ impl Options {
 }
 
 /// The text of a script. A value with a line break is the script itself. A one-line value is a file next to the
-/// manifest. A script that has no `#!` line gets `#!/bin/sh` and `set -e`.
+/// script. A script that has no `#!` line gets `#!/bin/sh` and `set -e`.
 fn script(manifest: &Manifest, value: &Option<String>) -> Result<Option<String>> {
     let Some(value) = value else { return Ok(None) };
     let text = if value.contains('\n') {
@@ -51,7 +51,6 @@ fn script(manifest: &Manifest, value: &Option<String>) -> Result<Option<String>>
 
 /// The package without its files and scripts. Enough to ask a plugin for the name of the file it would write.
 pub fn outline(manifest: &Manifest, format: &str, options: &Options) -> Package {
-    let effective = manifest.effective(format, options.distro.as_deref());
     Package {
         format: format.to_string(),
         name: manifest.name.clone(),
@@ -63,19 +62,15 @@ pub fn outline(manifest: &Manifest, format: &str, options: &Options) -> Package 
         maintainer: manifest.maintainer.clone(),
         homepage: manifest.homepage.clone(),
         license: manifest.license.clone(),
-        depends: effective.depends,
-        recommends: effective.recommends,
-        suggests: effective.suggests,
-        conflicts: effective.conflicts,
-        replaces: effective.replaces,
-        provides: effective.provides,
+        depends: manifest.depends.clone(),
+        recommends: manifest.recommends.clone(),
+        suggests: manifest.suggests.clone(),
+        conflicts: manifest.conflicts.clone(),
+        replaces: manifest.replaces.clone(),
+        provides: manifest.provides.clone(),
         scripts: Scripts::default(),
         entries: Vec::new(),
-        options: manifest
-            .options
-            .get(format)
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
+        options: manifest.options.clone(),
         distro: options.distro.clone(),
         mtime: options.mtime,
         out: options.out.clone(),
@@ -91,21 +86,19 @@ pub fn assemble(
     tracked: Vec<Entry>,
 ) -> Result<Package> {
     let mut package = outline(manifest, format, options);
-    let scripts = manifest
-        .effective(format, options.distro.as_deref())
-        .scripts;
+    let scripts = &manifest.scripts;
     package.scripts = Scripts {
         pre_install: script(manifest, &scripts.pre_install)?,
         post_install: script(manifest, &scripts.post_install)?,
         pre_remove: script(manifest, &scripts.pre_remove)?,
         post_remove: script(manifest, &scripts.post_remove)?,
     };
-    package.entries = tree::resolve_with(manifest, format, tracked)
+    package.entries = tree::resolve_with(manifest, tracked)
         .with_context(|| format!("cannot collect the files for {format}"))?;
     Ok(package)
 }
 
-/// The name of the output file. A matrix entry may set `file`, a template that replaces the name the plugin picked.
+/// The name of the output file. A target may set `file`, a template that replaces the name the plugin picked.
 /// `{file}` is the name the plugin picked. `{name}`, `{version}`, `{release}`, `{arch}`, `{format}` and `{distro}` are
 /// the fields of the package. The result is a file name: no folder, not empty, not hidden.
 pub fn output_name(job: &Job, package: &Package, default: &str) -> Result<String> {

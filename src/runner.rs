@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use pkgsmith_plugin::Entry;
 use pkgsmith_plugin::hash::hex;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -23,14 +23,8 @@ pub struct Runner {
     builds: Mutex<HashMap<String, Slot>>,
 }
 
-/// What a build script can read: `PKGSMITH_*` and the `MATRIX_*` of the cell of its own job, never the format or the
-/// distro. That is what lets the targets of several distros share one run. `bind` fills it in.
-pub fn build_env(manifest: &Manifest, _job: &Job) -> BTreeMap<String, String> {
-    manifest.build_env.clone()
-}
-
 /// Identifies a tracked build. Jobs with the same key share one run. `None` for a manifest without an image.
-pub fn build_key(manifest: &Manifest, job: &Job) -> Option<String> {
+pub fn build_key(manifest: &Manifest) -> Option<String> {
     let image = manifest.image.as_ref()?;
     let build = manifest.build.as_ref()?;
     let source =
@@ -40,7 +34,7 @@ pub fn build_key(manifest: &Manifest, job: &Job) -> Option<String> {
         manifest.setup,
         manifest.exclude,
         source.display(),
-        build_env(manifest, job)
+        manifest.build_env
     ))))
 }
 
@@ -75,19 +69,19 @@ impl Runner {
             .map_err(|error| anyhow!("{error}"))
     }
 
-    /// The files the manifest's build installs, for this job. Empty when the manifest has no `image`.
+    /// The files the manifest's build installs, for this target. Empty when it has no job.
     pub fn tracked(&self, manifest: &Manifest, job: &Job) -> Result<Vec<Entry>> {
         let Some(image) = &manifest.image else {
             return Ok(Vec::new());
         };
         let Some(build) = &manifest.build else {
             return Err(anyhow!(
-                "the manifest names an image but no build script to run in it"
+                "the target names an image but no build script to run in it"
             ));
         };
-        let env = build_env(manifest, job);
+        let env = &manifest.build_env;
         let source = std::fs::canonicalize(&manifest.context)?;
-        let key = build_key(manifest, job).expect("image and build are set above");
+        let key = build_key(manifest).expect("image and build are set above");
         let slot = self
             .builds
             .lock()
@@ -119,7 +113,7 @@ impl Runner {
                         image: &prepared,
                         build,
                         source: &source,
-                        env: &env,
+                        env,
                         arch: &manifest.arch,
                         excludes: &manifest.exclude,
                         stage: &stage,
@@ -138,58 +132,62 @@ impl Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expand::Scope;
+    use crate::script;
+    use std::collections::{BTreeMap, HashSet};
 
-    /// The build key of every package of a manifest with the given text after the header.
-    fn keys(text: &str) -> Vec<String> {
+    /// The build key of every target of a script.
+    fn keys(source: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("pkg.yaml");
-        std::fs::write(
-            &path,
-            format!("name: demo\nversion: 1.0.0\ndescription: d\n{text}"),
-        )
-        .unwrap();
-        let manifest = Manifest::parse(&path).unwrap();
-        let mut keys = Vec::new();
-        for job in manifest.jobs() {
-            let bound = manifest.bind(&Scope::default(), &job, "rpm").unwrap();
-            keys.push(build_key(&bound, &job).unwrap());
-        }
-        keys
+        let file = dir.path().join("pkgsmith.star");
+        std::fs::write(&file, source).unwrap();
+        script::evaluate(&file, BTreeMap::new())
+            .unwrap()
+            .into_iter()
+            .map(|spec| {
+                let manifest =
+                    Manifest::from_spec(spec, dir.path().into(), dir.path().into()).unwrap();
+                build_key(&manifest).unwrap()
+            })
+            .collect()
     }
 
     fn distinct(keys: &[String]) -> usize {
-        keys.iter().collect::<std::collections::HashSet<_>>().len()
+        keys.iter().collect::<HashSet<_>>().len()
     }
 
-    const TARGETS: &str = "targets:\n  - {format: rpm, distro: fedora, needs: glibc}\n  - {format: deb, distro: debian, needs: glibc}\n  - {format: apk, distro: alpine, needs: musl}\nmatrix:\n  arch: [amd64, arm64]\n";
+    const HEAD: &str = "pkg = package(name = 'demo', version = '1', description = 'd')
+";
 
     #[test]
-    fn targets_that_need_one_job_share_a_run_per_architecture() {
+    fn targets_with_equal_jobs_share_a_run_per_architecture() {
         let keys = keys(&format!(
-            "jobs:\n  glibc:\n    runs-on: debian:13\n    steps:\n      - run: make\n  musl:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\n{TARGETS}"
+            "{HEAD}glibc = job('debian:13', [step('make')])
+musl = job('alpine:3.22', [step('make')])
+for arch in ['amd64', 'arm64']:
+    target(pkg, 'rpm', distro = 'fedora', job = glibc, arch = arch)
+    target(pkg, 'deb', distro = 'debian', job = glibc, arch = arch)
+    target(pkg, 'apk', distro = 'alpine', job = musl, arch = arch)
+"
         ));
         assert_eq!(keys.len(), 6);
-        assert_eq!(distinct(&keys), 4, "linux x 2 architectures, alpine x 2");
-    }
-
-    #[test]
-    fn two_jobs_with_the_same_image_and_steps_still_share_nothing_by_name_alone() {
-        let keys = keys(&format!(
-            "jobs:\n  glibc:\n    runs-on: debian:13\n    steps:\n      - run: make\n  musl:\n    runs-on: debian:13\n    steps:\n      - run: make\n{TARGETS}"
-        ));
         assert_eq!(
             distinct(&keys),
-            2,
-            "equal image and steps are one build whatever the job is called"
+            4,
+            "glibc and musl, each for two architectures"
         );
     }
 
     #[test]
-    fn a_job_with_its_own_matrix_makes_a_run_per_cell() {
-        let keys = keys(
-            "jobs:\n  glibc:\n    runs-on: debian:13\n    matrix:\n      libc: [gnu, musl]\n    steps:\n      - run: make $MATRIX_LIBC\ntargets:\n  - {format: rpm, needs: glibc, libc: gnu}\n  - {format: apk, needs: glibc, libc: musl}\n",
-        );
+    fn a_job_is_equal_by_content_and_not_by_name() {
+        let keys = keys(&format!(
+            "{HEAD}one = job('debian:13', [step('make')])
+two = job('debian:13', [step('make')])
+three = job('debian:13', [step('make CC=clang')])
+target(pkg, 'rpm', job = one)
+target(pkg, 'deb', job = two)
+target(pkg, 'tar', job = three)
+"
+        ));
         assert_eq!(distinct(&keys), 2);
     }
 }

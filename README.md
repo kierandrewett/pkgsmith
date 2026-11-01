@@ -1,6 +1,6 @@
 # pkgsmith
 
-pkgsmith builds distribution packages from one manifest. You describe the package once. pkgsmith builds your program
+pkgsmith builds distribution packages from one script. You describe the package once. pkgsmith builds your program
 in a container for each distro and writes the rpm, deb, Arch, Alpine, OpenWrt, tar or zip package.
 
 ![pkgsmith builds one package for Fedora, Debian, Arch and Alpine in a single run](docs/media/demo.gif)
@@ -42,10 +42,10 @@ pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `ma
 
 ## Install
 
-pkgsmith runs on Linux, macOS and Windows. What a build needs depends on the manifest:
+pkgsmith runs on Linux, macOS and Windows. What a build needs depends on the script:
 
-- A target with `needs: []` packages files that are already on your machine. It needs no container engine on any system.
-- A target that needs a job runs the steps of the job in a container. It needs [Podman](https://podman.io/) and its API.
+- A target without a `job` packages files that are already on your machine. It needs no container engine on any system.
+- A target with a `job` runs the steps of the job in a container. It needs [Podman](https://podman.io/) and its API.
   On Linux a user socket is enough. On macOS run `podman machine init` once and `podman machine start`. On Windows start
   Podman and set `CONTAINER_HOST` to a `tcp://` address that it serves. See [command line](docs/cli.md#container-engine).
 
@@ -83,55 +83,44 @@ you on every system.
 
 ## Quick start
 
-`examples/demo` holds a C program, a Makefile and this manifest:
+`examples/demo` holds a C program, a Makefile and this `pkgsmith.star`:
 
-```yaml
-name: hello
-version: 1.0.0
-description: A demo that packages a small C program
-maintainer: Kieran Drewett <kieran@drewett.dev>
-license: MIT
+```python
+pkg = package(
+    name = "hello",
+    version = "1.0.0",
+    description = "A demo that packages a small C program",
+    maintainer = "Kieran Drewett <kieran@drewett.dev>",
+    license = "MIT",
+)
 
-targets:
-  - format: rpm
-    distro: fedora
-    needs: fedora
-  - format: deb
-    distro: debian
-    needs: debian
-  - format: apk
-    distro: alpine
-    needs: alpine
+build = step(name = "Build", run = "make && make install PREFIX=/usr")
 
-steps:
-  build:
-    name: Build
-    run: make && make install PREFIX=/usr
+fedora = job(
+    runs_on = "fedora:43",
+    setup = [step(name = "Install the build tools", run = "dnf -y install gcc make")],
+    steps = [build],
+)
+debian = job(
+    runs_on = "debian:13",
+    setup = [step(
+        name = "Install the build tools",
+        run = """
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
+""",
+    )],
+    steps = [build],
+)
+alpine = job(
+    runs_on = "alpine:3.22",
+    setup = [step(name = "Install the build tools", run = "apk add --no-cache gcc make musl-dev")],
+    steps = [build],
+)
 
-jobs:
-  fedora:
-    runs-on: fedora:43
-    setup:
-      - name: Install the build tools
-        run: dnf -y install gcc make
-    steps:
-      - uses: build
-  debian:
-    runs-on: debian:13
-    setup:
-      - name: Install the build tools
-        run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
-    steps:
-      - uses: build
-  alpine:
-    runs-on: alpine:3.22
-    setup:
-      - name: Install the build tools
-        run: apk add --no-cache gcc make musl-dev
-    steps:
-      - uses: build
+target(pkg, "rpm", distro = "fedora", job = fedora)
+target(pkg, "deb", distro = "debian", job = debian)
+target(pkg, "apk", distro = "alpine", job = alpine)
 ```
 
 Build it:
@@ -141,15 +130,16 @@ cd examples/demo
 pkgsmith build        # the packages go to ./dist
 ```
 
-Each `targets` entry is one package, or one per format. A target names the job that builds its files:
+Each `target` call is one package. A target names the job that builds its files:
 
-- `runs-on` is the container image the job works in.
+- `runs_on` is the container image the job works in.
 - `setup` steps run once in that image, and the result is cached.
 - `steps` run in the image with your source at `/src`. pkgsmith records the files they install and packages them.
 - Targets that need one job share one build, so a job that several distros can use compiles once.
 
-To choose the files yourself, add a `contents` list. See [contents](docs/contents.md). pkgsmith packages itself with
-[pkgsmith.yaml](pkgsmith.yaml).
+To choose the files yourself, add a `contents` list. See [contents](docs/contents.md). The script is code, so use loops,
+functions and conditions for many distros and architectures. See [scripting](docs/scripting.md). pkgsmith packages itself
+with [pkgsmith.star](pkgsmith.star).
 
 ## Commands
 
@@ -162,7 +152,7 @@ To choose the files yourself, add a `contents` list. See [contents](docs/content
 | `plugins`         | Lists the loaded plugins and the folders searched for them    |
 | `prune`           | Removes the cached setup images                               |
 
-Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter share one build. Every option is in
+Run `pkgsmith plan` after you change the script. Jobs with the same `BUILD` letter share one build. Every option is in
 [command line](docs/cli.md).
 
 ## Documentation
@@ -170,11 +160,11 @@ Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter
 | Page                                              | Covers                                          |
 | ------------------------------------------------- | ----------------------------------------------- |
 | [Getting started](docs/getting-started.md)        | A package from scratch, step by step            |
-| [Manifest](docs/manifest.md)                      | Every key                                       |
+| [Script reference](docs/manifest.md)              | Every function and field                        |
 | [Contents](docs/contents.md)                      | Files, trees, links and config files            |
 | [Build environment](docs/build-environment.md)    | Jobs, steps, the tracked build, caching         |
 | [macOS and Windows](docs/macos-and-windows.md)    | Compile on the target system, then package      |
-| [Matrix and expressions](docs/matrix-and-expressions.md) | One manifest for many distros and architectures |
+| [Scripting](docs/scripting.md)                    | Loops, functions and conditions for many builds |
 | [Versions](docs/versions.md)                      | How one version becomes each format's spelling  |
 | [Install scripts](docs/scripts.md)                | What runs when, per format                      |
 | [Dependencies](docs/dependencies.md)              | Names, version constraints, per-distro names    |
@@ -183,7 +173,7 @@ Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter
 | [Plugins](docs/plugins.md)                        | Where plugins live, and how to write one        |
 | [Command line](docs/cli.md)                       | Every command and option                        |
 
-Every file in [examples](examples) is a complete manifest. [examples/full.yaml](examples/full.yaml) uses every key and
+Every file in [examples](examples) is a complete script. [examples/full.star](examples/full.star) uses every field and
 comments each one.
 
 ## Limits
@@ -191,10 +181,10 @@ comments each one.
 - pkgsmith does not find the shared libraries a program needs. List them in `depends`.
 - Builds run for `linux/amd64` and `linux/arm64`, and only with Podman. Docker is not supported.
 - pkgsmith does not compile for macOS or Windows. Compile there, or compile with your own tools, and package the files
-  with targets that need no job. See [macOS and Windows](docs/macos-and-windows.md).
+  with targets that have no `job`. See [macOS and Windows](docs/macos-and-windows.md).
 - Packages are signed only when you give `--sign-key`. See [signing](docs/signing.md).
 - There is no built-in support for a language. Install the toolchain in a `setup` step and run its build in a step.
-  [examples/rust-cli.yaml](examples/rust-cli.yaml) does this for Cargo.
+  [examples/rust-cli.star](examples/rust-cli.star) does this for Cargo.
 
 ## Build and test
 

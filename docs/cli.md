@@ -4,14 +4,14 @@
 pkgsmith [--plugin-path DIR] COMMAND [OPTIONS] [PATH]
 ```
 
-`PATH` is the build context: a folder that holds `pkgsmith.yaml`, or the manifest file itself. It defaults to `.`. The
+`PATH` is the build context: a folder that holds `pkgsmith.star`, or the script file itself. It defaults to `.`. The
 folder is mounted at `/src` in a tracked build.
 
 ## Commands
 
 | Command           | What it does                                                                    |
 | ----------------- | ------------------------------------------------------------------------------- |
-| `build`           | Builds every package the manifest describes and writes them to `dist`           |
+| `build`           | Builds every package the script declares and writes them to `dist`           |
 | `plan` (or `ls`)  | Shows what `build` would do, without starting a container                       |
 | `files`           | Builds, then lists the files each package would carry. Writes no package        |
 | `formats`         | Lists the formats that the installed plugins write                              |
@@ -25,15 +25,14 @@ folder is mounted at `/src` in a tracked build.
 
 | Option                  | Values                                         | Default                  | Effect |
 | ----------------------- | ---------------------------------------------- | ------------------------ | ------ |
-| `-f`, `--file FILE`     | A path                                         | `PATH/pkgsmith.yaml`     | Reads this manifest |
-| `-F`, `--format LIST`   | Names from `pkgsmith formats`, comma separated | Every format the matrix allows | Builds only these formats |
-| `--job KEY=VALUE`       | Any matrix key and value. Repeatable           | All jobs                 | Builds only the jobs with this value |
-| `--platform LIST`       | `linux/amd64`, `linux/arm64`, comma separated  | All architectures        | Builds only these architectures |
-| `--distro NAME`         | `fedora`, `opensuse`, `debian`, `ubuntu`, `archlinux` | None              | Picks the `overrides` entry for jobs that name no distro |
-| `--build-arg NAME=VALUE` | Text. Repeatable. Also `--set`                | None                     | Sets `${NAME}` in the manifest. It wins over the environment |
+| `-f`, `--file FILE`     | A path                                         | `PATH/pkgsmith.star`     | Reads this script |
+| `-F`, `--format LIST`   | Names from `pkgsmith formats`, comma separated | Every format the script declares | Builds only these formats |
+| `--where KEY=VALUE`     | `format`, `distro`, `arch`, `name` or a key of a target's `tags`. Repeatable | All targets | Builds only the targets whose value equals this. Every `--where` must match |
+| `--platform LIST`       | `linux/amd64`, `linux/arm64`, comma separated  | All architectures        | Builds only the targets of these architectures. Targets with `arch="all"` stay |
+| `--build-arg NAME=VALUE` | Text. Repeatable. Also `--set`                | None                     | Sets `arg("NAME")` in the script. It wins over the environment |
 
 ```sh
-pkgsmith build --job distro=fedora --platform linux/arm64
+pkgsmith build --where distro=fedora --platform linux/arm64
 pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 ```
 
@@ -43,7 +42,7 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 
 | Option               | Values                          | Default     | Effect |
 | -------------------- | ------------------------------- | ----------- | ------ |
-| `-j`, `--jobs N`     | A number                        | CPUs, at most 8 | Runs this many builds at once. Jobs that share a build run it once |
+| `-j`, `--jobs N`     | A number                        | CPUs, at most 8 | Runs this many builds at once. Targets that share a build run it once |
 | `--progress MODE`    | `auto`, `tty`, `plain`, `quiet` | `auto`      | `tty` redraws lanes in place. `plain` prints lines. `auto` picks `tty` on a terminal |
 | `--work DIR`         | A path                          | `.pkgsmith` | Holds the files a tracked build installs |
 
@@ -63,11 +62,12 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 | `--sign-passphrase-file FILE`      | A path                  | None    | Holds the passphrase of the keys |
 | `--sign-armor`                     | A flag                  | Off     | Writes `FILE.asc` instead of `FILE.sig` |
 
-`plan` also takes `--json`, which prints the jobs as JSON for scripts.
+`plan` also takes `--json`, which prints the targets as JSON for scripts. Each row has `format`, `distro`, `arch`, `image`,
+`build`, `file`, `error` and `values`.
 
 ## Container engine
 
-A target that needs a job runs in a container, so pkgsmith needs the Podman API. A target with `needs: []` needs no engine.
+A target with a `job` runs in a container, so pkgsmith needs the Podman API. A target without a `job` needs no engine.
 pkgsmith looks for the API in this order:
 
 1. `CONTAINER_HOST`, if it is set. It takes a `unix://` or `tcp://` address, on every system.

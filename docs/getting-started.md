@@ -35,63 +35,40 @@ install: hello
 	install -Dm644 /dev/null $(DESTDIR)/etc/hello.conf
 ```
 
-`pkgsmith.yaml`:
+`pkgsmith.star`:
 
-```yaml
-name: hello
-version: 1.0.0
-description: A demo that packages a small C program
-maintainer: Your Name <you@example.com>
-license: MIT
+```python
+pkg = package(
+    name = "hello",
+    version = "1.0.0",
+    description = "A demo that packages a small C program",
+    maintainer = "Your Name <you@example.com>",
+    license = "MIT",
+)
 
-targets:
-  - format: rpm
-    distro: fedora
-    needs: fedora
-  - format: deb
-    distro: debian
-    needs: debian
-  - format: archlinux
-    distro: arch
-    needs: arch
-  - format: apk
-    distro: alpine
-    needs: alpine
+build = step("make && make install PREFIX=/usr")
 
-steps:
-  build:
-    run: make && make install PREFIX=/usr
+distros = [
+    # distro, format, image, command that installs the compiler
+    ("fedora", "rpm", "fedora:43", "dnf -y install gcc make"),
+    ("debian", "deb", "debian:13", "apt-get update -qq && apt-get install -y gcc make"),
+    ("arch", "archlinux", "archlinux:base", "pacman -Sy --noconfirm gcc make"),
+    ("alpine", "apk", "alpine:3.22", "apk add --no-cache gcc make musl-dev"),
+]
 
-jobs:
-  fedora:
-    runs-on: fedora:43
-    setup:
-      - run: dnf -y install gcc make
-    steps:
-      - uses: build
-  debian:
-    runs-on: debian:13
-    setup:
-      - run: apt-get update -qq && apt-get install -y gcc make
-    steps:
-      - uses: build
-  arch:
-    runs-on: archlinux:base
-    setup:
-      - run: pacman -Sy --noconfirm gcc make
-    steps:
-      - uses: build
-  alpine:
-    runs-on: alpine:3.22
-    setup:
-      - run: apk add --no-cache gcc make musl-dev
-    steps:
-      - uses: build
+for distro, fmt, image, install in distros:
+    target(
+        pkg, fmt, distro = distro,
+        job = job(runs_on = image, setup = [step(install)], steps = [build]),
+    )
 ```
 
-Each target is one package. It names the format, the distro, and the job that builds its files. A job names the image to
-build in, the `setup` steps that image needs, and the build `steps`. Targets that need one job share one build: see
-[build environment](build-environment.md#one-build-many-packages).
+Each `target` is one package. It names the format, the distro, and the job that builds its files.
+
+- A job names the image to build in, the `setup` steps that image needs, and the build `steps`.
+- The loop makes one target for each row.
+- Targets whose jobs are equal share one build: see [build environment](build-environment.md#one-build-many-packages).
+- The script is code, so you can use loops, functions and conditions: see [scripting](scripting.md).
 
 ## Plan
 
@@ -136,7 +113,7 @@ Packages in dist:
 
 ```console
 $ pkgsmith files --format rpm
-== rpm [distro=fedora, format=rpm]
+== rpm [arch=amd64, distro=fedora, format=rpm, name=hello]
 644 root:root /etc/hello.conf
 755 root:root /usr/bin/hello
 755 root:root /usr/share/hello
@@ -165,4 +142,4 @@ Then run `hello`.
 - Mark `/etc/hello.conf` as a configuration file, and set install scripts: see
   [contents](contents.md) and [scripts](scripts.md).
 - Add dependencies: see [dependencies](dependencies.md).
-- Build for arm64 as well: see [matrix and expressions](matrix-and-expressions.md).
+- Build for arm64 as well: loop over architectures, see [scripting](scripting.md#every-architecture).

@@ -1,7 +1,18 @@
 # Formats
 
-Each format is a plugin. `pkgsmith formats` lists what is installed. The options of a format go in a section of the
-manifest with the name of the format, for example `deb:`. A key that the format does not know is an error.
+Each format is a plugin. `pkgsmith formats` lists what is installed. The options of a format go in the `options`
+dict of the target that writes it, for example `options = {"section": "utils"}`. A key that the format does not know is
+an error. The tables below list the keys of each format.
+
+```python
+pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+
+target(pkg, "deb", distro = "debian", options = {"section": "utils", "compression": "gzip"})
+target(pkg, "tar", options = {"compression": "zstd", "top_folder": True})
+```
+
+A value is a Starlark value: text in quotes, `True` or `False`, numbers, lists and dicts. The tables write the
+options of each format as keys of that dict. A format with no options needs no `options`.
 
 | Format      | File                             | For                                  | Verified with                       |
 | ----------- | -------------------------------- | ------------------------------------ | ----------------------------------- |
@@ -41,12 +52,12 @@ A format that depends on a runtime or a target OS says so below. Signing is in [
 
 ## deb and ipk
 
-| Section | Key           | Values                | Default    | Effect                                      |
-| ------- | ------------- | --------------------- | ---------- | ------------------------------------------- |
-| `deb`   | `section`     | Text                  | `misc`     | The `Section` field                         |
-| `deb`   | `priority`    | Text                  | `optional` | The `Priority` field                        |
-| `deb`   | `compression` | `xz`, `zstd`, `gzip`  | `xz`       | Compression of the data and control parts   |
-| `ipk`   | `arch`        | OpenWrt architecture  | From `arch` | For example `aarch64_generic`              |
+| Format | Key           | Values                | Default    | Effect                                      |
+| ------ | ------------- | --------------------- | ---------- | ------------------------------------------- |
+| `deb`  | `section`     | Text                  | `misc`     | The `Section` field                         |
+| `deb`  | `priority`    | Text                  | `optional` | The `Priority` field                        |
+| `deb`  | `compression` | `xz`, `zstd`, `gzip`  | `xz`       | Compression of the data and control parts   |
+| `ipk`  | `arch`        | OpenWrt architecture  | From the package `arch` | For example `aarch64_generic`  |
 
 ## archlinux
 
@@ -56,18 +67,18 @@ A format that depends on a runtime or a target OS says so below. Signing is in [
 
 ## tar and zip
 
-| Section | Key           | Values                                | Default | Effect                                         |
-| ------- | ------------- | ------------------------------------- | ------- | ---------------------------------------------- |
-| `tar`   | `compression` | `xz`, `gzip`, `zstd`, `bzip2`, `none` | `xz`    | The compression and the file extension         |
-| `tar`   | `top_folder`  | `true`, `false`                       | `false` | Put everything below `{name}-{version}/`       |
-| `zip`   | `top_folder`  | `true`, `false`                       | `false` | Put everything below `{name}-{version}/`       |
+| Format | Key           | Values                                | Default | Effect                                         |
+| ------ | ------------- | ------------------------------------- | ------- | ---------------------------------------------- |
+| `tar`  | `compression` | `xz`, `gzip`, `zstd`, `bzip2`, `none` | `xz`    | The compression and the file extension         |
+| `tar`  | `top_folder`  | `True`, `False`                       | `False` | Put everything below `{name}-{version}/`       |
+| `zip`  | `top_folder`  | `True`, `False`                       | `False` | Put everything below `{name}-{version}/`       |
 
 ## slackware
 
 The package is a tar of the files with `install/slack-desc` and `install/doinst.sh`. Configuration files ship as
 `NAME.new` and are moved into place only when no file of that name exists.
 
-The format has only a post-install script. These manifest fields are ignored with a warning:
+The format has only a post-install script. These package fields are ignored with a warning:
 
 - `pre_install`, `pre_remove` and `post_remove`
 - `depends`
@@ -98,13 +109,16 @@ snapd.
 An app has `command` (required), `daemon` (`simple`, `forking`, `oneshot` or `notify`), `plugs` (a list of interfaces)
 and `environment` (a map).
 
-```yaml
-snap:
-  base: core24
-  apps:
-    hello:
-      command: /usr/bin/hello
-      plugs: [network]
+```python
+pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+
+target(
+    pkg, "snap",
+    options = {
+        "base": "core24",
+        "apps": {"hello": {"command": "/usr/bin/hello", "plugs": ["network"]}},
+    },
+)
 ```
 
 ## oci
@@ -167,7 +181,7 @@ A pre-release such as `1.2.3-nightly.20261031.142.gabc1234` is not valid PEP 440
 | `site_packages`   | Absolute install path                   | Required                      | Maps files to the wheel root |
 | `python_tag`      | For example `py3`, `cp313`              | `py3`                         | Tag in the file name         |
 | `abi_tag`         | For example `none`, `abi3`              | `none`                        | Tag in the file name         |
-| `platform_tag`    | For example `manylinux_2_17_x86_64`     | `any` for `arch: all`, else required | Tag in the file name  |
+| `platform_tag`    | For example `manylinux_2_17_x86_64`     | `any` for `arch = "all"`, else required | Tag in the file name  |
 | `requires_python` | For example `>=3.9`                     | None                          | `Requires-Python`            |
 | `classifiers`     | List of text                            | None                          | `Classifier` lines           |
 | `requires_dist`   | List like `requests>=2`                 | None                          | `Requires-Dist` lines        |
@@ -324,7 +338,7 @@ removes them after the new files are installed.
 | `upgrade_code` | A GUID                              | Derived from the package name                        | Every version of a package shares it                |
 | `prefix`       | An absolute Unix path               | `/usr`                                               | Entry paths are taken relative to it. A path outside it stops the build |
 
-With `scope: machine`, the files go to `ProgramFiles64Folder` for `amd64` and `arm64`, and to `ProgramFilesFolder` for
+With `scope = "machine"`, the files go to `ProgramFiles64Folder` for `amd64` and `arm64`, and to `ProgramFilesFolder` for
 `all`.
 
 The product code, the component codes and the package code come from the name, version and architecture, so equal input
@@ -364,10 +378,10 @@ that pkgsmith writes is narrower:
 - The default install folder is `$PROGRAMFILES64`, so it needs 64-bit Windows unless you set `install_dir`.
 - No Windows version has been tested, so the oldest one that works is unknown.
 
-Each file gets its own `File` line, so the uninstaller removes exactly the files of the manifest. Configuration files are
+Each file gets its own `File` line, so the uninstaller removes exactly the files of the package. Configuration files are
 copied only when they are missing, and the uninstaller keeps them.
 
-- `execution_level: admin` asks Windows for elevation, installs for all users and registers in `HKLM`. `user` installs
+- `execution_level = "admin"` asks Windows for elevation, installs for all users and registers in `HKLM`. `user` installs
   for the current user and registers in `HKCU`.
 - The version has four parts: the three numbers of `version` and the `release`. A part above 65535 stops the build.
 - A symbolic link to an installed file is installed as a copy, with a warning. Any other link is skipped, with a warning.
@@ -408,7 +422,7 @@ it with a certificate whose subject equals `publisher`, for example with `signto
 | `executable`             | Path of a `.exe` entry. Required              | None                              | The program the package starts           |
 | `logo`                   | Path of a PNG entry. Required                 | None                              | The tile and store logo. Use 150 px or more |
 | `publisher`              | Subject such as `CN=Example Ltd`. Required    | None                              | Must equal the subject of the signing certificate |
-| `root`                   | Folder, or `""` for the package root          | `VFS/ProgramFilesX64/<name>`      | Where `/` of the manifest goes           |
+| `root`                   | Folder, or `""` for the package root          | `VFS/ProgramFilesX64/<name>`      | Where `/` of the package goes           |
 | `publisher_display_name` | Text                                          | The `CN=` value of `publisher`    | The publisher name Windows shows         |
 | `display_name`           | Text                                          | The package name                  | The app name Windows shows               |
 | `min_windows`            | Version                                       | `10.0.17763.0`                    | The oldest Windows version               |
@@ -423,7 +437,7 @@ A FreeBSD package is a tar with `+COMPACT_MANIFEST` and `+MANIFEST` first, then 
 followed the `pkg` source for the manifest keys and checksums, but **has not run the real `pkg`** on the result, because
 there is no FreeBSD here.
 
-The manifest needs a maintainer and a homepage (`www`). The file name is `NAME-VERSION_RELEASE.pkg`, and `release` must
+The package needs a maintainer and a homepage (`www`). The file name is `NAME-VERSION_RELEASE.pkg`, and `release` must
 be a number.
 
 - pkg needs an origin for every dependency, so each name in `depends` needs an entry in `dep_origins`, or the build
@@ -441,7 +455,7 @@ be a number.
 
 Scripts map to the pkg phases:
 
-| Manifest       | pkg phase        |
+| Script         | pkg phase        |
 | -------------- | ---------------- |
 | `pre_install`  | `pre-install`    |
 | `post_install` | `post-install`   |
@@ -515,12 +529,12 @@ A real `npm publish`, `dependencies` resolution and the `cpu` field on arm64 wer
 ## conda
 
 A `.conda` file is a zip of two zstd tars, `pkg-` for the files and `info-` for the metadata. Files go below `prefix`.
-The version cannot hold `-`. A package with `arch: all` is `noarch`.
+The version cannot hold `-`. A package with `arch = "all"` is `noarch`.
 
 - `post_install`, `pre_install` and `pre_remove` become the `post-link`, `pre-link` and `pre-unlink` scripts. conda has
   no `post_remove`, so it is ignored with a warning.
 - Absolute symbolic links below the prefix are rewritten as relative links, as conda-build does.
-- The manifest `depends` is ignored with a warning, unless the `depends` option is set.
+- The `depends` field of the package is ignored with a warning, unless the `depends` option is set.
 
 | Key            | Values                                 | Default        | Effect                                           |
 | -------------- | -------------------------------------- | -------------- | ------------------------------------------------ |
@@ -536,9 +550,9 @@ from `conda-build` was not compared.
 ## nupkg
 
 A `.nupkg` is a zip with the nuspec, the Open Packaging Conventions parts and the files below one folder. NuGet needs an
-author, so the manifest needs a `maintainer`. The version is kept as written, as a SemVer 2 pre-release.
+author, so the package needs a `maintainer`. The version is kept as written, as a SemVer 2 pre-release.
 
-- NuGet has no architecture. A package that is not `arch: all` warns, and files go in without a runtime folder. Put
+- NuGet has no architecture. A package that is not `arch = "all"` warns, and files go in without a runtime folder. Put
   per-platform files under `runtimes/RID/` with `folder` and `prefix`.
 - `depends` holds distro names, so it is ignored with a warning. Use `dependencies`.
 - Scripts, symbolic links, `recommends`, `suggests`, `conflicts`, `replaces` and `provides` are ignored with a warning.

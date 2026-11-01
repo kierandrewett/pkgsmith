@@ -2,21 +2,26 @@
 
 A package can run scripts when it is installed or removed.
 
-```yaml
-scripts:
-  pre_install: |
-    getent passwd app >/dev/null || useradd --system app
-  post_install: |
-    systemctl daemon-reload || true
-  pre_remove: |
-    systemctl stop app || true
-  post_remove: packaging/post-remove.sh
+```python
+pkg = package(
+    name = "app",
+    version = "1.0.0",
+    description = "An app with a service",
+    scripts = {
+        "pre_install": "getent passwd app >/dev/null || useradd --system app\n",
+        "post_install": "systemctl daemon-reload || true\n",
+        "pre_remove": "systemctl stop app || true\n",
+        "post_remove": "packaging/post-remove.sh",
+    },
+)
+
+target(pkg, "rpm", distro = "fedora")
 ```
 
 ## Writing a script
 
-- Inline text, or the name of a file next to the manifest. A value with a line break is the script. A one-line value
-  is read as a file name.
+- Inline text, or the name of a file next to the script. A value with a line break is the script. A one-line value
+  is read as a file name. End an inline script with a line break, as above, or pkgsmith reads it as a file name.
 - A script without a `#!` line gets `#!/bin/sh` and `set -e` in front of it. Add your own `#!` line to use another
   interpreter, for example `#!/bin/bash`.
 - Expect an install to be an **upgrade** as well. The same script runs, and it must work when the files are already
@@ -25,7 +30,7 @@ scripts:
 
 ## What runs when
 
-| Manifest key   | deb, ipk              | rpm      | archlinux                      | apk                              | tar, zip |
+| Script key     | deb, ipk              | rpm      | archlinux                      | apk                              | tar, zip |
 | -------------- | --------------------- | -------- | ------------------------------ | -------------------------------- | -------- |
 | `pre_install`  | `preinst`             | `%pre`   | `pre_install`, `pre_upgrade`   | `.pre-install`, `.pre-upgrade`   | ignored  |
 | `post_install` | `postinst`            | `%post`  | `post_install`, `post_upgrade` | `.post-install`, `.post-upgrade` | ignored  |
@@ -45,17 +50,20 @@ Differences to know about:
 
 ## Per format or per distro
 
-`overrides` can replace the whole `scripts` block:
+`target` can replace the whole `scripts` dict. Pick the scripts in a function:
 
-```yaml
-scripts:
-  post_install: systemctl daemon-reload || true
-overrides:
-  apk:
-    scripts:
-      post_install: rc-update add app default || true
+```python
+pkg = package(name = "app", version = "1.0.0", description = "An app with a service")
+
+def scripts_for(fmt):
+    if fmt == "apk":
+        return {"post_install": "rc-update add app default || true\n"}
+    return {"post_install": "systemctl daemon-reload || true\n"}
+
+for fmt in ["rpm", "deb", "apk"]:
+    target(pkg, fmt, scripts = scripts_for(fmt))
 ```
 
 ## Example: a service
 
-See [examples/service.yaml](../examples/service.yaml).
+See [examples/service.star](../examples/service.star).
