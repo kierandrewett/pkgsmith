@@ -6,7 +6,7 @@
 #      deb, Arch, Alpine, tar and zip packages from it, and a tarball of pkgsmith and its plugins,
 #   2. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
 #   3. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows, installs them into a prefix, and
-#      runs pkgsmith on its other script (pkgsmith-desktop.star) to pack them: a disk image on macOS and a Windows
+#      runs pkgsmith on its own script (pkgsmith.star) to pack them: a disk image on macOS and a Windows
 #      Installer package on Windows, plus a tarball per platform,
 #   4. creates a GitHub release with the packages, the tarballs and checksums.
 #
@@ -130,7 +130,7 @@ jobs:
           tar -tzf "dist/$name.tar.gz" | sed -n "1,40p"
       - name: Install into the prefix
         run: |
-          # The program and its plugins sit in the folder /pkgsmith of the prefix, as pkgsmith-desktop.star expects.
+          # The program and its plugins sit in the folder /pkgsmith of the prefix, as pkgsmith.star expects.
           name="pkgsmith-${{ matrix.target }}"
           mkdir -p prefix
           cp -r "$name" prefix/pkgsmith
@@ -140,14 +140,14 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = tag ]; then version="${GITHUB_REF_NAME#v}"; else
             version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"; fi
           # The nsis format needs makensis and has only been tested under Wine, so only the msi is written here.
-          target/release/pkgsmith.exe build . -f pkgsmith-desktop.star --prefix prefix -F msi --build-arg "VERSION=$version" -o dist --progress plain
+          target/release/pkgsmith.exe build . --prefix prefix -F msi --build-arg "VERSION=$version" -o dist --progress plain
           ls -l dist
       - name: Disk image of pkgsmith, written by pkgsmith
         if: runner.os == 'macOS'
         run: |
           if [ "${GITHUB_REF_TYPE}" = tag ]; then version="${GITHUB_REF_NAME#v}"; else
             version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"; fi
-          target/release/pkgsmith build . -f pkgsmith-desktop.star --prefix prefix -F dmg --build-arg "VERSION=$version" -o dist --progress plain
+          target/release/pkgsmith build . --prefix prefix -F dmg --build-arg "VERSION=$version" -o dist --progress plain
           ls -l dist
       - uses: actions/upload-artifact@v4
         with:
