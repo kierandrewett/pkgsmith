@@ -29,6 +29,7 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `nupkg`     | `.nupkg`                         | NuGet                      |
 | `dmg`       | `.dmg`                           | macOS                      |
 | `flatpak`   | `.flatpak`                       | Flatpak                    |
+| `nsis`      | `.exe`                           | Windows 10 and 11          |
 | `msix`      | `.msix`                          | Windows 10 and 11          |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                 |
 | `zip`       | `.zip`                           | Any system                 |

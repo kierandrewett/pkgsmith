@@ -22,6 +22,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
 | `dmg`       | `.dmg`                           | macOS                                | `fsck.hfsplus`, `7z`, `dmg2img`, not macOS |
+| `nsis`      | `.exe`                           | Windows 10 and 11                    | `makensis`, run under Wine, not native Windows |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
@@ -247,6 +248,42 @@ Not checked:
 - Installing without adding the Flathub remote first.
 - A graphical app.
 - `finish_args` beyond the keys written to the metadata.
+
+## nsis
+
+An `.exe` made by NSIS is a self-extracting Windows installer that adds the program to Add/Remove Programs. NSIS has no
+practical writer in Rust, so pkgsmith writes an `.nsi` script and runs `makensis`.
+
+`makensis` must be on `PATH` when you build. Without it the build stops and names the packages that carry it: `nsis` on
+Debian and Arch, and `mingw32-nsis` on Fedora.
+
+Each file gets its own `File` line, so the uninstaller removes exactly the files of the manifest. Configuration files are
+copied only when they are missing, and the uninstaller keeps them.
+
+- `execution_level: admin` asks Windows for elevation, installs for all users and registers in `HKLM`. `user` installs
+  for the current user and registers in `HKCU`.
+- The version has four parts: the three numbers of `version` and the `release`. A part above 65535 stops the build.
+- A symbolic link to an installed file is installed as a copy, with a warning. Any other link is skipped, with a warning.
+- Dependencies, scripts, `license` and ghost entries have no place in an NSIS installer. Each one warns.
+- If `post_install_exec` fails, the installer runs the uninstaller silently, removes the install folder and stops with
+  an error. It cannot undo what the command itself did outside the install folder.
+
+| Key                 | Values                                           | Default                                                   | Effect                                             |
+| ------------------- | ------------------------------------------------ | --------------------------------------------------------- | -------------------------------------------------- |
+| `install_dir`       | NSIS constant and folders, written with backslashes      | `$PROGRAMFILES64\NAME`, or `$LOCALAPPDATA\Programs\NAME` for `user` | Where the files go                       |
+| `prefix`            | An absolute Unix path                            | `/usr`                                                    | Entry paths are taken relative to it. A path outside it stops the build |
+| `compression`       | `lzma`, `zlib`, `bzip2`                          | `lzma`                                                    | The compression of the installer                   |
+| `execution_level`   | `admin`, `user`                                  | `admin`                                                   | Who the program is installed for                   |
+| `shortcuts`         | List of entry paths                              | None                                                      | One Start Menu shortcut for each. The package name must be one folder name |
+| `post_install_exec` | One command line                                 | None                                                      | Runs in the install folder after the install. `$` is literal |
+
+Checked under Wine 11 on Linux:
+
+- A silent install, a byte-for-byte comparison of the payload, and a silent uninstall that leaves no folder and no registry key.
+- A Start Menu shortcut, and names with `$` and quotes.
+- The roll back when `post_install_exec` exits with a non-zero code. No files, folder or registry key are left.
+
+Not checked: native Windows, the elevation prompt, and a real Windows program. The installer is unsigned.
 
 ## msix
 
