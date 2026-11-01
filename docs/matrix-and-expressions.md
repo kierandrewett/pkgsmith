@@ -80,6 +80,9 @@ An entry may use a single key: `{ arch: arm64 }` removes every arm64 job.
 2. If there are matching jobs, add the extra keys to them. A value that is already set on a job stays.
 3. If no job matches, the entry becomes a new job.
 
+Only the jobs that the axes made can match. A job that an earlier entry added never matches a later entry, so two entries
+with the same axis values, such as `{ format: msi, distro: windows }` and `{ format: nsis, distro: windows }`, stay two jobs.
+
 That makes two common shapes work.
 
 **Add values to jobs the axes already made.** Give each distro its image and format:

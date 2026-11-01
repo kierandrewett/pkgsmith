@@ -169,10 +169,13 @@ impl Matrix {
             combos.retain(|combo| !matches(combo, exclude, &|_| true));
         }
         let original: Vec<&str> = axes.iter().map(|(name, _)| name.as_str()).collect();
+        // Like Actions, an entry matches the combinations of the axes only. A job that an earlier entry added is not
+        // matched by a later one, so two entries that name the same axis values stay two jobs.
+        let from_axes = combos.len();
         for include in &self.include {
             let is_axis = |key: &str| original.contains(&key);
             let mut added = false;
-            for combo in combos.iter_mut() {
+            for combo in combos.iter_mut().take(from_axes) {
                 if original.is_empty() || !matches(combo, include, &is_axis) {
                     continue;
                 }
@@ -705,6 +708,21 @@ mod tests {
                 "distro=alpine, format=apk",
                 "distro=fedora, format=rpm",
                 "format=deb"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_include_entry_does_not_match_a_job_that_an_earlier_entry_added() {
+        let labels = jobs(
+            "  arch: [amd64]\n  include:\n    - {format: msi, arch: arm64, distro: windows}\n    - {format: nsis, arch: arm64, distro: windows}\n",
+        );
+        assert_eq!(
+            labels,
+            [
+                "arch=amd64",
+                "arch=arm64, distro=windows, format=msi",
+                "arch=arm64, distro=windows, format=nsis"
             ]
         );
     }

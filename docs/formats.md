@@ -312,7 +312,8 @@ Debian and Arch, and `mingw32-nsis` on Fedora.
 NSIS itself can build installers that run on any Windows from 95 to 11, according to its own documentation. The script
 that pkgsmith writes is narrower:
 
-- It is a Unicode installer, so it needs a Windows based on NT.
+- It is a Unicode installer. NSIS documents a narrower range for Unicode installers than for its generic support list,
+  and pkgsmith has not pinned the minimum.
 - The default install folder is `$PROGRAMFILES64`, so it needs 64-bit Windows unless you set `install_dir`.
 - No Windows version has been tested, so the oldest one that works is unknown.
 

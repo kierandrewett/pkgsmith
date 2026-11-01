@@ -63,5 +63,8 @@ the disk image only.
 | Windows | `nsis` | A setup `.exe`. Needs `makensis` on the machine that builds. See [nsis](formats.md#nsis)        |
 | Windows | `msix` | Written unsigned. Windows installs it only after you sign it. See [msix](formats.md#msix)       |
 
-The `dmg`, `msi` and `msix` writers are pure Rust and run on any system. `nsis` runs `makensis`. A program that you
-compile on Linux is a Linux program, so do not put it in one of these packages.
+The `dmg`, `msi` and `msix` writers are pure Rust and run on any system. `nsis` runs `makensis`.
+
+These formats pack the files you give them and do not check the target. A program that you compile for Linux is a
+Linux program, so do not put it in one of these packages. A cross-compiler can make files for another system, but you
+must supply that toolchain and test the result.
