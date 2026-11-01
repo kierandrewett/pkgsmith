@@ -37,7 +37,12 @@ pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `ma
 
 ## Install
 
-You need [Podman](https://podman.io/). A user socket is enough.
+pkgsmith runs on Linux, macOS and Windows. What a build needs depends on the manifest:
+
+- A manifest with no `image` packages files that are already on your machine. It needs no container engine on any system.
+- A manifest with an `image` runs `setup` and `build` in a container. It needs [Podman](https://podman.io/) and its API.
+  On Linux a user socket is enough. On macOS run `podman machine init` once and `podman machine start`. On Windows start
+  Podman and set `CONTAINER_HOST` to a `tcp://` address that it serves. See [command line](docs/cli.md#container-engine).
 
 There is no published release yet, so build from source:
 
@@ -47,9 +52,14 @@ cd pkgsmith
 cargo build --release --workspace
 ```
 
-This makes `target/release/pkgsmith` and the plugins `target/release/libpkgsmith_plugin_*.so`. pkgsmith loads plugins
-from the folder of its binary, so run it from `target/release`. To install it for one user, copy the plugins under the
-name `pkgsmith-plugin-NAME.so`:
+This makes `target/release/pkgsmith` and one plugin library per format. pkgsmith loads plugins from the folder of its
+binary, so run it from `target/release`. A release also has a `pkgsmith-TARGET.tar.gz` with the program and its plugins for each of these targets:
+
+- `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`
+- `aarch64-apple-darwin` and `x86_64-apple-darwin`
+- `x86_64-pc-windows-msvc`
+
+To install a build for one user on Linux, copy the plugins under the name `pkgsmith-plugin-NAME.so`:
 
 ```sh
 install -Dm755 target/release/pkgsmith ~/.local/bin/pkgsmith
@@ -58,6 +68,10 @@ for f in target/release/libpkgsmith_plugin_*.so; do
 done
 pkgsmith plugins
 ```
+
+On macOS the libraries end in `.dylib` and the folder is `~/Library/Application Support/pkgsmith/plugins`. On Windows
+they end in `.dll` and the folder is `%LOCALAPPDATA%\pkgsmith\plugins`. `pkgsmith plugins install` does this copy for
+you on every system.
 
 `pkgsmith plugins` lists what loaded. Once a release exists, `cargo binstall pkgsmith` installs the program and
 `pkgsmith plugins install` downloads its plugins. See [command line](docs/cli.md#plugins).

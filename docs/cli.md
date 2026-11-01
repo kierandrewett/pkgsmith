@@ -65,6 +65,19 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 
 `plan` also takes `--json`, which prints the jobs as JSON for scripts.
 
+## Container engine
+
+A job with an `image` runs in a container, so pkgsmith needs the Podman API. A manifest with no `image` needs no engine.
+pkgsmith looks for the API in this order:
+
+1. `CONTAINER_HOST`, if it is set. It takes a `unix://` or `tcp://` address, on every system.
+2. Linux: `$XDG_RUNTIME_DIR/podman/podman.sock`. If nothing answers there, pkgsmith starts `podman system service` for the
+   length of the build.
+3. macOS: the socket that `podman machine inspect` names. Run `podman machine init` once and `podman machine start`.
+4. Windows: there is no default. Start Podman and set `CONTAINER_HOST` to a `tcp://` address that it serves.
+
+Docker is not supported.
+
 ## Plugins
 
 `--plugin-path DIR` adds a folder to the front of the plugin search path. Repeat it for more folders. It works with
@@ -75,7 +88,7 @@ every command. See [plugins](plugins.md) for the whole search path.
 | Option             | Values                 | Default                               | Effect |
 | ------------------ | ---------------------- | ------------------------------------- | ------ |
 | `--version VERSION` | A release number      | The version of this pkgsmith          | Picks the release |
-| `--dir DIR`        | A path                 | `~/.local/share/pkgsmith/plugins`     | Receives the plugins |
+| `--dir DIR`        | A path                 | The data folder of the user, see [plugins](plugins.md#where-pkgsmith-looks) | Receives the plugins |
 | `--from FILE`      | A `pkgsmith-TARGET.tar.gz` | Download                          | Reads this archive instead |
 | `--release-url URL` | A URL with `{version}` | The GitHub release of pkgsmith       | Where the release files are, for a mirror or a fork |
 

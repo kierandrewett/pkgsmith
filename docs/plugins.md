@@ -25,17 +25,37 @@ archlinux  An Arch Linux package (.pkg.tar.zst)
 
 ## Where pkgsmith looks
 
-A plugin is a shared library whose file name starts with `pkgsmith-plugin-` and ends with `.so`. The name that
-cargo gives a library, `libpkgsmith_plugin_NAME.so`, is accepted too. pkgsmith loads every such file in these folders,
-in this order:
+A plugin is a shared library whose file name starts with `pkgsmith-plugin-` and ends with the shared library suffix of
+the system. The name that cargo gives a library is accepted too.
+
+| System  | Suffix   | Name from cargo                |
+| ------- | -------- | ------------------------------ |
+| Linux   | `.so`    | `libpkgsmith_plugin_NAME.so`   |
+| macOS   | `.dylib` | `libpkgsmith_plugin_NAME.dylib` |
+| Windows | `.dll`   | `pkgsmith_plugin_NAME.dll`     |
+
+pkgsmith loads every such file in these folders, in this order:
 
 1. The folders you give with `--plugin-path DIR`. Repeat the option for more.
-2. The folders in `PKGSMITH_PLUGIN_PATH`, separated by `:`.
+2. The folders in `PKGSMITH_PLUGIN_PATH`, separated by `:`. On Windows the separator is `;`.
 3. The folder of the `pkgsmith` binary. A `cargo build` of this repository puts the plugins there.
 4. `lib/pkgsmith/plugins` in the folder above the binary. A package that installs `/usr/bin/pkgsmith` finds
    `/usr/lib/pkgsmith/plugins` this way.
-5. `$XDG_DATA_HOME/pkgsmith/plugins`, which is `~/.local/share/pkgsmith/plugins` by default.
-6. `/usr/local/lib/pkgsmith/plugins`, `/usr/lib/pkgsmith/plugins` and `/usr/lib64/pkgsmith/plugins`.
+5. The data folder of the user, with `pkgsmith/plugins` below it:
+
+   | System  | Folder                                                                          |
+   | ------- | ------------------------------------------------------------------------------- |
+   | Linux   | `$XDG_DATA_HOME/pkgsmith/plugins`, by default `~/.local/share/pkgsmith/plugins` |
+   | macOS   | `~/Library/Application Support/pkgsmith/plugins`                                |
+   | Windows | `%LOCALAPPDATA%\pkgsmith\plugins`                                              |
+
+6. The folders for all users:
+
+   | System  | Folders                                                                                        |
+   | ------- | ---------------------------------------------------------------------------------------------- |
+   | Linux   | `/usr/local/lib/pkgsmith/plugins`, `/usr/lib/pkgsmith/plugins` and `/usr/lib64/pkgsmith/plugins` |
+   | macOS   | `/usr/local/lib/pkgsmith/plugins` and `/opt/homebrew/lib/pkgsmith/plugins`                     |
+   | Windows | `%ProgramData%\pkgsmith\plugins`                                                              |
 
 If two plugins offer the same format, the first one found is used and pkgsmith prints a warning. A plugin that does
 not load is skipped with a warning. Without any plugin, `pkgsmith build` stops and says so.
@@ -236,7 +256,8 @@ format section in the manifest, define a struct with `#[serde(deny_unknown_field
 
 ## Installing plugins
 
-Copy a library to a folder on the search path and name it `pkgsmith-plugin-NAME.so`. For one user:
+Copy a library to a folder on the search path and name it `pkgsmith-plugin-NAME` with the suffix of your system. For one
+user on Linux:
 
 ```console
 $ mkdir -p ~/.local/share/pkgsmith/plugins
@@ -251,6 +272,8 @@ $ pkgsmith plugins install
 ```
 
 It downloads the archive `pkgsmith-TARGET.tar.gz` of the release that matches the program, checks it against the
-`SHA256SUMS` file of the release, and copies the plugins into `~/.local/share/pkgsmith/plugins`. It downloads over
-https only. Loading a plugin runs its code, so install plugins only from a source you trust. See
+`SHA256SUMS` file of the release, and copies the plugins into the data folder of the user from step 5 of the search
+path. It downloads over https only.
+
+Loading a plugin runs its code, so install plugins only from a source you trust. See
 [command line](cli.md#plugins) for the options.
