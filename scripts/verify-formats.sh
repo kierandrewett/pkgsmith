@@ -326,12 +326,24 @@ YAML
     check "msi: build" build_lang msi
     cp -r lang/msi out-msi/src
     # msitools reads the database and extracts the cabinet. It cannot install, so this does not prove that Windows accepts it.
-    check "msi: msiinfo tables and Summary Information, msiextract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi '
+    check "msi: msiinfo, msidump with resolving references, msiextract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi '
         dnf -y -q install msitools diffutils findutils >/dev/null
         cd /tmp; f=$(ls /p/*.msi)
         msiinfo tables "$f" | grep -qx InstallExecuteSequence
         msiinfo suminfo "$f" | grep -q "Template: x64;1033"
         msiinfo export "$f" File | grep -q "A-RATH~1.CON|a-rather-long-file-name.configuration"
+        # msidump writes one .idt file per table. Check that the references between the tables resolve.
+        mkdir dump; msidump -t -d dump "$f" >/dev/null 2>&1
+        col() { tail -n +4 "dump/$1.idt" | tr -d "\r" | cut -f"$2"; }
+        missing() { sort -u "$1" | grep -vxFf "$2" | grep -v "^$" || true; }
+        col Component 1 > comps; col Directory 1 > dirs; col File 1 > files
+        col File 2 > file_comps; col Component 3 > comp_dirs; col Directory 2 > dir_parents
+        col FeatureComponents 2 > fc_comps; col CreateFolder 1 > cf_dirs; col CreateFolder 2 > cf_comps
+        for pair in "file_comps comps" "comp_dirs dirs" "dir_parents dirs" "fc_comps comps" "cf_dirs dirs" "cf_comps comps"; do
+            set -- $pair; test -z "$(missing $1 $2)" || { echo "dangling reference: $1 not in $2: $(missing $1 $2)"; exit 1; }
+        done
+        test "$(sort comps | uniq -d | wc -l)" -eq 0
+        test "$(col Media 2)" -eq "$(wc -l < files)"
         msiextract -C ex "$f" >/dev/null
         test "$(find ex -type f | wc -l)" -eq 5
         cmp ex/hi/share/big.bin /p/src/share/big.bin

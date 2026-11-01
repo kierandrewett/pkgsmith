@@ -283,9 +283,15 @@ With `scope: machine`, the files go to `ProgramFiles64Folder` for `amd64` and `a
 The product code, the component codes and the package code come from the name, version and architecture, so equal input
 gives equal codes.
 
-Checked with `scripts/verify-formats.sh msi`: `msiinfo` lists the tables and the Summary Information, `msiextract` extracts the cabinet,
-and every file is byte for byte equal to its source. That includes a 1.5 MiB file, an empty file and names with spaces. The
-`msiinfo export` output of the tables was read by hand for both scopes.
+Checked with `scripts/verify-formats.sh msi`:
+
+- `msiinfo` lists the tables and the Summary Information.
+- `msidump` writes the tables, and every reference between them resolves: files to components, components to folders,
+  folders to parents, and the feature and `CreateFolder` rows to components and folders.
+- `msiextract` extracts the cabinet, and every file is byte for byte equal to its source. That includes a 1.5 MiB file,
+  an empty file and names with spaces.
+
+By hand, the exported tables were read for both scopes.
 
 Not checked:
 
