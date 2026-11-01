@@ -1,12 +1,10 @@
-//! The MSIX format of pkgsmith, as a plugin.
-
-mod format;
-mod opc;
-mod zip;
+//! The MSIX format of pkgsmith, as a plugin. The package writer is in `pkgsmith-windows-app`, which the `appx` plugin
+//! shares.
 
 use anyhow::Result;
 use pkgsmith_plugin::plugin::expect_format;
 use pkgsmith_plugin::{FormatInfo, Host, Package, Plugin, PluginInfo, Signing};
+use pkgsmith_windows_app::MSIX;
 use std::path::PathBuf;
 
 struct Msix;
@@ -27,12 +25,12 @@ impl Plugin for Msix {
 
     fn file_name(&self, package: &Package) -> Result<String> {
         expect_format(package, &["msix"])?;
-        format::file_name(package)
+        pkgsmith_windows_app::file_name(MSIX, package)
     }
 
     fn build(&self, package: &Package, host: &Host) -> Result<PathBuf> {
         expect_format(package, &["msix"])?;
-        format::build(package, host)
+        pkgsmith_windows_app::build(MSIX, package, host)
     }
 }
 

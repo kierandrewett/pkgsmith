@@ -1,8 +1,10 @@
-//! MSIX, the Windows app package, written unsigned.
+//! MSIX and APPX, the Windows app packages, written unsigned.
 //!
 //! The package is an OPC zip: the payload files, `AppxManifest.xml`, `AppxBlockMap.xml` (the SHA-256 of each 64 KiB
 //! block so Windows can check the package as it reads it) and `[Content_Types].xml`. The zip layout follows the
 //! Microsoft reference writer `makemsix` (microsoft/msix-packaging, `src/msix/pack`), so `zip.rs` and `opc.rs` do too.
+//! An APPX has the same layout as an MSIX: the [`Flavour`] only changes the file extension, the default `MinVersion`
+//! and the words of the messages.
 //!
 //! Specifications used:
 //! - MSIX package and block map: https://learn.microsoft.com/en-us/windows/msix/package/ and the reference writer at
@@ -11,9 +13,10 @@
 //! - Zip file format: https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT (the zip64 records)
 //! - Open Packaging Conventions: ECMA-376 Part 2, https://www.ecma-international.org/publications-and-standards/standards/ecma-376/
 //!
-//! Entries map under `root` (default `VFS/ProgramFilesX64/<name>`), the folder MSIX maps onto Program Files on the
-//! installed system: `/usr/bin/hi` is packaged as `VFS/ProgramFilesX64/<name>/usr/bin/hi`.
+//! Entries map under `root` (default `VFS/ProgramFilesX64/<name>`), the folder the package maps onto Program Files on
+//! the installed system: `/usr/bin/hi` is packaged as `VFS/ProgramFilesX64/<name>/usr/bin/hi`.
 
+use crate::Flavour;
 use crate::opc::{self, ContentTypes};
 use crate::zip::Writer;
 use anyhow::{Context, Result, bail};
@@ -27,11 +30,10 @@ use std::path::PathBuf;
 
 const MANIFEST_TYPE: &str = "application/vnd.ms-appx.manifest+xml";
 const BLOCK_MAP_TYPE: &str = "application/vnd.ms-appx.blockmap+xml";
-const DEFAULT_MIN_WINDOWS: &str = "10.0.17763.0";
 const DEFAULT_MAX_TESTED: &str = "10.0.22621.0";
 const LANGUAGE: &str = "en-us";
 
-/// The `msix:` section of the manifest.
+/// The options of an `msix` or `appx` package, the same for both.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Options {
@@ -50,7 +52,7 @@ struct Options {
     publisher_display_name: Option<String>,
     /// The name Windows shows for the app. Default: the package name.
     display_name: Option<String>,
-    /// Oldest Windows version the package runs on. Default `10.0.17763.0` (Windows 10 1809).
+    /// Oldest Windows version the package runs on. Default: `Flavour::default_min_windows`.
     min_windows: Option<String>,
     /// Newest Windows version the package has been tested on. Default `10.0.22621.0` (Windows 11 22H2).
     max_tested: Option<String>,
@@ -62,36 +64,36 @@ struct Payload<'a> {
     src: &'a std::path::Path,
 }
 
-/// `name_version_arch.msix`, the file name Windows tools use.
-pub fn file_name(package: &Package) -> Result<String> {
-    let name = identity_name(&package.name)?;
-    let version = msix_version(package)?;
-    let arch = architecture(&package.arch)?;
-    Ok(format!("{name}_{version}_{arch}.msix"))
+/// `name_version_arch.EXTENSION`, the file name Windows tools use.
+pub fn file_name(flavour: Flavour, package: &Package) -> Result<String> {
+    let name = identity_name(flavour, &package.name)?;
+    let version = package_version(flavour, package)?;
+    let arch = architecture(flavour, &package.arch)?;
+    Ok(format!("{name}_{version}_{arch}.{}", flavour.extension))
 }
 
 /// Builds the package and returns its path.
-pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
+pub fn build(flavour: Flavour, package: &Package, host: &Host) -> Result<PathBuf> {
     let options: Options = package.options()?;
-    let name = identity_name(&package.name)?;
+    let name = identity_name(flavour, &package.name)?;
     if name != package.name {
         host.warn(&format!(
-            "the package name {:?} has characters MSIX names cannot have, so the package is named {name:?}",
-            package.name
+            "the package name {:?} has characters {} names cannot have, so the package is named {name:?}",
+            package.name, flavour.label
         ));
     }
     let version = Version::parse(&package.version)?;
     if version.pre.is_some() {
         host.warn(&format!(
-            "the pre-release text of {:?} is not kept: an MSIX version is four numbers",
-            package.version
+            "the pre-release text of {:?} is not kept: {} version is four numbers",
+            package.version, flavour.label
         ));
     }
-    let arch = architecture(&package.arch)?;
+    let arch = architecture(flavour, &package.arch)?;
     if package.arch == "all" {
         host.warn("arch all is written as ProcessorArchitecture neutral; a Windows program runs on one architecture, so use amd64 or arm64 for it");
     }
-    warn_unexpressed(package, host);
+    warn_unexpressed(flavour, package, host);
 
     for (field, value) in [
         ("publisher", &options.publisher),
@@ -99,7 +101,7 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
         ("logo", &options.logo),
     ] {
         if value.is_empty() {
-            bail!("msix.{field} is required");
+            bail!("{}.{field} is required", flavour.name);
         }
     }
     let root = match &options.root {
@@ -107,27 +109,31 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
         None => format!("VFS/ProgramFilesX64/{name}"),
     };
     let payloads = payloads(package, &root)?;
-    let executable = package_path(&package.entries, &root, &options.executable, "executable")?;
+    let executable = package_path(flavour, &package.entries, &root, &options.executable, "executable")?;
     if !executable.to_ascii_lowercase().ends_with(".exe") {
         bail!(
-            "msix.executable {:?} must be a .exe file: Windows and makemsix reject any other Application Executable",
-            options.executable
+            "{}.executable {:?} must be a .exe file: Windows and makemsix reject any other Application Executable",
+            flavour.name, options.executable
         );
     }
-    let logo = package_path(&package.entries, &root, &options.logo, "logo")?;
+    let logo = package_path(flavour, &package.entries, &root, &options.logo, "logo")?;
     if !logo.to_ascii_lowercase().ends_with(".png") {
-        bail!("msix.logo {:?} must be a PNG file", options.logo);
+        bail!("{}.logo {:?} must be a PNG file", flavour.name, options.logo);
     }
     let publisher_display_name = match &options.publisher_display_name {
         Some(text) => text.clone(),
-        None => common_name(&options.publisher)
-            .context("msix.publisher_display_name is needed: msix.publisher has no CN= value")?,
+        None => common_name(&options.publisher).with_context(|| {
+            format!(
+                "{0}.publisher_display_name is needed: {0}.publisher has no CN= value",
+                flavour.name
+            )
+        })?,
     };
     let manifest = Manifest {
         name: &name,
         publisher: &options.publisher,
         publisher_display_name: &publisher_display_name,
-        version: msix_version(package)?,
+        version: package_version(flavour, package)?,
         arch,
         display_name: options.display_name.as_deref().unwrap_or(&package.name),
         description: match package.summary() {
@@ -139,12 +145,12 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
         min_windows: options
             .min_windows
             .as_deref()
-            .unwrap_or(DEFAULT_MIN_WINDOWS),
+            .unwrap_or(flavour.default_min_windows),
         max_tested: options.max_tested.as_deref().unwrap_or(DEFAULT_MAX_TESTED),
     };
     let manifest_xml = manifest.to_xml();
 
-    let output_name = file_name(package)?;
+    let output_name = file_name(flavour, package)?;
     let out_path = package.output(&output_name);
     let file =
         File::create(&out_path).with_context(|| format!("cannot create {}", out_path.display()))?;
@@ -168,8 +174,8 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
     Ok(out_path)
 }
 
-/// The package name as an MSIX identity name: letters, digits, dots and dashes, 3 to 50 characters.
-fn identity_name(name: &str) -> Result<String> {
+/// The package name as an identity name: letters, digits, dots and dashes, 3 to 50 characters.
+fn identity_name(flavour: Flavour, name: &str) -> Result<String> {
     let identity: String = name
         .chars()
         .map(|c| {
@@ -182,26 +188,27 @@ fn identity_name(name: &str) -> Result<String> {
         .collect();
     if !(3..=50).contains(&identity.len()) {
         bail!(
-            "the package name {name:?} must be 3 to 50 characters for MSIX (letters, digits, dots and dashes)"
+            "the package name {name:?} must be 3 to 50 characters for {} (letters, digits, dots and dashes)",
+            flavour.label
         );
     }
     Ok(identity)
 }
 
-/// The four-part MSIX version: the three numbers of the version, then the release. MSIX versions are numbers only.
-fn msix_version(package: &Package) -> Result<String> {
+/// The four-part version: the three numbers of the version, then the release. These versions are numbers only.
+fn package_version(flavour: Flavour, package: &Package) -> Result<String> {
     let version = Version::parse(&package.version)?;
     let mut parts = Vec::with_capacity(4);
     for number in version.core.split('.') {
         let value: u16 = number.parse().with_context(|| {
-            format!("version {:?}: MSIX numbers go up to 65535", package.version)
+            format!("version {:?}: {} numbers go up to 65535", package.version, flavour.label)
         })?;
         parts.push(value);
     }
     let release: u16 = package.release.parse().with_context(|| {
         format!(
-            "release {:?}: MSIX needs a number up to 65535",
-            package.release
+            "release {:?}: {} needs a number up to 65535",
+            package.release, flavour.label
         )
     })?;
     parts.push(release);
@@ -212,13 +219,13 @@ fn msix_version(package: &Package) -> Result<String> {
         .join("."))
 }
 
-/// The MSIX `ProcessorArchitecture` for a package architecture.
-fn architecture(arch: &str) -> Result<&'static str> {
+/// The `ProcessorArchitecture` for a package architecture.
+fn architecture(flavour: Flavour, arch: &str) -> Result<&'static str> {
     match arch {
         "amd64" => Ok("x64"),
         "arm64" => Ok("arm64"),
         "all" => Ok("neutral"),
-        other => bail!("MSIX has no architecture for {other:?}"),
+        other => bail!("{} has no architecture for {other:?}", flavour.label),
     }
 }
 
@@ -230,13 +237,13 @@ fn common_name(publisher: &str) -> Option<String> {
 }
 
 /// The package-relative name of `unix`, which must be a file entry of the package.
-fn package_path(entries: &[Entry], root: &str, unix: &str, what: &str) -> Result<String> {
+fn package_path(flavour: Flavour, entries: &[Entry], root: &str, unix: &str, what: &str) -> Result<String> {
     let wanted = unix.trim_matches('/');
     let found = entries.iter().any(|entry| {
         entry.path.trim_start_matches('/') == wanted && matches!(entry.data, Data::File { .. })
     });
     if !found {
-        bail!("msix.{what} {unix:?} is not a file in the package");
+        bail!("{}.{what} {unix:?} is not a file in the package", flavour.name);
     }
     Ok(join(root, wanted))
 }
@@ -269,8 +276,9 @@ fn payloads<'a>(package: &'a Package, root: &str) -> Result<Vec<Payload<'a>>> {
     Ok(out)
 }
 
-/// Warns about each manifest field MSIX cannot express. Nothing here stops the build.
-fn warn_unexpressed(package: &Package, host: &Host) {
+/// Warns about each manifest field the format cannot express. Nothing here stops the build.
+fn warn_unexpressed(flavour: Flavour, package: &Package, host: &Host) {
+    let label = flavour.label;
     let lists = [
         ("depends", &package.depends),
         ("recommends", &package.recommends),
@@ -282,7 +290,7 @@ fn warn_unexpressed(package: &Package, host: &Host) {
     for (field, values) in lists {
         if !values.is_empty() {
             host.warn(&format!(
-                "MSIX has no {field} field, so {} is not written",
+                "{label} has no {field} field, so {} is not written",
                 values.join(", ")
             ));
         }
@@ -297,7 +305,7 @@ fn warn_unexpressed(package: &Package, host: &Host) {
     .iter()
     .any(|script| script.is_some())
     {
-        host.warn("MSIX runs no install or remove scripts, so the package scripts are not written");
+        host.warn(&format!("{label} runs no install or remove scripts, so the package scripts are not written"));
     }
     let mut ghosts = 0;
     let mut links = 0;
@@ -324,12 +332,12 @@ fn warn_unexpressed(package: &Package, host: &Host) {
     }
     if links > 0 {
         host.warn(&format!(
-            "{links} symbolic links are not written: MSIX packages do not carry them"
+            "{links} symbolic links are not written: {label} packages do not carry them"
         ));
     }
     if configs > 0 {
         host.warn(&format!(
-            "{configs} configuration files are not kept apart: MSIX has no config flag"
+            "{configs} configuration files are not kept apart: {label} has no config flag"
         ));
     }
     if owned {
@@ -430,12 +438,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_and_versions_follow_msix_rules() {
-        assert_eq!(identity_name("hi_tool+").unwrap(), "hi-tool-");
-        assert!(identity_name("ab").is_err());
-        assert_eq!(architecture("amd64").unwrap(), "x64");
-        assert_eq!(architecture("arm64").unwrap(), "arm64");
-        assert!(architecture("riscv64").is_err());
+    fn names_and_versions_follow_app_package_rules() {
+        use crate::{APPX, MSIX};
+        assert_eq!(identity_name(MSIX, "hi_tool+").unwrap(), "hi-tool-");
+        assert!(identity_name(MSIX, "ab").is_err());
+        assert_eq!(architecture(MSIX, "amd64").unwrap(), "x64");
+        assert_eq!(architecture(APPX, "arm64").unwrap(), "arm64");
+        assert!(architecture(APPX, "riscv64").is_err());
+        let error = identity_name(APPX, "ab").unwrap_err().to_string();
+        assert!(error.contains("APPX"), "{error}");
+        let error = architecture(MSIX, "riscv64").unwrap_err().to_string();
+        assert!(error.contains("MSIX"), "{error}");
         assert_eq!(
             common_name("CN=Example Ltd, O=Example").as_deref(),
             Some("Example Ltd")

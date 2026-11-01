@@ -1,4 +1,5 @@
-//! The Open Packaging Conventions parts of an MSIX package: part names, `[Content_Types].xml` and `AppxBlockMap.xml`.
+//! The Open Packaging Conventions parts of an MSIX or APPX package: part names, `[Content_Types].xml` and
+//! `AppxBlockMap.xml`. The two formats share these parts.
 
 use crate::zip::Member;
 use anyhow::{Result, bail};
@@ -202,13 +203,13 @@ pub fn check_name(name: &str) -> Result<()> {
         bail!("an empty file name");
     }
     if name.contains('\\') {
-        bail!("{name:?} has a backslash, which MSIX file names cannot have");
+        bail!("{name:?} has a backslash, which MSIX and APPX file names cannot have");
     }
     if let Some(bad) = name
         .chars()
         .find(|c| (*c as u32) < 0x20 || matches!(c, '"' | '*' | ':' | '<' | '>' | '?' | '|'))
     {
-        bail!("{name:?} has the character {bad:?}, which MSIX file names cannot have");
+        bail!("{name:?} has the character {bad:?}, which MSIX and APPX file names cannot have");
     }
     let segments: Vec<&str> = name.split('/').collect();
     if segments
@@ -222,7 +223,7 @@ pub fn check_name(name: &str) -> Result<()> {
         || first.starts_with("appxmetadata")
         || first.starts_with("microsoft.system.package.metadata")
     {
-        bail!("{name:?} is in a folder MSIX reserves");
+        bail!("{name:?} is in a folder that MSIX and APPX reserve");
     }
     if segments.len() == 1 {
         let lower = first.as_str();
@@ -230,7 +231,7 @@ pub fn check_name(name: &str) -> Result<()> {
             lower,
             "appxmanifest.xml" | "appxblockmap.xml" | "[content_types].xml" | "appxsignature.p7x"
         ) {
-            bail!("{name:?} is a file MSIX reserves");
+            bail!("{name:?} is a file that MSIX and APPX reserve");
         }
     }
     Ok(())

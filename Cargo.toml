@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 exclude = ["/docs/media", "/.github"]
 
 [workspace]
-members = ["crates/pkgsmith-plugin", "plugins/*"]
+members = ["crates/pkgsmith-plugin", "crates/pkgsmith-windows-app", "plugins/*"]
 resolver = "3"
 
 [dependencies]

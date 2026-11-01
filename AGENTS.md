@@ -10,6 +10,7 @@ format and every signing method is a plugin: a shared library named `pkgsmith-pl
 | ------------------------- | -------------------------------------------------------------------------------- |
 | `src/`                    | The host: script, file collection, progress, plugin loader, command line        |
 | `crates/pkgsmith-plugin/` | The SDK: the `Package` type, the C interface, the `Plugin` trait, shared helpers |
+| `crates/pkgsmith-windows-app/` | The MSIX and APPX package writer that the `msix` and `appx` plugins share         |
 | `plugins/*/`              | The built-in plugins. One `cdylib` crate each. `plugins/*` joins the workspace by itself |
 | `examples/`               | Complete scripts, and a C and a Rust example plugin in `examples/plugins/`     |
 | `docs/`                   | The documentation. `README.md` links to every page                               |

@@ -1,4 +1,4 @@
-//! The zip writer of an MSIX package, laid out as the Microsoft reference writer `makemsix` lays it out.
+//! The zip writer of an MSIX or APPX package, laid out as the Microsoft reference writer `makemsix` lays it out.
 //!
 //! Each member is a local header with no sizes, the data, and a zip64 data descriptor with the real sizes. Deflated
 //! members are compressed in 64 KiB blocks, each flushed with `Z_FULL_FLUSH`, so the compressed size of every block is
