@@ -1,20 +1,21 @@
 # macOS and Windows
 
-The `setup` and `build` steps of a manifest run in a Linux container. They do not run on macOS or Windows. So pkgsmith
-cannot compile your program for those systems. pkgsmith itself runs natively on Linux, macOS and Windows. This page says
-how to package a program for macOS or Windows.
+The `setup` and `build` steps of a manifest run in a Linux container. They do not run on macOS or Windows. pkgsmith
+provides no macOS or Windows toolchain, so a build that uses only the tools in the image makes Linux programs. pkgsmith
+itself runs natively on Linux, macOS and Windows. This page says how to package a program for macOS or Windows.
 
 ## Why
 
-A build with an `image` runs in a Linux container. The container compiles a Linux program, so the files it installs
-are Linux files. A container cannot run a macOS or Windows compiler, and pkgsmith has no cross-compiler of its own.
+A container is Linux, and the files its build installs are what pkgsmith packages. A cross-compiler that you install in
+`setup` can make files for another system, but you must supply and test that toolchain. pkgsmith does not set it up
+or check the result.
 
 ## What to do
 
 pkgsmith packages files that already exist. It does not care where they came from. Use one of these ways.
 
 - **Compile on the target system, then package there.** Build your program on a Mac or on Windows with its own
-  toolchain. Run pkgsmith on the same machine with a manifest that has no `image`. This is the way to prefer, because
+  toolchain, as the release workflow of pkgsmith does. Run pkgsmith on the same machine with a manifest that has no `image`. This is the way to prefer, because
   the program is built and tested on the system it runs on.
 - **Package on Linux.** Copy the files you compiled for macOS or Windows to a Linux machine, or download them from CI.
   Run pkgsmith there with a manifest that has no `image`. The `dmg` format needs no other tool. A format that runs an
