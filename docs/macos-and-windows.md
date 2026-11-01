@@ -28,13 +28,17 @@ system. See [manifest](manifest.md) and [contents](contents.md).
 ## Example
 
 The `pkgsmith.yaml` of this repository packages pkgsmith for Linux and macOS in one file. The Linux jobs name an `image`
-and run a build. The macOS jobs name none, so they run no build and pack the files in `STAGE`. A `tree` entry that
-only applies to the `dmg` format adds those files.
+and run a build. The macOS jobs work differently:
+
+- They name no `image`, so they run no `setup` or `build`. The top-level `build` is not used for them.
+- They pack the files in `STAGE`. A `tree` entry that only applies to `dmg` adds those files.
+- An `if` on the matrix entry drops them when you do not pass `STAGE`. A plain `pkgsmith build` then builds only the
+  Linux packages.
 
 ```yaml
 matrix:
   include:
-    - { format: dmg, arch: arm64, distro: macos }
+    - { format: dmg, arch: arm64, distro: macos, if: env.STAGE }
 contents:
   - { type: tree, src: "${STAGE:-stage}", dst: /pkgsmith, only: [dmg] }
 dmg:
@@ -47,8 +51,8 @@ Compile on a Mac, put the program and its files in a folder, and name that folde
 $ pkgsmith build -F dmg --job arch=arm64 --build-arg STAGE=stage
 ```
 
-The package is written to `./dist`. You should see a file such as `pkgsmith-0.1.0-1-arm64.dmg`. Use `-F` to pick the
-formats, because a job for a format that you did not stage files for would fail.
+The package is written to `./dist`. You should see a file such as `pkgsmith-0.1.0-1-arm64.dmg`. Use `-F dmg` to build
+the disk image only.
 
 ## Formats
 

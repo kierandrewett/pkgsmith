@@ -108,6 +108,23 @@ To cross the hand-written jobs with architectures, make `distro` an axis and `in
 the first shape. One distro that needs two formats needs two jobs, so list the jobs by hand and add `arch` as a
 second axis only when each job has all its keys in `include`.
 
+### Dropping a job with `if`
+
+An `include` entry may carry `if:`. It is an expression, like the `if:` of a `contents` entry. When it is false, pkgsmith
+drops the job. `if` is not a matrix value, so it does not appear in the job label.
+
+The expression sees `env`, which holds the environment and every `--build-arg`, the matrix values of the job, `format`,
+`distro` and `arch`. This job exists only when you pass `--build-arg STAGE=...`:
+
+```yaml
+matrix:
+  include:
+    - { format: dmg, arch: arm64, distro: macos, if: env.STAGE }
+```
+
+Without `STAGE`, `pkgsmith plan` does not list the job. With `--build-arg STAGE=stage` it does. An expression that
+cannot be evaluated stops the run with an error.
+
 ### `pkgsmith plan`
 
 `pkgsmith plan` prints the jobs without running anything. Use it to check a matrix:
@@ -182,7 +199,7 @@ An unset name without a default is an error that names the variable.
 | `name`, `version`, `release`, `maintainer`, `homepage`, `license` | yes | yes      |
 | `depends` and the other relation lists                     | yes       | yes      |
 | `contents` `src` and `dst`                                 | yes       | yes      |
-| `contents` `if`                                            | no        | yes (bare expression) |
+| `contents` `if`, and `if` of a matrix `include` entry      | no        | yes (bare expression) |
 | `image`                                                    | yes       | yes      |
 | `setup`, `build`, `scripts`                                | no        | `${{ }}` only in `setup` and `build` |
 

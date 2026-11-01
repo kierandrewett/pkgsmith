@@ -284,6 +284,7 @@ fn load(source: &Source, registry: &Registry) -> Result<(Manifest, Vec<plan::Ite
         &source.format,
         &pairs(&source.job, "--job")?,
         source.distro.as_deref(),
+        &scope(&source.build_arg)?,
     )?;
     if !arches.is_empty() {
         items.retain(|item| {

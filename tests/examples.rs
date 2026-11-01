@@ -26,7 +26,7 @@ fn every_example_manifest_binds_for_every_job() {
         manifest
             .check_options(&known)
             .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
-        let items = plan::items(&manifest, &known, &[], &[], None).unwrap();
+        let items = plan::items(&manifest, &known, &[], &[], None, &scope).unwrap();
         assert!(!items.is_empty(), "{} describes no job", path.display());
         for item in items {
             manifest
