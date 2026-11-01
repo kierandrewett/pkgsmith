@@ -94,14 +94,14 @@ fn json_value<'v>(heap: starlark::values::Heap<'v>, value: &Json) -> Value<'v> {
 /// followed, to a place inside the prefix or the folder of the script.
 fn readable(collector: &Collector, text: &str) -> anyhow::Result<PathBuf> {
     let path = Path::new(text);
-    let path = if path.is_absolute()
-        && !path.starts_with(&collector.prefix)
-        && !path.starts_with(&collector.here)
-    {
-        // `/usr/bin/x` names a file of the prefix, as it does in a package.
-        collector.prefix.join(text.trim_start_matches('/'))
-    } else if path.is_absolute() {
+    let native = path.is_absolute()
+        && (path.starts_with(&collector.prefix) || path.starts_with(&collector.here));
+    let path = if native {
         path.to_path_buf()
+    } else if path.is_absolute() || text.starts_with('/') {
+        // `/usr/bin/x` names a file of the prefix, as it does in a package. On Windows a path with no drive is not
+        // absolute, so the text decides.
+        collector.prefix.join(text.trim_start_matches(['/', '\\']))
     } else {
         collector.prefix.join(path)
     };

@@ -180,13 +180,16 @@ const SYSTEM_DIRS: &[&str] = &[
 /// folder of the script. Packaging never reads anything else, so a script cannot pull in files of the system by accident.
 fn locate(manifest: &Manifest, text: &str) -> Result<PathBuf> {
     let path = Path::new(text);
-    let candidate = if !path.is_absolute() {
-        manifest.prefix.join(path)
-    } else if path.starts_with(&manifest.prefix) || path.starts_with(&manifest.base) {
+    let native = path.is_absolute()
+        && (path.starts_with(&manifest.prefix) || path.starts_with(&manifest.base));
+    let candidate = if native {
         path.to_path_buf()
+    } else if path.is_absolute() || text.starts_with('/') {
+        // `/usr/bin/x` names a file of the prefix, as it does in a package. On Windows a path with no drive is not
+        // absolute, so the text decides.
+        manifest.prefix.join(text.trim_start_matches(['/', '\\']))
     } else {
-        // `/usr/bin/x` names a file of the prefix, as it does in a package.
-        manifest.prefix.join(text.trim_start_matches('/'))
+        manifest.prefix.join(path)
     };
     // The path itself may be a symbolic link that the package keeps as a link, so only its folder is resolved, unless the
     // path is the root itself. A glob is resolved by its folder part.
