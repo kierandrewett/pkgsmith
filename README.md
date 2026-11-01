@@ -27,6 +27,7 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `npm`       | `.tgz`                           | npm                        |
 | `conda`     | `.conda`, `.tar.bz2`             | conda, micromamba          |
 | `nupkg`     | `.nupkg`                         | NuGet                      |
+| `dmg`       | `.dmg`                           | macOS                      |
 | `flatpak`   | `.flatpak`                       | Flatpak                    |
 | `msix`      | `.msix`                          | Windows 10 and 11          |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                 |

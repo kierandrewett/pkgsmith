@@ -21,6 +21,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `conda`     | `.conda`, `.tar.bz2`             | conda, micromamba                    | `micromamba create` from a channel  |
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
+| `dmg`       | `.dmg`                           | macOS                                | `fsck.hfsplus`, `7z`, `dmg2img`, not macOS |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
@@ -171,6 +172,42 @@ A pre-release such as `1.2.3-nightly.20261031.142.gabc1234` is not valid PEP 440
 
 pip does not check the hashes in `RECORD` when it installs, so a changed file in a wheel installs without an error.
 `python -m wheel unpack` does check them.
+
+## dmg
+
+A `.dmg` is an Apple disk image: a UDIF container that holds one HFS+ volume with your files. pkgsmith writes both parts
+itself, in pure Rust, so no tool is needed to build one. The volume writer follows Apple's public
+[TN1150](https://developer.apple.com/library/archive/technotes/tn1150/) and was written without reading GPL code.
+
+A disk image has no install path. Files sit on the volume in the same layout as the installed system, for example
+`/usr/bin/hi`. Use `prefix` to put them in a folder, such as `/Applications`.
+
+- File names must be ASCII. HFS+ compares other names after Unicode normalisation and case folding, which pkgsmith does
+  not implement, so any other name stops the build with the path in the error.
+- Two names in one folder that differ only in ASCII case stop the build.
+- Symbolic links stop the build, because pkgsmith cannot write HFS+ symbolic links.
+- Dependencies, scripts, `description`, `license`, owners and the config flag have no place in a disk image. Each one
+  warns. Every file is written with uid 0 and gid 0, and the dates are the build time.
+
+| Key           | Values                                  | Default            | Effect                                              |
+| ------------- | --------------------------------------- | ------------------ | --------------------------------------------------- |
+| `prefix`      | An absolute path                        | None               | A folder on the volume that receives every entry    |
+| `volume_name` | 1 to 31 bytes, no `:`                   | The package name   | The name of the volume in the Finder                |
+| `compression` | `zlib`, `none`                          | `zlib`             | The compression of the blocks in the image          |
+
+Checked with `scripts/verify-formats.sh dmg`:
+
+- `dmg2img` reads the image.
+- `fsck.hfsplus` reports the volume as OK.
+- `7z` extracts the files.
+
+By hand, the same tools also checked a volume with 320 files in one folder, a 5 MiB file and a 200-character name.
+
+Not checked:
+
+- Mounting on macOS with `hdiutil`, and the Finder.
+- Volumes of more than 2^32 blocks.
+- The `prefix` option with an invalid value.
 
 ## flatpak
 

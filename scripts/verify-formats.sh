@@ -255,6 +255,25 @@ YAML
         dotnet add package hi --version 1.0.0 --source /feed >/dev/null; grep -q hi-from-nupkg /root/.nuget/packages/hi/1.0.0/tools/hi.txt'
 fi
 
+if selected dmg; then
+    mkdir -p lang/dmg/bin
+    printf 'hi-from-dmg\n' > lang/dmg/bin/hi
+    chmod 755 lang/dmg/bin/hi
+    lang_manifest dmg <<'YAML'
+contents:
+  - { src: lang/dmg/bin/hi, dst: /usr/bin/hi }
+dmg:
+  volume_name: Hi Tools
+YAML
+    check "dmg: build" build_lang dmg
+    check "dmg: dmg2img, fsck.hfsplus, 7z extract (latest Fedora)" in_image "$IMAGE_FEDORA" out-dmg '
+        dnf -y -q install dmg2img hfsplus-tools p7zip p7zip-plugins >/dev/null
+        cd /tmp && dmg2img /p/*.dmg vol.img >/dev/null
+        # The first 64 sectors are the partition map. The HFS+ volume follows.
+        dd if=vol.img of=hfs.img bs=512 skip=64 status=none
+        fsck.hfsplus -n hfs.img | grep -q "appears to be OK"
+        7z x -y -oex hfs.img >/dev/null; grep -rq hi-from-dmg ex; test -x "$(find ex -name hi -type f | head -1)"'
+fi
 if selected flatpak; then
     if need flatpak; then
         mkdir -p lang/flatpak/bin
