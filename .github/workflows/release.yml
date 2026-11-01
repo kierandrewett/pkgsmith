@@ -5,7 +5,7 @@
 #   2. runs pkgsmith on its own manifest (pkgsmith.yaml) to build the rpm, deb, Arch and Alpine packages,
 #   3. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
 #   4. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows, and on macOS packs them into a
-#      disk image with pkgsmith itself (pkgsmith-native.yaml),
+#      disk image with pkgsmith itself (pkgsmith.yaml),
 #   5. creates a GitHub release with the packages, a tarball per platform (pkgsmith and its plugins) and checksums.
 #
 # Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
@@ -62,7 +62,7 @@ jobs:
           sudo mkdir -p "$XDG_RUNTIME_DIR" && sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           target/release/pkgsmith plugins
           target/release/pkgsmith plan .
-          target/release/pkgsmith build . --platform "linux/${{ matrix.arch }}" --build-arg "VERSION=$VERSION" -o dist --progress plain
+          target/release/pkgsmith build . -F rpm,deb,archlinux,apk --platform "linux/${{ matrix.arch }}" --build-arg "VERSION=$VERSION" -o dist --progress plain
 
       - name: Tarball of pkgsmith and its plugins
         run: |
@@ -120,7 +120,7 @@ jobs:
             version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"; fi
           arch=amd64; if [[ "${{ matrix.target }}" == aarch64* ]]; then arch=arm64; fi
           # A manifest without an image packages files that exist, so no container is needed.
-          target/release/pkgsmith build -f pkgsmith-native.yaml -F dmg \
+          target/release/pkgsmith build . -F dmg --job "arch=$arch" \
             --build-arg "VERSION=$version" --build-arg "ARCH=$arch" --build-arg "STAGE=$name" -o dist --progress plain
           ls -l dist
       - uses: actions/upload-artifact@v4

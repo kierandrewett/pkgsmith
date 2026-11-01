@@ -1,8 +1,13 @@
-# pkgsmith packages itself. Build the packages for every distro with:
+# pkgsmith packages itself. Build the Linux packages for every distro with:
 #
-#   pkgsmith build --build-arg VERSION=0.1.0
+#   pkgsmith build -F rpm,deb,archlinux,apk --build-arg VERSION=0.1.0
 #
 # or one distro with `--job distro=fedora`. The packages are written to ./dist.
+#
+# The dmg jobs have no image, so they run no build. They pack the folder STAGE, which holds a program that was compiled
+# on the target system (see docs/macos-and-windows.md). On a Mac:
+#
+#   pkgsmith build -F dmg --job arch=arm64 --build-arg STAGE=pkgsmith-aarch64-apple-darwin
 name: pkgsmith
 version: ${VERSION:-0.1.0}
 description: |
@@ -58,9 +63,19 @@ matrix:
         apk add --no-cache curl gcc make musl-dev
         curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
 
+    # macOS and Windows jobs have no image, so they run no build. They package the staged files.
+    - { format: dmg, arch: arm64, distro: macos }
+    - { format: dmg, arch: amd64, distro: macos }
+
   # The archlinux image has no arm64 build.
   exclude:
     - { distro: arch, arch: arm64 }
+
+contents:
+  - { type: tree, src: "${STAGE:-stage}", dst: /pkgsmith, only: [dmg] }
+
+dmg:
+  volume_name: pkgsmith
 
 # pkgsmith starts containers through Podman, and it does not look inside the binary for libraries.
 depends: [podman]

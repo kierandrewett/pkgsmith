@@ -27,27 +27,28 @@ system. See [manifest](manifest.md) and [contents](contents.md).
 
 ## Example
 
-This manifest packs a folder of compiled files into a disk image. It is a short version of `pkgsmith-native.yaml` in
-this repository, which packages pkgsmith itself on macOS in the release workflow.
+The `pkgsmith.yaml` of this repository packages pkgsmith for Linux and macOS in one file. The Linux jobs name an `image`
+and run a build. The macOS jobs name none, so they run no build and pack the files in `STAGE`. A `tree` entry that
+only applies to the `dmg` format adds those files.
 
 ```yaml
-name: pkgsmith
-version: ${VERSION:-0.1.0}
-arch: ${ARCH:-arm64}
-description: Build distribution packages from one manifest
+matrix:
+  include:
+    - { format: dmg, arch: arm64, distro: macos }
 contents:
-  - { type: tree, src: "${STAGE:-stage}", dst: /pkgsmith }
+  - { type: tree, src: "${STAGE:-stage}", dst: /pkgsmith, only: [dmg] }
 dmg:
   volume_name: pkgsmith
 ```
 
-Put the compiled program and its files in `stage/`, then run:
+Compile on a Mac, put the program and its files in a folder, and name that folder with `STAGE`:
 
 ```console
-$ pkgsmith build -f pkgsmith-native.yaml -F dmg --build-arg VERSION=0.1.0 --build-arg ARCH=arm64 --build-arg STAGE=stage
+$ pkgsmith build -F dmg --job arch=arm64 --build-arg STAGE=stage
 ```
 
-The package is written to `./dist`. You should see a file such as `pkgsmith-0.1.0-1-arm64.dmg`.
+The package is written to `./dist`. You should see a file such as `pkgsmith-0.1.0-1-arm64.dmg`. Use `-F` to pick the
+formats, because a job for a format that you did not stage files for would fail.
 
 ## Formats
 
