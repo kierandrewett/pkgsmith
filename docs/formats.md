@@ -20,6 +20,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `npm`       | `.tgz`                           | npm                                  | `npm install` in the latest Node    |
 | `conda`     | `.conda`, `.tar.bz2`             | conda, micromamba                    | `micromamba create` from a channel  |
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
+| `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
@@ -170,6 +171,46 @@ A pre-release such as `1.2.3-nightly.20261031.142.gabc1234` is not valid PEP 440
 
 pip does not check the hashes in `RECORD` when it installs, so a changed file in a wheel installs without an error.
 `python -m wheel unpack` does check them.
+
+## flatpak
+
+A `.flatpak` is a single-file OSTree bundle. pkgsmith does not write the OSTree objects itself. It lays out the app tree
+and runs the `flatpak` program in a temporary folder, so `flatpak` must be on `PATH` when you build. Without it the
+build stops and says so.
+
+The bundle holds only the app. The runtime is fetched from `runtime_repo` when a user installs the bundle. These
+`flatpak` commands run, in this order:
+
+- `build-finish`
+- `build-export`
+- `build-bundle`
+
+- `app_id` and `runtime_version` are required. pkgsmith does not guess a runtime version.
+- `arch` must be `amd64` or `arm64`. `all` stops the build, because a bundle has one architecture.
+- Files below `prefix` go to `files/` of the app. A file outside `prefix` stops the build.
+- Dependencies, scripts, owners and the fields `maintainer`, `homepage` and `license` have no place in a bundle. Each one warns.
+
+| Key               | Values                                          | Default                                 | Effect                                        |
+| ----------------- | ----------------------------------------------- | --------------------------------------- | --------------------------------------------- |
+| `app_id`          | Reverse-DNS ID with three or more parts         | None. Required                          | The application ID and the bundle name        |
+| `runtime_version` | Text such as `24.08`                            | None. Required                          | The version of the runtime                    |
+| `runtime`         | Reverse-DNS ID                                  | `org.freedesktop.Platform`              | The runtime the app runs on                   |
+| `sdk`             | Reverse-DNS ID                                  | `runtime` with `.Platform` as `.Sdk`    | The matching SDK                              |
+| `command`         | A program name                                  | The package name                        | The program to start. It must be `prefix/bin/NAME` |
+| `branch`          | Text                                            | `stable`                                | The branch of the ref                         |
+| `finish_args`     | List of options that start with `--`            | None                                    | Passed to `flatpak build-finish`, such as `--share=network` |
+| `runtime_repo`    | A `.flatpakrepo` URL, or `""`                   | The Flathub `.flatpakrepo`              | Where `flatpak install` finds the runtime. `""` leaves it out |
+| `prefix`          | An absolute path                                | `/usr`                                  | The folder that becomes `files/`              |
+
+Checked on `x86_64` in Debian 13 with Flatpak 1.16.6: `flatpak build-import-bundle` accepts the file, and
+`flatpak install --bundle` followed by `flatpak run` works.
+
+Not checked:
+
+- `aarch64` bundles.
+- Installing without adding the Flathub remote first.
+- A graphical app.
+- `finish_args` beyond the keys written to the metadata.
 
 ## msix
 
