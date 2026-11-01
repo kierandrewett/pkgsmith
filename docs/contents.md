@@ -2,7 +2,7 @@
 
 The files of a package come from two places, and `contents` joins them.
 
-1. **Tracked files.** When a job uses a builder, each file its steps install outside `/src` is in
+1. **Tracked files.** When a target needs a job, each file its steps install outside `/src` is in
    the package. See [build environment](build-environment.md).
 2. **`contents` entries.** Each entry adds a file, or replaces the tracked entry that has the same path.
 
@@ -105,7 +105,7 @@ contents:
 
 ## Without a container
 
-A job that uses no builder lists every file itself. Build the program yourself and stage it with `DESTDIR`, then point
+A target with `needs: []` lists every file itself. Build the program yourself and stage it with `DESTDIR`, then point
 `src` at the stage:
 
 ```yaml

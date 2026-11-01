@@ -45,124 +45,124 @@ env:
   VENDOR: example
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Matrix: one job per combination, like strategy.matrix in GitHub Actions (docs/matrix-and-expressions.md)
+# Targets and matrix (docs/matrix-and-expressions.md)
 # ---------------------------------------------------------------------------------------------------------------------
+
+# A target is a distro, the format or formats to write for it, and the job that builds its files.
+#   format:  one format, or a list. Each format is a package of its own.
+#   distro:  selects the `overrides` entry with the same name. Any text works.
+#   needs:   the job whose files the target packs. `[]` means no job: the target packs `contents` only.
+#   file:    the output file name. `{file}` is the name the format picked, so two distros that make the same format do
+#            not overwrite each other.
+#   if:      an expression over env.NAME. A false target makes no packages.
+#   Any other key is a variable for ${{ matrix.NAME }}.
+targets:
+  - format: rpm
+    distro: fedora
+    needs: fedora
+  - format: rpm
+    distro: opensuse
+    needs: opensuse
+    file: "opensuse-{file}"
+  - format: [deb, tar]
+    distro: debian
+    needs: debian
+  - format: deb
+    distro: ubuntu
+    needs: ubuntu
+    file: "ubuntu-{file}"
+  - format: archlinux
+    distro: arch
+    needs: arch
+  - format: apk
+    distro: alpine
+    needs: alpine
+
+# The matrix holds what varies for every target. Each target is crossed with each cell of it, so these make
+# 2 architectures x 7 packages = 14 packages, minus `exclude`.
 matrix:
-  # Axes. `format`, `arch` and `distro` steer the build. Any other name is a variable for ${{ matrix.NAME }}.
-  # Every combination of the axes is one job: 2 architectures x 6 distros = 12 jobs, minus `exclude`.
-  arch: [amd64, arm64]
-  distro: [fedora, opensuse, debian, ubuntu, arch, alpine]
-  #   arch values:   amd64 | arm64
-  #   distro values: fedora | opensuse | debian | ubuntu | arch | alpine  (any text works; an `overrides` key
-  #                  with the same name applies to the jobs of that distro)
-  #   format values: tar | deb | rpm | archlinux | apk | ipk  (add a `format` axis to fix the format per job)
-
-  # include: add keys to the jobs an entry matches. An entry matches a job when every key of the entry that is also an
-  # axis has the job's value. An entry that matches no job becomes a new job.
-  # `format` fixes the format of the jobs an entry makes. `file` names the output file: `{file}` is the name the format
-  # picked, so two distros that make the same format do not overwrite each other.
-  include:
-    - { distro: fedora, format: rpm }
-    - { distro: opensuse, format: rpm, file: "opensuse-{file}" }
-    - { distro: debian, format: deb }
-    - { distro: ubuntu, format: deb, file: "ubuntu-{file}" }
-    - { distro: arch, format: archlinux }
-    - { distro: alpine, format: apk }
-
-  # exclude: drop every job that matches all the keys of an entry.
+  arch:
+    - amd64
+    - arm64
+  # exclude: drop every package that matches all the keys of an entry. It may name `distro` and `format`.
   exclude:
-    - { distro: alpine, arch: arm64 } # no arm64 Alpine build yet
+    - distro: alpine
+      arch: arm64 # no arm64 Alpine build yet
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Builders (docs/build-environment.md)
+# Jobs (docs/build-environment.md)
 # ---------------------------------------------------------------------------------------------------------------------
 
-# A builder is a container image and the steps that run in it, in order. A job uses the builder whose `if` is true. Jobs
-# that use one builder share one run of its steps, so a builder that several distros can use builds once.
+# A job builds the files, like a job of a GitHub Actions workflow. It runs in a container image and has its own matrix,
+# environment variables and steps. Targets that need the same job and architecture share one run of it.
 #
 # A step runs in a fresh `sh -e` with the build context at /src. A throw-away overlay covers /src, so the build may write
-# there. Everything the steps install outside /src becomes the package.
-#   setup: true      a leading step that runs once and is cached as an image. What it installs is not packaged.
-#   if:              an expression. A builder reads `matrix.NAME`, `distro`, `arch` and `env.NAME`. A step reads only
-#                    `arch`, `env.NAME` and the matrix keys in the `by` of its builder. Neither can read `format`.
-#   by:              matrix keys the steps may read. Each value makes a separate run. The architecture always does.
-#   env:             variables for every step. Their values are literal text.
-#   exclude:         paths the package leaves out: path prefixes or globs. Defaults are listed in docs/contents.md.
+# there. Everything the `steps` install outside /src becomes the package. The `setup` steps run once and are cached as an
+# image, and what they install is not packaged.
+#   runs-on:   the container image
+#   matrix:    the variants of the job. A job with no `arch` runs for the architecture of each target that needs it.
+#   env:       variables for every step. Their values are literal text.
+#   exclude:   paths the package leaves out: path prefixes or globs. Defaults are listed in docs/contents.md.
+#   if:        on a step: an expression over `matrix.NAME` of the job, `arch` and `env.NAME`. A job cannot read the
+#              format or the distro of a target.
 #
-# Environment inside a step:
-#   PKGSMITH_NAME  PKGSMITH_VERSION  PKGSMITH_RELEASE  PKGSMITH_ARCH
-#   MATRIX_<KEY>   one variable for each matrix key in `by`, and PKGSMITH_DISTRO when `distro` is in `by`
-builders:
+# A step can change what later steps see by appending to two files, like GITHUB_ENV and GITHUB_PATH:
+#   echo "NAME=value" >> "$PKGSMITH_ENV"
+#   echo "/opt/tool/bin" >> "$PKGSMITH_PATH"
+#
+# Environment inside a step: PKGSMITH_NAME, PKGSMITH_VERSION, PKGSMITH_RELEASE, PKGSMITH_ARCH, and one MATRIX_<KEY>
+# for each key of the job's own matrix cell.
+jobs:
   fedora:
-    if: distro == 'fedora'
-    image: fedora:43
+    runs-on: fedora:43
     exclude:
       - /usr/share/doc/** # glob
       - /usr/lib/debug # prefix
       - /usr/share/man
-    steps:
+    setup:
       - name: Install the build tools
-        setup: true
         run: dnf -y install gcc make
-      - name: Build
+    steps:
+      - &build
+        name: Build
         run: |
           make
           make install PREFIX=${PREFIX:-/usr}
   opensuse:
-    if: distro == 'opensuse'
-    image: registry.opensuse.org/opensuse/tumbleweed
-    steps:
+    runs-on: registry.opensuse.org/opensuse/tumbleweed
+    setup:
       - name: Install the build tools
-        setup: true
         run: zypper -n install gcc make
-      - name: Build
-        run: |
-          make
-          make install PREFIX=${PREFIX:-/usr}
+    steps:
+      - *build
   debian:
-    if: distro == 'debian'
-    image: debian:13
-    steps:
+    runs-on: debian:13
+    setup:
       - name: Install the build tools
-        setup: true
         run: apt-get update -qq && apt-get install -y gcc make
-      - name: Build
-        run: |
-          make
-          make install PREFIX=${PREFIX:-/usr}
+    steps:
+      - *build
   ubuntu:
-    if: distro == 'ubuntu'
-    image: ubuntu:24.04
-    steps:
+    runs-on: ubuntu:24.04
+    setup:
       - name: Install the build tools
-        setup: true
         run: apt-get update -qq && apt-get install -y gcc make
-      - name: Build
-        run: |
-          make
-          make install PREFIX=${PREFIX:-/usr}
+    steps:
+      - *build
   arch:
-    if: distro == 'arch'
-    image: archlinux:base
-    steps:
+    runs-on: archlinux:base
+    setup:
       - name: Install the build tools
-        setup: true
         run: pacman -Sy --noconfirm gcc make
-      - name: Build
-        run: |
-          make
-          make install PREFIX=${PREFIX:-/usr}
-  alpine:
-    if: distro == 'alpine'
-    image: alpine:3.22
     steps:
+      - *build
+  alpine:
+    runs-on: alpine:3.22
+    setup:
       - name: Install the build tools
-        setup: true
         run: apk add --no-cache gcc make musl-dev
-      - name: Build
-        run: |
-          make
-          make install PREFIX=${PREFIX:-/usr}
+    steps:
+      - *build
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Contents: add files, or change tracked ones (docs/contents.md)

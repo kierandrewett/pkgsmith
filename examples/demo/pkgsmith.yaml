@@ -1,53 +1,53 @@
-# One manifest, four distros. Each distro has a builder with its own image and setup step. The deb and tar jobs of Debian
-# use one builder, so they share one build.
+# One manifest, four distros. Each distro has a job with its own image and setup step. The deb and tar packages of Debian
+# need one job, so they share one build.
 name: hello
 version: 1.0.0
 description: A demo that packages a small C program
 maintainer: Kieran Drewett <kieran@drewett.dev>
 license: MIT
 
-matrix:
-  include:
-    - format: rpm
-      distro: fedora
-    - format: deb
-      distro: debian
-    - format: tar
-      distro: debian
-    - format: archlinux
-      distro: arch
-    - format: apk
-      distro: alpine
+targets:
+  - format: rpm
+    distro: fedora
+    needs: fedora
+  - format:
+      - deb
+      - tar
+    distro: debian
+    needs: debian
+  - format: archlinux
+    distro: arch
+    needs: arch
+  - format: apk
+    distro: alpine
+    needs: alpine
 
 # The build steps are the same everywhere. pkgsmith records the files they install and packages them.
-builders:
+jobs:
   fedora:
-    if: distro == 'fedora'
-    image: fedora:43
+    runs-on: fedora:43
+    setup:
+      - run: dnf -y install gcc make
     steps:
-      - setup: true
-        run: dnf -y install gcc make
-      - run: make && make install PREFIX=/usr
+      - &build
+        run: make && make install PREFIX=/usr
   debian:
-    if: distro == 'debian'
-    image: debian:13
-    steps:
-      - setup: true
-        run: |
+    runs-on: debian:13
+    setup:
+      - run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
-      - run: make && make install PREFIX=/usr
+    steps:
+      - *build
   arch:
-    if: distro == 'arch'
-    image: archlinux:base
+    runs-on: archlinux:base
+    setup:
+      - run: pacman -Sy --noconfirm gcc make
     steps:
-      - setup: true
-        run: pacman -Sy --noconfirm gcc make
-      - run: make && make install PREFIX=/usr
+      - *build
   alpine:
-    if: distro == 'alpine'
-    image: alpine:3.22
+    runs-on: alpine:3.22
+    setup:
+      - run: apk add --no-cache gcc make musl-dev
     steps:
-      - setup: true
-        run: apk add --no-cache gcc make musl-dev
-      - run: make && make install PREFIX=/usr
+      - *build

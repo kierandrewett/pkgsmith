@@ -3,17 +3,17 @@
 name: acme-viewer
 version: 2.1.0
 description: An image viewer
-builders:
-  main:
-    image: debian:13
+jobs:
+  build:
+    runs-on: debian:13
     exclude:
       - /usr/include
       - /usr/lib/*.a
       - /usr/lib/cmake
-    steps:
+    setup:
       - name: Install the build tools
-        setup: true
         run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y cmake ninja-build g++ libpng-dev
+    steps:
       - name: Build
         run: |
           cmake -S . -B /tmp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr

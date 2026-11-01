@@ -127,7 +127,7 @@ impl Job {
         }
         self.values
             .iter()
-            .filter(|(k, _)| k.as_str() != "file")
+            .filter(|(k, _)| !["file", "needs"].contains(&k.as_str()))
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(", ")
@@ -158,14 +158,7 @@ impl Matrix {
                 })
                 .collect();
         }
-        let matches = |combo: &BTreeMap<String, String>,
-                       other: &BTreeMap<String, Scalar>,
-                       only: &dyn Fn(&str) -> bool| {
-            other
-                .iter()
-                .filter(|(key, _)| only(key))
-                .all(|(key, value)| combo.get(key) == Some(&value.text()))
-        };
+        let matches = matches_entry;
         for exclude in &self.exclude {
             combos.retain(|combo| !matches(combo, exclude, &|_| true));
         }
@@ -193,52 +186,143 @@ impl Matrix {
     }
 }
 
-/// A place that builds files: a container image and the steps that run in it, in order.
+/// Does a combination have the value of every key of the entry that `only` selects?
+fn matches_entry(
+    combo: &BTreeMap<String, String>,
+    other: &BTreeMap<String, Scalar>,
+    only: &dyn Fn(&str) -> bool,
+) -> bool {
+    other
+        .iter()
+        .filter(|(key, _)| only(key))
+        .all(|(key, value)| combo.get(key) == Some(&value.text()))
+}
+
+/// A job that builds files, like a job of a GitHub Actions workflow: a container image, a matrix, environment variables
+/// and ordered steps. Its result is the file tree that the steps install. Package targets name the job they pack with
+/// `needs`, so several targets, and several formats, can share one run of a job.
 ///
-/// A job uses the builder whose `if` is true. No builder is a job without a build, which packages `contents` only, and
-/// two builders are an error. Jobs that use one builder, and have equal values for the keys in `by` and the same
-/// architecture, share one run of its steps.
+/// A job sees only its own matrix, the architecture and `env`. It cannot read the format, the distro or any other value
+/// of a target, so what it builds cannot depend on them.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Builder {
-    /// A container image. It is pulled when it is not on the machine.
-    pub image: String,
-    /// An expression over `matrix.NAME`, `distro`, `arch` and `env.NAME`. It cannot read `format`: a build must not
-    /// depend on the format it is packaged as. Without it, every job uses this builder.
-    #[serde(rename = "if")]
-    pub condition: Option<String>,
-    /// The matrix keys, besides `arch`, that the steps may read and that make a separate run. Everything else is hidden
-    /// from the steps, which is what lets jobs of different distros share one run.
+pub struct BuildJob {
+    /// The container image the steps run in. It is pulled when it is not on the machine.
+    #[serde(rename = "runs-on")]
+    pub runs_on: String,
+    /// The variants of this job, such as `arch`. A target takes the run whose values agree with its own. Without an `arch`
+    /// key, a job runs for the architecture of each target that needs it.
     #[serde(default)]
-    pub by: Vec<String>,
-    /// Values every step gets as environment variables. They are literal: nothing in them is expanded by a shell.
+    pub matrix: Matrix,
+    /// Variables for every step. The values are literal text: nothing in them is expanded by a shell.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     /// Paths (globs) that the steps install and the package leaves out.
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Steps that prepare the environment, for example by installing compilers. They run once, and the result is cached
+    /// as an image. What they install is not packaged.
+    #[serde(default)]
+    pub setup: Vec<Step>,
+    /// Steps that make the files. Whatever they install outside `/src` is packaged.
     pub steps: Vec<Step>,
 }
 
-/// One script of a builder. Each step runs in a fresh `sh -e` in `/src`, so a step does not see what an earlier step
-/// exported or where it changed directory. It sees the files the earlier steps wrote.
+/// One script of a job. Each step runs in a fresh `sh -e` in `/src`. A step does not see what an earlier step exported or
+/// where it changed directory, but it sees the files earlier steps wrote and the lines they appended to `$PKGSMITH_ENV`
+/// and `$PKGSMITH_PATH`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
     /// Shown in the progress output.
     pub name: Option<String>,
-    /// The script. A file with a `#!` line is not special here: the text always runs with `sh -e`.
+    /// The script. A `#!` line is not special: the text always runs with `sh -e`.
     pub run: String,
-    /// An expression that decides whether the step runs. It sees the same names as the `if` of its builder, but only the
-    /// matrix keys in the `by` of the builder.
+    /// An expression that decides whether the step runs. It reads `matrix.NAME` of its job, `arch` and `env.NAME`.
     #[serde(rename = "if")]
     pub condition: Option<String>,
+    /// Variables for this step, after those of the job. The values are literal text.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-    /// A leading step that runs once and is cached as an image, for example to install the build dependencies. What it
-    /// installs is not packaged. Every `setup` step comes before every other step.
-    #[serde(default)]
-    pub setup: bool,
+}
+
+/// What a package target packs: the tree of one job, or nothing.
+#[derive(Debug, Clone)]
+pub enum Needs {
+    /// The name of a job.
+    Job(String),
+    /// `[]`: no job. The target packs its `contents` only.
+    Nothing,
+}
+
+impl<'de> Deserialize<'de> for Needs {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Needs;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a job name, or [] for no job")
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Needs, E> {
+                if value.is_empty() {
+                    return Err(E::custom(
+                        "needs is empty; write a job name, or [] for no job",
+                    ));
+                }
+                Ok(Needs::Job(value.to_string()))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Needs, A::Error> {
+                match seq.next_element::<serde::de::IgnoredAny>()? {
+                    None => Ok(Needs::Nothing),
+                    Some(_) => Err(serde::de::Error::custom(
+                        "needs takes one job name; a package comes from one build",
+                    )),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+/// One package target: a distro, the format or formats to write for it, and the job that builds its files. Every target
+/// is crossed with the cells of the `matrix`, which holds what varies for all of them, such as the architecture.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Target {
+    /// One format, or a list of them. Each format is a package of its own.
+    pub format: OneOrMany,
+    /// Selects the matching `overrides` entry and names the lane in the progress output.
+    pub distro: Option<String>,
+    /// The job whose tree the target packs. May be left out when the manifest has exactly one job. `[]` means no job.
+    pub needs: Option<Needs>,
+    /// The name of the output file. A template. See the docs of the matrix.
+    pub file: Option<String>,
+    /// An expression over `env.NAME`. A false target makes no packages, so a target can exist only when a build argument
+    /// such as `STAGE` is given.
+    #[serde(rename = "if")]
+    pub condition: Option<String>,
+    /// Any other key is a variable for `${{ matrix.NAME }}` and `if:`.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Scalar>,
+}
+
+/// A text, or a list of texts.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum OneOrMany {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl OneOrMany {
+    fn all(&self) -> Vec<String> {
+        match self {
+            OneOrMany::One(one) => vec![one.clone()],
+            OneOrMany::Many(many) => many.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -259,14 +343,16 @@ pub struct Manifest {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub matrix: Matrix,
-    /// The places that build the files: each is a container image and the steps that run in it. A job uses the one
-    /// whose `if` is true, and jobs that use the same builder share one run.
+    /// The package targets, crossed with the `matrix`. Without targets, the `matrix` alone makes the packages.
     #[serde(default)]
-    pub builders: BTreeMap<String, Builder>,
-    /// What the selected builder gives this job. Filled in by `bind`, never read from the file.
+    pub targets: Vec<Target>,
+    /// The jobs that build the files. A target names the one it packs with `needs`.
+    #[serde(default)]
+    pub jobs: BTreeMap<String, BuildJob>,
+    /// What the job of the target gives it. Filled in by `bind`, never read from the file.
     #[serde(skip)]
     pub image: Option<String>,
-    /// The leading steps of the builder, with the conditions decided. They run once and are cached. Not tracked.
+    /// The setup steps of the job, with the conditions decided. They run once and are cached. Not tracked.
     #[serde(skip)]
     pub setup: Option<String>,
     /// The other steps. Whatever they write outside `/src` is packaged.
@@ -275,9 +361,9 @@ pub struct Manifest {
     /// Paths (globs) the build installed that the package leaves out.
     #[serde(skip)]
     pub exclude: Vec<String>,
-    /// The matrix keys the selected builder sees, besides the architecture.
+    /// What the steps may read: `PKGSMITH_*` and the `MATRIX_*` of the job's own cell.
     #[serde(skip)]
-    pub by: Vec<String>,
+    pub build_env: BTreeMap<String, String>,
     pub maintainer: Option<String>,
     pub homepage: Option<String>,
     pub license: Option<String>,
@@ -318,14 +404,50 @@ fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-/// A step as shell text: a title line, then the script in a fresh `sh -e` with the environment as literal variables. The
-/// delimiter of the here document comes from the script itself, so no line of the script can end it early.
-fn render_step(title: &str, env: &BTreeMap<String, String>, script: &str) -> String {
+/// What every step starts with. `$PKGSMITH_ENV` holds one `NAME=value` per line and `$PKGSMITH_PATH` one folder per line.
+/// Earlier steps append to them, like `GITHUB_ENV` and `GITHUB_PATH` in GitHub Actions. They are read as data: `export
+/// "NAME=value"` assigns the text after the first `=` as it is, so quotes and `$` in a value do nothing. They live in
+/// `/tmp`, which is never packaged, and a setup step's lines reach the later steps through the cached image.
+const PRELUDE: &str = r#"PKGSMITH_ENV=/tmp/pkgsmith-state/env
+PKGSMITH_PATH=/tmp/pkgsmith-state/path
+mkdir -p /tmp/pkgsmith-state && : >> "$PKGSMITH_ENV" && : >> "$PKGSMITH_PATH"
+export PKGSMITH_ENV PKGSMITH_PATH
+if [ -s "$PKGSMITH_PATH" ]; then
+  PATH="$(paste -sd: "$PKGSMITH_PATH"):$PATH"
+  export PATH
+fi
+while IFS= read -r pkgsmith_line || [ -n "$pkgsmith_line" ]; do
+  case "$pkgsmith_line" in
+    '' | '#'*) continue ;;
+    *=*) ;;
+    *) echo "PKGSMITH_ENV: not NAME=value: $pkgsmith_line" >&2; exit 1 ;;
+  esac
+  case "${pkgsmith_line%%=*}" in
+    '' | [0-9]* | *[!A-Za-z0-9_]*) echo "PKGSMITH_ENV: bad name in: $pkgsmith_line" >&2; exit 1 ;;
+  esac
+  export "$pkgsmith_line"
+done < "$PKGSMITH_ENV"
+unset pkgsmith_line
+"#;
+
+/// A step as shell text: a title line, then the script in a fresh `sh -e`. The job's variables come first, then the
+/// prelude, then the step's own variables, so a step beats a line of `$PKGSMITH_ENV` and that beats the job. The
+/// delimiter of the here document comes from the script itself, so no line of it can end the document early.
+fn render_step(
+    title: &str,
+    job_env: &BTreeMap<String, String>,
+    step_env: &BTreeMap<String, String>,
+    script: &str,
+) -> String {
     use sha2::{Digest, Sha256};
-    let mut body = String::new();
-    for (key, value) in env {
-        body.push_str(&format!("export {key}={}\n", sh_quote(value)));
-    }
+    let exports = |env: &BTreeMap<String, String>| -> String {
+        env.iter()
+            .map(|(key, value)| format!("export {key}={}\n", sh_quote(value)))
+            .collect()
+    };
+    let mut body = exports(job_env);
+    body.push_str(PRELUDE);
+    body.push_str(&exports(step_env));
     body.push_str(script);
     if !body.ends_with('\n') {
         body.push('\n');
@@ -469,94 +591,90 @@ impl Manifest {
             manifest.base = PathBuf::from(".");
         }
         manifest.context = manifest.base.clone();
-        manifest.check_builders()?;
+        manifest.check_jobs()?;
         Ok(manifest)
     }
 
-    /// The names a builder or a step may read. Refusing the rest at load time is what makes a shared build sound: a step
-    /// cannot depend on a value that the jobs sharing its run do not share.
-    fn check_builders(&self) -> Result<()> {
-        let mut known: Vec<String> = self.matrix.axes.keys().cloned().collect();
-        for entry in &self.matrix.include {
-            known.extend(entry.keys().cloned());
-        }
-        known.extend(["arch".into(), "distro".into()]);
-        for (name, builder) in &self.builders {
-            for key in &builder.by {
-                if !known.contains(key) {
-                    bail!(
-                        "builder {name}: by lists {key:?}, which is not a matrix key (matrix keys: {})",
-                        known.join(", ")
-                    );
-                }
+    /// Refuse what cannot work, when the manifest loads: a step that reads something its job does not have, a target that
+    /// names no job, a bad variable name.
+    fn check_jobs(&self) -> Result<()> {
+        let valid_name = |key: &str| {
+            key.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        };
+        for (name, job) in &self.jobs {
+            if job.runs_on.trim().is_empty() {
+                bail!("job {name}: runs-on is empty");
             }
-            if builder.steps.is_empty() {
-                bail!("builder {name} has no steps");
+            if job.steps.is_empty() {
+                bail!("job {name} has no steps");
             }
-            let envs = builder
+            let mut keys: Vec<String> = job.matrix.axes.keys().cloned().collect();
+            for entry in &job.matrix.include {
+                keys.extend(entry.keys().cloned());
+            }
+            let all_steps = || job.setup.iter().chain(job.steps.iter());
+            for key in job
                 .env
                 .keys()
-                .chain(builder.steps.iter().flat_map(|step| step.env.keys()));
-            for key in envs {
-                let valid = key
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                    && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-                if !valid {
+                .chain(all_steps().flat_map(|step| step.env.keys()))
+            {
+                if !valid_name(key) {
                     bail!(
-                        "builder {name}: env name {key:?} must be letters, digits and _, not starting with a digit"
+                        "job {name}: env name {key:?} must be letters, digits and _, not starting with a digit"
                     );
                 }
             }
-            let mut after_build = false;
-            for (n, step) in builder.steps.iter().enumerate() {
-                if step.setup && after_build {
-                    bail!(
-                        "builder {name}: step {} is a setup step after a step that is not; setup steps come first",
-                        n + 1
-                    );
-                }
-                after_build |= !step.setup;
-            }
-            let check = |expression: &str, owner: String, by: Option<&[String]>| -> Result<()> {
-                for used in expr::names(expression)
-                    .with_context(|| format!("{owner}: the if: {expression:?}"))?
+            for (n, step) in all_steps().enumerate() {
+                let Some(condition) = &step.condition else {
+                    continue;
+                };
+                for used in expr::names(condition)
+                    .with_context(|| format!("job {name}, step {}: the if: {condition:?}", n + 1))?
                 {
-                    let allowed = match (used.as_str(), by) {
-                        ("arch", _) => true,
-                        (u, _) if u.starts_with("env.") => true,
-                        (u, None) if u == "distro" || u.starts_with("matrix.") => true,
-                        ("distro", Some(by)) => by.iter().any(|k| k == "distro"),
-                        (u, Some(by)) => u
+                    let allowed = used == "arch"
+                        || used.starts_with("env.")
+                        || used
                             .strip_prefix("matrix.")
-                            .is_some_and(|key| by.iter().any(|k| k == key)),
-                        _ => false,
-                    };
+                            .is_some_and(|key| keys.iter().any(|k| k == key));
                     if !allowed {
-                        let why = if used == "format" {
-                            "a build must not depend on the format".to_string()
-                        } else if by.is_some() {
-                            "a step reads only arch, env.NAME and the matrix keys in the by of its builder".to_string()
+                        let why = if used == "format"
+                            || used == "distro"
+                            || used.starts_with("matrix.")
+                        {
+                            "a job reads only its own matrix, so what it builds cannot depend on the target"
                         } else {
-                            "a builder reads only arch, distro, matrix.NAME and env.NAME"
-                                .to_string()
+                            "a step reads arch, env.NAME and the matrix of its job"
                         };
-                        bail!("{owner}: the if: {expression:?} reads {used}; {why}");
+                        bail!(
+                            "job {name}, step {}: the if: {condition:?} reads {used}; {why}",
+                            n + 1
+                        );
                     }
                 }
-                Ok(())
-            };
-            if let Some(condition) = &builder.condition {
-                check(condition, format!("builder {name}"), None)?;
             }
-            for (n, step) in builder.steps.iter().enumerate() {
-                if let Some(condition) = &step.condition {
-                    check(
-                        condition,
-                        format!("builder {name}, step {}", n + 1),
-                        Some(&builder.by),
-                    )?;
+        }
+        for target in &self.targets {
+            if let Some(Needs::Job(job)) = &target.needs
+                && !self.jobs.contains_key(job)
+            {
+                bail!(
+                    "a target needs the job {job:?}, which does not exist (jobs: {})",
+                    self.jobs.keys().cloned().collect::<Vec<_>>().join(", ")
+                );
+            }
+            let taken = target
+                .extra
+                .keys()
+                .map(String::as_str)
+                .chain(["format", "distro", "needs", "file", "if"]);
+            for key in taken {
+                if self.matrix.axes.contains_key(key) {
+                    bail!(
+                        "the matrix axis {key:?} is also a key of a target; a target sets {key:?} for itself, so remove the axis"
+                    );
                 }
             }
         }
@@ -567,9 +685,18 @@ impl Manifest {
     /// `dependz:` does not vanish. `formats` are the names the loaded plugins write.
     pub fn check_options(&self, formats: &[String]) -> Result<()> {
         for key in self.options.keys() {
-            if ["image", "setup", "build", "build_axes", "exclude"].contains(&key.as_str()) {
+            if [
+                "image",
+                "setup",
+                "build",
+                "build_axes",
+                "exclude",
+                "builders",
+            ]
+            .contains(&key.as_str())
+            {
                 bail!(
-                    "{key:?} is not a key of the manifest any more: image, setup, build and exclude moved into a builder (builders: NAME: image, steps, exclude). See docs/build-environment.md"
+                    "{key:?} is not a key of the manifest any more: a job builds the files (jobs: NAME: runs-on, setup, steps, exclude) and a target names it with needs. See docs/build-environment.md"
                 );
             }
             if !formats.contains(key) {
@@ -582,8 +709,53 @@ impl Manifest {
         Ok(())
     }
 
+    /// Every package to make: the cells of the `matrix`, each crossed with every target and every format of the target.
+    /// `exclude` of the matrix drops cells after the target's values are in, so it can name `distro` and `format`.
     pub fn jobs(&self) -> Vec<Job> {
-        self.matrix.jobs()
+        if self.targets.is_empty() {
+            return self.matrix.jobs();
+        }
+        let mut matrix = self.matrix.clone();
+        matrix.exclude.clear();
+        let mut out = Vec::new();
+        for cell in matrix.jobs() {
+            for target in &self.targets {
+                for format in target.format.all() {
+                    let mut values = cell.values.clone();
+                    values.insert("format".into(), format);
+                    if let Some(distro) = &target.distro {
+                        values.insert("distro".into(), distro.clone());
+                    }
+                    match &target.needs {
+                        Some(Needs::Job(job)) => {
+                            values.insert("needs".into(), job.clone());
+                        }
+                        Some(Needs::Nothing) => {
+                            values.insert("needs".into(), String::new());
+                        }
+                        None => {}
+                    }
+                    if let Some(file) = &target.file {
+                        values.insert("file".into(), file.clone());
+                    }
+                    if let Some(condition) = &target.condition {
+                        values.insert("if".into(), condition.clone());
+                    }
+                    for (key, value) in &target.extra {
+                        values.insert(key.clone(), value.text());
+                    }
+                    let dropped = self
+                        .matrix
+                        .exclude
+                        .iter()
+                        .any(|entry| matches_entry(&values, entry, &|_| true));
+                    if !dropped {
+                        out.push(Job { values });
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// The manifest as one job and one format see it: variables and expressions expanded, `if:` entries decided.
@@ -604,7 +776,7 @@ impl Manifest {
             None => context.expand(&self.arch)?,
         };
         bound.arch = context.arch.clone();
-        bound.select_builder(&context, job)?;
+        bound.select_job(&context, job)?;
         let expand = |text: &mut String| -> Result<()> {
             *text = context.expand(text)?;
             Ok(())
@@ -657,80 +829,144 @@ impl Manifest {
         Ok(bound)
     }
 
-    /// Pick the builder of a job and fill in `image`, `setup`, `build`, `exclude` and `by` from it. No builder is a job
-    /// without a build. Two builders are an error, so a typo in an `if:` cannot quietly change what is built.
-    fn select_builder(&mut self, context: &Scope, job: &Job) -> Result<()> {
-        let mut chosen: Vec<&str> = Vec::new();
-        for (name, builder) in &self.builders {
-            let uses = match &builder.condition {
-                Some(condition) => context
-                    .test(condition)
-                    .with_context(|| format!("in the if: of builder {name}"))?,
-                None => true,
-            };
-            if uses {
-                chosen.push(name);
-            }
-        }
-        let name = match chosen.as_slice() {
-            [] => return Ok(()),
-            [one] => (*one).to_string(),
-            several => bail!(
-                "the job {} uses {} builders ({}); the if: of each builder must pick different jobs",
-                job.label(),
-                several.len(),
-                several.join(", ")
-            ),
+    /// Find the build job of a package target and fill in `image`, `setup`, `build`, `exclude` and `build_env` from it.
+    ///
+    /// The target's `needs` names the job. Without it, the one job of the manifest is used, and a manifest with several
+    /// jobs asks for the name. `needs: []` is no job, and the target packs `contents` only. The run of the job is the cell
+    /// of its own matrix that agrees with the target on every axis of that matrix. A job with no `arch` axis runs for the
+    /// architecture of the target.
+    fn select_job(&mut self, context: &Scope, cell: &Job) -> Result<()> {
+        let name = match cell.values.get("needs").map(String::as_str) {
+            Some("") => return Ok(()),
+            Some(name) => name.to_string(),
+            None => match self.jobs.len() {
+                0 => return Ok(()),
+                1 => self.jobs.keys().next().cloned().expect("one job"),
+                _ => bail!(
+                    "the target {} does not say which job builds its files; add needs: JOB, or needs: [] for none (jobs: {})",
+                    cell.label(),
+                    self.jobs.keys().cloned().collect::<Vec<_>>().join(", ")
+                ),
+            },
         };
-        let builder = self.builders[&name].clone();
-        self.image = Some(context.expand(&builder.image)?);
-        self.exclude = builder.exclude.clone();
-        self.by = builder.by.clone();
-
-        // The steps see the architecture and the matrix keys in `by`, never the format or any other distro value.
-        let mut steps = context.clone();
-        steps.format = String::new();
-        steps.matrix = job
-            .values
-            .iter()
-            .filter(|(key, _)| builder.by.contains(key))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
-        if !builder.by.iter().any(|key| key == "distro") {
-            steps.distro = String::new();
-        }
-        let (mut setup, mut build) = (Vec::new(), Vec::new());
-        for (n, step) in builder.steps.iter().enumerate() {
-            if let Some(condition) = &step.condition
-                && !steps
-                    .test(condition)
-                    .with_context(|| format!("in the if: of step {} of builder {name}", n + 1))?
-            {
-                continue;
-            }
-            let mut env = BTreeMap::new();
-            for (key, value) in builder.env.iter().chain(step.env.iter()) {
-                env.insert(key.clone(), steps.expand_expressions(value)?);
-            }
-            let title = step
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("step {}", n + 1));
-            let text = render_step(&title, &env, &steps.expand_expressions(&step.run)?);
-            if step.setup {
-                setup.push(text);
-            } else {
-                build.push(text);
-            }
-        }
-        if build.is_empty() {
+        let Some(job) = self.jobs.get(&name).cloned() else {
             bail!(
-                "builder {name} has no step to run for the job {}: every step that is not a setup step has a false if:",
-                job.label()
+                "the target {} needs the job {name:?}, which does not exist",
+                cell.label()
+            );
+        };
+        let wanted = |key: &str| -> Option<String> {
+            if key == "arch" {
+                Some(context.arch.clone())
+            } else {
+                cell.values.get(key).cloned()
+            }
+        };
+        let axes: Vec<&String> = job.matrix.axes.keys().collect();
+        let mut missing = Vec::new();
+        let run = job.matrix.jobs().into_iter().find(|run| {
+            axes.iter().all(|key| match wanted(key) {
+                Some(value) => run.values.get(*key) == Some(&value),
+                None => {
+                    missing.push((*key).clone());
+                    false
+                }
+            })
+        });
+        if let Some(key) = missing.first() {
+            bail!(
+                "job {name} has the matrix key {key:?}, but the target {} has no value for it",
+                cell.label()
             );
         }
+        let Some(run) = run else {
+            bail!(
+                "job {name} has no run for the target {}: its matrix has no cell that agrees on {}",
+                cell.label(),
+                axes.iter()
+                    .map(|k| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        };
+        // A job that pins the architecture must agree with the target. Without one it builds for the target's.
+        let arch = run
+            .values
+            .get("arch")
+            .cloned()
+            .unwrap_or_else(|| context.arch.clone());
+
+        let mut steps = context.clone();
+        steps.format = String::new();
+        steps.distro = String::new();
+        steps.arch = arch.clone();
+        steps.matrix = run.values.clone();
+        steps.matrix.insert("arch".into(), arch.clone());
+
+        let mut env = BTreeMap::new();
+        for (key, value) in &job.env {
+            env.insert(key.clone(), steps.expand_expressions(value)?);
+        }
+        let render = |list: &[Step], phase: &str| -> Result<Vec<String>> {
+            let mut out = Vec::new();
+            for (n, step) in list.iter().enumerate() {
+                if let Some(condition) = &step.condition
+                    && !steps.test(condition).with_context(|| {
+                        format!("in the if: of {phase} step {} of job {name}", n + 1)
+                    })?
+                {
+                    continue;
+                }
+                let mut step_env = BTreeMap::new();
+                for (key, value) in &step.env {
+                    step_env.insert(key.clone(), steps.expand_expressions(value)?);
+                }
+                let title = step
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("{phase} {}", n + 1));
+                out.push(render_step(
+                    &title,
+                    &env,
+                    &step_env,
+                    &steps.expand_expressions(&step.run)?,
+                ));
+            }
+            Ok(out)
+        };
+        let setup = render(&job.setup, "setup")?;
+        let build = render(&job.steps, "step")?;
+        if build.is_empty() {
+            bail!(
+                "job {name} has no step to run for the target {}: every step has a false if:",
+                cell.label()
+            );
+        }
+        self.image = Some(context.expand(&job.runs_on)?);
+        self.exclude = job.exclude.clone();
+        self.arch = arch.clone();
         self.setup = (!setup.is_empty()).then(|| setup.join("\n"));
         self.build = Some(build.join("\n"));
+
+        let mut build_env = BTreeMap::new();
+        build_env.insert("PKGSMITH_NAME".into(), self.name.clone());
+        build_env.insert("PKGSMITH_VERSION".into(), self.version.clone());
+        build_env.insert("PKGSMITH_RELEASE".into(), self.release.clone());
+        build_env.insert("PKGSMITH_ARCH".into(), arch);
+        for (key, value) in &steps.matrix {
+            let key: String = key
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        c.to_ascii_uppercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            build_env.insert(format!("MATRIX_{key}"), value.clone());
+        }
+        self.build_env = build_env;
         Ok(())
     }
 
@@ -990,82 +1226,137 @@ mod tests {
         assert_eq!(arm.arch, "arm64");
     }
 
-    const LINUX: &str = "builders:\n  linux:\n    if: matrix.distro == 'fedora' || matrix.distro == 'debian'\n    image: debian:13\n    steps:\n      - name: tools\n        setup: true\n        run: apt-get update\n      - name: compile\n        run: make\n      - name: arm only\n        if: arch == 'arm64'\n        run: echo arm\n  alpine:\n    if: matrix.distro == 'alpine'\n    image: alpine:3.22\n    steps:\n      - run: make\n";
+    /// Two jobs, five targets: rpm, deb and Arch on one Debian job, Alpine on its own, and a dmg that packs files only.
+    const JOBS: &str = "jobs:\n  linux:\n    runs-on: debian:13\n    setup:\n      - name: tools\n        run: apt-get update\n    steps:\n      - name: compile\n        run: make\n      - name: arm only\n        if: arch == 'arm64'\n        run: echo arm\n  alpine:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\ntargets:\n  - format: rpm\n    distro: fedora\n    needs: linux\n  - format: [deb, tar]\n    distro: debian\n    needs: linux\n  - format: apk\n    distro: alpine\n    needs: alpine\n  - format: dmg\n    distro: macos\n    needs: []\n";
 
-    fn with_builders(extra: &str) -> String {
-        format!("{BASE}matrix:\n  distro: [fedora, alpine]\n{extra}")
+    fn cells(text: &str) -> Vec<String> {
+        let mut labels: Vec<String> = parse(text).unwrap().jobs().iter().map(Job::label).collect();
+        labels.sort();
+        labels
     }
 
     #[test]
-    fn a_job_uses_the_builder_whose_if_is_true_and_a_job_with_none_has_no_build() {
-        let text = with_builders(LINUX);
-        let fedora = bind(&text, job(&[("distro", "fedora")]), "rpm").unwrap();
+    fn targets_are_crossed_with_the_matrix_and_a_format_list_makes_one_package_each() {
+        let text = format!("{BASE}matrix:\n  arch: [amd64, arm64]\n{JOBS}");
+        let all = cells(&text);
+        assert_eq!(all.len(), 10, "5 packages x 2 architectures: {all:?}");
+        assert!(all.contains(&"arch=arm64, distro=debian, format=tar".to_string()));
+    }
+
+    #[test]
+    fn exclude_can_name_the_distro_of_a_target() {
+        let text = format!(
+            "{BASE}matrix:\n  arch: [amd64, arm64]\n  exclude:\n    - {{distro: alpine, arch: arm64}}\n{JOBS}"
+        );
+        let all = cells(&text);
+        assert_eq!(all.len(), 9);
+        assert!(
+            !all.iter()
+                .any(|l| l.contains("alpine") && l.contains("arm64"))
+        );
+    }
+
+    #[test]
+    fn a_target_uses_its_job_and_needs_nothing_means_no_build() {
+        let text = format!("{BASE}{JOBS}");
+        let fedora = bind(
+            &text,
+            job(&[("distro", "fedora"), ("needs", "linux"), ("arch", "amd64")]),
+            "rpm",
+        )
+        .unwrap();
         assert_eq!(fedora.image.as_deref(), Some("debian:13"));
         assert!(fedora.setup.as_deref().unwrap().contains("apt-get update"));
         assert!(fedora.build.as_deref().unwrap().contains("make"));
-        let alpine = bind(&text, job(&[("distro", "alpine")]), "apk").unwrap();
+        assert!(!fedora.build.as_deref().unwrap().contains("echo arm"));
+        let arm = bind(&text, job(&[("needs", "linux"), ("arch", "arm64")]), "rpm").unwrap();
+        assert!(arm.build.as_deref().unwrap().contains("echo arm"));
+        let alpine = bind(&text, job(&[("needs", "alpine")]), "apk").unwrap();
         assert_eq!(alpine.image.as_deref(), Some("alpine:3.22"));
         assert!(alpine.setup.is_none());
-        let macos = bind(&text, job(&[("distro", "macos")]), "dmg").unwrap();
-        assert!(macos.image.is_none() && macos.build.is_none());
+        let dmg = bind(&text, job(&[("needs", "")]), "dmg").unwrap();
+        assert!(dmg.image.is_none() && dmg.build.is_none());
     }
 
     #[test]
-    fn two_builders_for_one_job_is_an_error() {
-        let text = with_builders(
-            "builders:\n  a:\n    image: a\n    steps:\n      - run: x\n  b:\n    image: b\n    steps:\n      - run: x\n",
+    fn the_job_is_optional_with_one_job_and_required_with_several() {
+        let one = format!(
+            "{BASE}jobs:\n  build:\n    runs-on: a\n    steps:\n      - run: x\ntargets:\n  - format: rpm\n"
         );
-        let error = bind(&text, job(&[("distro", "fedora")]), "rpm").unwrap_err();
+        assert_eq!(
+            bind(&one, job(&[]), "rpm").unwrap().image.as_deref(),
+            Some("a")
+        );
+        let several = format!("{BASE}{JOBS}");
+        let error = bind(&several, job(&[("distro", "x")]), "rpm").unwrap_err();
         assert!(
-            format!("{error:#}").contains("uses 2 builders"),
+            format!("{error:#}").contains("does not say which job"),
             "{error:#}"
         );
     }
 
     #[test]
-    fn a_builder_cannot_read_the_format_or_a_step_a_key_it_is_not_split_by() {
-        for (extra, wanted) in [
-            (
-                "builders:\n  a:\n    if: format == 'rpm'\n    image: a\n    steps:\n      - run: x\n",
-                "reads format",
-            ),
-            (
-                "builders:\n  a:\n    image: a\n    steps:\n      - if: distro == 'fedora'\n        run: x\n",
-                "reads distro",
-            ),
-            (
-                "builders:\n  a:\n    image: a\n    steps:\n      - if: matrix.distro == 'fedora'\n        run: x\n",
-                "reads matrix.distro",
-            ),
+    fn a_target_that_needs_a_missing_job_is_refused_when_the_manifest_loads() {
+        let text = format!(
+            "{BASE}jobs:\n  a:\n    runs-on: a\n    steps:\n      - run: x\ntargets:\n  - format: rpm\n    needs: b\n"
+        );
+        let error = parse(&text).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("needs the job \"b\""),
+            "{error:#}"
+        );
+        let error = parse(&format!(
+            "{BASE}targets:\n  - format: rpm\n    needs: [x]\n"
+        ))
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("one job name"), "{error:#}");
+    }
+
+    #[test]
+    fn a_job_only_sees_its_own_matrix_and_a_target_takes_the_run_that_agrees() {
+        let text = format!(
+            "{BASE}jobs:\n  a:\n    runs-on: a\n    matrix:\n      arch: [amd64, arm64]\n      libc: [gnu]\n    steps:\n      - run: echo $MATRIX_LIBC $MATRIX_ARCH\n        if: matrix.libc == 'gnu'\ntargets:\n  - format: rpm\n    needs: a\n    libc: gnu\n"
+        );
+        let bound = bind(
+            &text,
+            job(&[("needs", "a"), ("arch", "arm64"), ("libc", "gnu")]),
+            "rpm",
+        )
+        .unwrap();
+        assert_eq!(
+            bound.build_env.get("MATRIX_LIBC").map(String::as_str),
+            Some("gnu")
+        );
+        assert_eq!(
+            bound.build_env.get("PKGSMITH_ARCH").map(String::as_str),
+            Some("arm64")
+        );
+        assert!(
+            bound
+                .build_env
+                .keys()
+                .all(|k| k != "MATRIX_DISTRO" && k != "MATRIX_FORMAT")
+        );
+        let missing = bind(&text, job(&[("needs", "a"), ("arch", "arm64")]), "rpm").unwrap_err();
+        assert!(
+            format!("{missing:#}").contains("no value for it"),
+            "{missing:#}"
+        );
+    }
+
+    #[test]
+    fn a_step_cannot_read_what_its_job_does_not_have() {
+        for (cond, wanted) in [
+            ("format == 'rpm'", "reads format"),
+            ("distro == 'fedora'", "reads distro"),
+            ("matrix.distro == 'fedora'", "reads matrix.distro"),
         ] {
-            let error = parse(&with_builders(extra)).unwrap_err();
-            assert!(format!("{error:#}").contains(wanted), "{extra}: {error:#}");
+            let text = format!(
+                "{BASE}jobs:\n  a:\n    runs-on: a\n    steps:\n      - if: {cond}\n        run: x\n"
+            );
+            let error = parse(&text).unwrap_err();
+            assert!(format!("{error:#}").contains(wanted), "{cond}: {error:#}");
         }
-        // The same step is fine when the builder is split by that key.
-        let text = with_builders(
-            "builders:\n  a:\n    image: a\n    by: [distro]\n    steps:\n      - if: matrix.distro == 'fedora'\n        run: x\n",
-        );
-        assert!(parse(&text).is_ok());
-    }
-
-    #[test]
-    fn by_must_name_a_matrix_key_and_setup_steps_must_come_first() {
-        let error = parse(&with_builders(
-            "builders:\n  a:\n    image: a\n    by: [distroo]\n    steps:\n      - run: x\n",
-        ))
-        .unwrap_err();
-        assert!(
-            format!("{error:#}").contains("not a matrix key"),
-            "{error:#}"
-        );
-        let error = parse(&with_builders(
-            "builders:\n  a:\n    image: a\n    steps:\n      - run: x\n      - setup: true\n        run: y\n",
-        ))
-        .unwrap_err();
-        assert!(
-            format!("{error:#}").contains("setup steps come first"),
-            "{error:#}"
-        );
     }
 
     #[test]
@@ -1073,22 +1364,36 @@ mod tests {
         let manifest = parse(&format!("{BASE}image: fedora:43\nbuild: make\n")).unwrap();
         let error = manifest.check_options(&["rpm".to_string()]).unwrap_err();
         assert!(
-            format!("{error}").contains("moved into a builder"),
+            format!("{error}").contains("a job builds the files"),
             "{error}"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_step_gets_its_env_as_literal_text_and_the_script_cannot_end_the_heredoc_early() {
+    fn env_values_stay_literal_and_the_state_files_are_data_not_shell() {
         let tricky = "it's \"quoted\" $HOME `id` $(id)";
         let text = format!(
-            "{BASE}builders:\n  a:\n    image: a\n    env:\n      GREETING: \"{}\"\n    steps:\n      - run: |\n          printf '%s' \"$GREETING\"\n          echo\n          echo PKGSMITH_END\n",
+            "{BASE}jobs:\n  a:\n    runs-on: a\n    env:\n      GREETING: \"{}\"\n    setup:\n      - run: |\n          printf 'FROM_SETUP=%s\\n' \"$GREETING\" >> \"$PKGSMITH_ENV\"\n          echo /opt/tool/bin >> \"$PKGSMITH_PATH\"\n    steps:\n      - run: |\n          printf '%s|%s|%s' \"$GREETING\" \"$FROM_SETUP\" \"$PATH\"\n          echo\n          echo PKGSMITH_END\n",
             tricky.replace('\\', "\\\\").replace('"', "\\\"")
         );
         let bound = bind(&text, Job::default(), "rpm").unwrap();
+        // Setup and build share one container in real life, so the state directory stays between them. Run both here.
+        let script = format!(
+            "{}\n{}",
+            bound.setup.as_deref().unwrap(),
+            bound.build.as_deref().unwrap()
+        );
+        let dir = tempfile::tempdir().unwrap();
         let output = std::process::Command::new("sh")
-            .args(["-ec", bound.build.as_deref().unwrap()])
+            .current_dir(dir.path())
+            .args([
+                "-ec",
+                &script.replace(
+                    "/tmp/pkgsmith-state",
+                    &format!("{}/state", dir.path().display()),
+                ),
+            ])
             .output()
             .unwrap();
         assert!(
@@ -1098,7 +1403,36 @@ mod tests {
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("==> step 1"), "{stdout}");
-        assert!(stdout.contains(tricky), "{stdout}");
+        assert!(
+            stdout.contains(&format!("{tricky}|{tricky}|/opt/tool/bin:")),
+            "{stdout}"
+        );
         assert!(stdout.contains("PKGSMITH_END"), "{stdout}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_bad_line_in_the_env_file_stops_the_step() {
+        let text = format!(
+            "{BASE}jobs:\n  a:\n    runs-on: a\n    setup:\n      - run: echo 'not valid' >> \"$PKGSMITH_ENV\"\n    steps:\n      - run: echo unreachable\n"
+        );
+        let bound = bind(&text, Job::default(), "rpm").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let script = format!(
+            "{}\n{}",
+            bound.setup.as_deref().unwrap(),
+            bound.build.as_deref().unwrap()
+        )
+        .replace(
+            "/tmp/pkgsmith-state",
+            &format!("{}/state", dir.path().display()),
+        );
+        let output = std::process::Command::new("sh")
+            .args(["-ec", &script])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("unreachable"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("not NAME=value"));
     }
 }

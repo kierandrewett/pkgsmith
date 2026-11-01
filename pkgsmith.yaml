@@ -23,31 +23,33 @@ maintainer: Kieran Drewett <kieran@drewett.dev>
 homepage: https://github.com/kierandrewett/pkgsmith
 license: MIT
 
-# Two builders. One Debian 13 build serves the rpm, deb and Arch packages: a program built against the older glibc of
-# Debian 13 runs on the newer glibc of Fedora and Arch. Alpine uses musl, so it has a builder of its own. A builder sees
-# the architecture only, so `pkgsmith plan` shows one BUILD letter per architecture and builder.
+# Two jobs build the files and five targets pack them. One Debian 13 job serves the rpm, deb and Arch packages: a program
+# built against the older glibc of Debian 13 runs on the newer glibc of Fedora and Arch. Alpine uses musl, so it has a job
+# of its own. A job runs once for each architecture, however many targets need it, so `pkgsmith plan` shows one BUILD
+# letter for the rpm, deb and Arch packages of an architecture.
 #
 # The build installs the binary and every plugin under the name pkgsmith looks for. The distro Rust is too old for the
 # dependencies, so a setup step installs a pinned one with rustup. -crt-static makes the Alpine binary a dynamic one,
 # which it must be to load plugins.
-builders:
+jobs:
   linux:
-    if: matrix.distro == 'fedora' || matrix.distro == 'debian' || matrix.distro == 'arch'
-    image: debian:13
+    runs-on: debian:13
     env:
       RUSTFLAGS: -C target-feature=-crt-static
       CARGO_TARGET_DIR: /tmp/pkgsmith-target
-    steps:
+    setup:
       - name: Install the build tools
-        setup: true
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gcc make
+      - name: Install Rust
+        run: |
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+          echo "$HOME/.cargo/bin" >> "$PKGSMITH_PATH"
+    steps:
       - &build
         name: Build and install
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
           cargo build --release --workspace --locked
           install -Dm755 /tmp/pkgsmith-target/release/pkgsmith /usr/bin/pkgsmith
           for f in /tmp/pkgsmith-target/release/libpkgsmith_plugin_*.so; do
@@ -56,60 +58,57 @@ builders:
           install -Dm644 LICENSE /usr/share/licenses/pkgsmith/LICENSE
           install -Dm644 README.md /usr/share/doc/pkgsmith/README.md
   alpine:
-    if: matrix.distro == 'alpine'
-    image: alpine:3.22
+    runs-on: alpine:3.22
     env:
       RUSTFLAGS: -C target-feature=-crt-static
       CARGO_TARGET_DIR: /tmp/pkgsmith-target
-    steps:
+    setup:
       - name: Install the build tools
-        setup: true
+        run: apk add --no-cache curl gcc make musl-dev
+      - name: Install Rust
         run: |
-          apk add --no-cache curl gcc make musl-dev
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+          echo "$HOME/.cargo/bin" >> "$PKGSMITH_PATH"
+    steps:
       - *build
 
+# Every target is crossed with the matrix, so each one is built for both architectures.
 matrix:
   arch:
     - amd64
     - arm64
-  distro:
-    - fedora
-    - debian
-    - arch
-    - alpine
-  include:
-    - format: rpm
-      distro: fedora
-    - format: deb
-      distro: debian
-    - format: archlinux
-      distro: arch
-    - format: apk
-      distro: alpine
-
-    # macOS and Windows jobs have no image, so they run no build. They package the staged files.
-    - format: msi
-      arch: amd64
-      distro: windows
-      if: env.STAGE
-    - format: nsis
-      arch: amd64
-      distro: windows
-      if: env.STAGE
-    - format: dmg
-      arch: arm64
-      distro: macos
-      if: env.STAGE
-    - format: dmg
-      arch: amd64
-      distro: macos
-      if: env.STAGE
-
-  # The archlinux image has no arm64 build.
   exclude:
+    # The archlinux image has no arm64 build.
     - distro: arch
       arch: arm64
+
+targets:
+  - format: rpm
+    distro: fedora
+    needs: linux
+  - format: deb
+    distro: debian
+    needs: linux
+  - format: archlinux
+    distro: arch
+    needs: linux
+  - format: apk
+    distro: alpine
+    needs: alpine
+
+  # The next targets need no job: they pack the files in STAGE, so they exist only when STAGE is set.
+  - format: msi
+    distro: windows
+    needs: []
+    if: env.STAGE
+  - format: nsis
+    distro: windows
+    needs: []
+    if: env.STAGE
+  - format: dmg
+    distro: macos
+    needs: []
+    if: env.STAGE
 
 contents:
   - type: tree

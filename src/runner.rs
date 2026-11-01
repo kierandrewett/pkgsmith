@@ -23,38 +23,10 @@ pub struct Runner {
     builds: Mutex<HashMap<String, Slot>>,
 }
 
-/// What a build script can read. The format is left out on purpose: a build must not depend on it, so the formats of one
-/// distro and architecture share one run. Only the architecture and the matrix keys in the `by` of the builder are
-/// exposed, so jobs of different distros that are equal in them share one run as well.
-pub fn build_env(manifest: &Manifest, job: &Job) -> BTreeMap<String, String> {
-    let mut env = BTreeMap::new();
-    env.insert("PKGSMITH_NAME".into(), manifest.name.clone());
-    env.insert("PKGSMITH_VERSION".into(), manifest.version.clone());
-    env.insert("PKGSMITH_RELEASE".into(), manifest.release.clone());
-    env.insert("PKGSMITH_ARCH".into(), manifest.arch.clone());
-    if manifest.by.iter().any(|key| key == "distro") {
-        env.insert(
-            "PKGSMITH_DISTRO".into(),
-            job.distro().unwrap_or_default().to_string(),
-        );
-    }
-    for (key, value) in &job.values {
-        let visible = key == "arch" || manifest.by.contains(key);
-        if visible && !["format", "file"].contains(&key.as_str()) {
-            let key: String = key
-                .chars()
-                .map(|c| {
-                    if c.is_ascii_alphanumeric() {
-                        c.to_ascii_uppercase()
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
-            env.insert(format!("MATRIX_{key}"), value.clone());
-        }
-    }
-    env
+/// What a build script can read: `PKGSMITH_*` and the `MATRIX_*` of the cell of its own job, never the format or the
+/// distro. That is what lets the targets of several distros share one run. `bind` fills it in.
+pub fn build_env(manifest: &Manifest, _job: &Job) -> BTreeMap<String, String> {
+    manifest.build_env.clone()
 }
 
 /// Identifies a tracked build. Jobs with the same key share one run. `None` for a manifest without an image.
@@ -168,15 +140,13 @@ mod tests {
     use super::*;
     use crate::expand::Scope;
 
-    /// The build key of every job of a two-distro, two-architecture matrix, for the given `builders:` text.
-    fn keys(builders: &str) -> Vec<String> {
+    /// The build key of every package of a manifest with the given text after the header.
+    fn keys(text: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pkg.yaml");
         std::fs::write(
             &path,
-            format!(
-                "name: demo\nversion: 1.0.0\ndescription: d\n{builders}matrix:\n  arch: [amd64, arm64]\n  distro: [fedora, debian]\n"
-            ),
+            format!("name: demo\nversion: 1.0.0\ndescription: d\n{text}"),
         )
         .unwrap();
         let manifest = Manifest::parse(&path).unwrap();
@@ -192,27 +162,34 @@ mod tests {
         keys.iter().collect::<std::collections::HashSet<_>>().len()
     }
 
+    const TARGETS: &str = "targets:\n  - {format: rpm, distro: fedora, needs: linux}\n  - {format: deb, distro: debian, needs: linux}\n  - {format: apk, distro: alpine, needs: alpine}\nmatrix:\n  arch: [amd64, arm64]\n";
+
     #[test]
-    fn jobs_of_different_distros_share_a_build_per_architecture_by_default() {
-        let keys =
-            keys("builders:\n  linux:\n    image: debian:13\n    steps:\n      - run: make\n");
-        assert_eq!(keys.len(), 4);
+    fn targets_that_need_one_job_share_a_run_per_architecture() {
+        let keys = keys(&format!(
+            "jobs:\n  linux:\n    runs-on: debian:13\n    steps:\n      - run: make\n  alpine:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\n{TARGETS}"
+        ));
+        assert_eq!(keys.len(), 6);
+        assert_eq!(distinct(&keys), 4, "linux x 2 architectures, alpine x 2");
+    }
+
+    #[test]
+    fn two_jobs_with_the_same_image_and_steps_still_share_nothing_by_name_alone() {
+        let keys = keys(&format!(
+            "jobs:\n  linux:\n    runs-on: debian:13\n    steps:\n      - run: make\n  alpine:\n    runs-on: debian:13\n    steps:\n      - run: make\n{TARGETS}"
+        ));
+        assert_eq!(
+            distinct(&keys),
+            2,
+            "equal image and steps are one build whatever the job is called"
+        );
+    }
+
+    #[test]
+    fn a_job_with_its_own_matrix_makes_a_run_per_cell() {
+        let keys = keys(
+            "jobs:\n  linux:\n    runs-on: debian:13\n    matrix:\n      libc: [gnu, musl]\n    steps:\n      - run: make $MATRIX_LIBC\ntargets:\n  - {format: rpm, needs: linux, libc: gnu}\n  - {format: apk, needs: linux, libc: musl}\n",
+        );
         assert_eq!(distinct(&keys), 2);
-    }
-
-    #[test]
-    fn a_builder_that_is_split_by_distro_builds_once_per_distro() {
-        let keys = keys(
-            "builders:\n  linux:\n    image: debian:13\n    by: [distro]\n    steps:\n      - run: make\n",
-        );
-        assert_eq!(distinct(&keys), 4);
-    }
-
-    #[test]
-    fn two_builders_that_pick_different_jobs_make_two_builds() {
-        let keys = keys(
-            "builders:\n  a:\n    if: distro == 'fedora'\n    image: fedora:43\n    steps:\n      - run: make\n  b:\n    if: distro != 'fedora'\n    image: debian:13\n    steps:\n      - run: make\n",
-        );
-        assert_eq!(distinct(&keys), 4);
     }
 }

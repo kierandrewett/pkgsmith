@@ -1,15 +1,15 @@
-# The smallest manifest that builds something: one image, one setup, one build.
+# The smallest manifest that builds something: one job with one setup step and one build step.
 #   pkgsmith build examples/hello.yaml     (the folder of the manifest is the build context)
 name: hello
 version: 1.0.0
 description: A small program
-builders:
-  main:
-    image: fedora:43
-    steps:
+jobs:
+  build:
+    runs-on: fedora:43
+    setup:
       - name: Install the build tools
-        setup: true
         run: dnf -y install gcc make
+    steps:
       - name: Build
         run: |
           make

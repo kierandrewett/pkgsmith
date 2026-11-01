@@ -1,25 +1,36 @@
-# One manifest, two architectures. `--platform linux/arm64` builds only the arm64 job. The arm64 container needs
+# One manifest, two architectures. `--platform linux/arm64` builds only the arm64 package. The arm64 container needs
 # qemu-user binfmt on an x86_64 host (for example the qemu-user-static package).
 #   pkgsmith plan  examples/multi-arch.yaml
 #   pkgsmith build examples/multi-arch.yaml --platform linux/arm64
 name: acme-tool
 version: 1.0.0
 description: A tool for two architectures
-builders:
-  main:
-    image: debian:13
-    by: [triple]
-    steps:
+
+# The job has a matrix of its own. Each value of `triple` is a variable for the steps, as $MATRIX_TRIPLE.
+jobs:
+  build:
+    runs-on: debian:13
+    matrix:
+      arch:
+        - amd64
+        - arm64
+      include:
+        - arch: amd64
+          triple: x86_64-linux-gnu
+        - arch: arm64
+          triple: aarch64-linux-gnu
+    setup:
       - name: Install the build tools
-        setup: true
         run: apt-get update -qq && apt-get install -y gcc make
+    steps:
       - name: Build
         run: |
           echo "building for $PKGSMITH_ARCH ($MATRIX_TRIPLE)"
           make
           make install PREFIX=/usr
+
+# A package for each architecture. It takes the run of the job that has the same architecture.
 matrix:
-  arch: [amd64, arm64]
-  include:
-    - { arch: amd64, triple: x86_64-linux-gnu }
-    - { arch: arm64, triple: aarch64-linux-gnu }
+  arch:
+    - amd64
+    - arm64

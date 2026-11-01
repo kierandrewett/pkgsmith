@@ -3,13 +3,13 @@
 name: acme-tool
 version: 1.0.0
 description: A tool
-builders:
-  main:
-    image: debian:13
-    steps:
+jobs:
+  build:
+    runs-on: debian:13
+    setup:
       - name: Install the build tools
-        setup: true
         run: apt-get update -qq && apt-get install -y gcc make
+    steps:
       - name: Build
         run: |
           make

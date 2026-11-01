@@ -4,7 +4,7 @@ A manifest is one YAML file for one package. The default name is `pkgsmith.yaml`
 know, so a typo is an error and not a silent no-op.
 
 Text values accept `${NAME}` variables and `${{ expression }}` expressions. See
-[matrix and expressions](matrix-and-expressions.md). [Scripts](scripts.md) and the `run` text of builder steps take
+[matrix and expressions](matrix-and-expressions.md). [Scripts](scripts.md) and the `run` text of job steps take
 expressions only, because `${HOME}` in a script belongs to the shell.
 
 ## Package
@@ -24,25 +24,26 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 
 ## Build
 
-| Key        | Type | Meaning                                                                                  |
-| ---------- | ---- | ---------------------------------------------------------------------------------------- |
-| `builders` | map  | The containers that build the files. See [build environment](build-environment.md)      |
-| `matrix`   | map  | Axes, `include` and `exclude`. See [matrix and expressions](matrix-and-expressions.md)  |
-| `include`  | list | Manifests to merge underneath this one. See [including other files](#including-other-files) |
+| Key       | Type | Meaning                                                                                  |
+| --------- | ---- | ---------------------------------------------------------------------------------------- |
+| `jobs`    | map  | The jobs that build the files. See [build environment](build-environment.md)             |
+| `targets` | list | The packages to make: a distro, formats and the job that builds the files                |
+| `matrix`  | map  | What varies for every target, such as `arch`. See [matrix and expressions](matrix-and-expressions.md) |
+| `include` | list | Manifests to merge underneath this one. See [including other files](#including-other-files) |
 
-Each builder has these keys:
+Each job has these keys:
 
-| Key       | Type   | Meaning                                                                    |
-| --------- | ------ | -------------------------------------------------------------------------- |
-| `image`   | text   | The container image. Required                                              |
-| `steps`   | list   | The scripts that run in it, in order. Required                             |
-| `if`      | text   | An expression that picks the jobs that use the builder                     |
-| `by`      | list   | Matrix keys the steps may read. Each value makes its own run               |
-| `env`     | map    | Variables for every step                                                   |
-| `exclude` | list   | Paths the package leaves out, such as `/usr/share/doc/**`                  |
+| Key        | Type   | Meaning                                                                  |
+| ---------- | ------ | ------------------------------------------------------------------------ |
+| `runs-on`  | text   | The container image. Required                                            |
+| `steps`    | list   | The scripts that make the files, in order. Required                      |
+| `setup`    | list   | Scripts that prepare the image first. Cached                             |
+| `matrix`   | map    | The variants of the job, such as `arch`                                  |
+| `env`      | map    | Variables for every step                                                 |
+| `exclude`  | list   | Paths the package leaves out, such as `/usr/share/doc/**`                |
 
-A job that uses no builder does not run anything. It packages the files that `contents` names, read from the folder of
-the manifest.
+A target that has `needs: []` runs nothing. It packages the files that `contents` names, read from the folder of the
+manifest.
 
 ## Files
 
@@ -148,34 +149,38 @@ maintainer: Kieran Drewett <kieran@drewett.dev>
 homepage: https://github.com/kierandrewett/bingux
 license: GPL-3.0-or-later
 
+targets:
+  - format: rpm
+    distro: fedora
+    needs: fedora
+  - format: deb
+    distro: debian
+    needs: debian
 matrix:
-  distro: [fedora, debian]
-  arch: [amd64, arm64]
-  include:
-    - { distro: fedora, format: rpm }
-    - { distro: debian, format: deb }
+  arch:
+    - amd64
+    - arm64
 
-builders:
+jobs:
   fedora:
-    if: distro == 'fedora'
-    image: fedora:43
-    exclude: [/usr/share/doc/**]
+    runs-on: fedora:43
+    exclude:
+      - /usr/share/doc/**
+    setup:
+      - run: dnf -y install cargo
     steps:
-      - setup: true
-        run: dnf -y install cargo
-      - run: |
+      - &build
+        run: |
           cargo build --release --manifest-path crates/config/Cargo.toml
           install -Dm755 target/release/bingux-config /usr/bin/bingux-config
   debian:
-    if: distro == 'debian'
-    image: debian:13
-    exclude: [/usr/share/doc/**]
+    runs-on: debian:13
+    exclude:
+      - /usr/share/doc/**
+    setup:
+      - run: apt-get update -qq && apt-get install -y cargo
     steps:
-      - setup: true
-        run: apt-get update -qq && apt-get install -y cargo
-      - run: |
-          cargo build --release --manifest-path crates/config/Cargo.toml
-          install -Dm755 target/release/bingux-config /usr/bin/bingux-config
+      - *build
 
 depends: [glibc]
 overrides:

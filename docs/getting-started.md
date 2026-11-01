@@ -44,51 +44,51 @@ description: A demo that packages a small C program
 maintainer: Your Name <you@example.com>
 license: MIT
 
-matrix:
-  include:
-    - format: rpm
-      distro: fedora
-    - format: deb
-      distro: debian
-    - format: archlinux
-      distro: arch
-    - format: apk
-      distro: alpine
+targets:
+  - format: rpm
+    distro: fedora
+    needs: fedora
+  - format: deb
+    distro: debian
+    needs: debian
+  - format: archlinux
+    distro: arch
+    needs: arch
+  - format: apk
+    distro: alpine
+    needs: alpine
 
-builders:
+jobs:
   fedora:
-    if: distro == 'fedora'
-    image: fedora:43
+    runs-on: fedora:43
+    setup:
+      - run: dnf -y install gcc make
     steps:
-      - setup: true
-        run: dnf -y install gcc make
-      - run: make && make install PREFIX=/usr
+      - &build
+        run: make && make install PREFIX=/usr
   debian:
-    if: distro == 'debian'
-    image: debian:13
+    runs-on: debian:13
+    setup:
+      - run: apt-get update -qq && apt-get install -y gcc make
     steps:
-      - setup: true
-        run: apt-get update -qq && apt-get install -y gcc make
-      - run: make && make install PREFIX=/usr
+      - *build
   arch:
-    if: distro == 'arch'
-    image: archlinux:base
+    runs-on: archlinux:base
+    setup:
+      - run: pacman -Sy --noconfirm gcc make
     steps:
-      - setup: true
-        run: pacman -Sy --noconfirm gcc make
-      - run: make && make install PREFIX=/usr
+      - *build
   alpine:
-    if: distro == 'alpine'
-    image: alpine:3.22
+    runs-on: alpine:3.22
+    setup:
+      - run: apk add --no-cache gcc make musl-dev
     steps:
-      - setup: true
-        run: apk add --no-cache gcc make musl-dev
-      - run: make && make install PREFIX=/usr
+      - *build
 ```
 
-Each `matrix` entry is one package. It names the format and the distro. The `builders` say which image each distro builds
-in, the setup steps that image needs, and the build steps. A builder is picked by its `if`. When two distros can use one
-builder, they share one build: see [build environment](build-environment.md#one-build-for-several-distros).
+Each target is one package. It names the format, the distro, and the job that builds its files. A job names the image to
+build in, the `setup` steps that image needs, and the build `steps`. Targets that need one job share one build: see
+[build environment](build-environment.md#one-build-many-packages).
 
 ## Plan
 

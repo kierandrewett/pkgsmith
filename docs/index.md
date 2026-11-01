@@ -10,17 +10,15 @@ container for each distro, finds the files the build installed, and writes the p
 name: hello
 version: 1.0.0
 description: A small program
-matrix:
-  include:
-    - format: rpm
-      distro: fedora
-builders:
+targets:
+  - format: rpm
+    distro: fedora
+jobs:
   fedora:
-    if: distro == 'fedora'
-    image: fedora:43
+    runs-on: fedora:43
+    setup:
+      - run: dnf -y install gcc make
     steps:
-      - setup: true
-        run: dnf -y install gcc make
       - run: make && make install PREFIX=/usr
 ```
 
@@ -39,21 +37,21 @@ information in one place.
 
 | You write                                 | pkgsmith does                                                              |
 | ----------------------------------------- | -------------------------------------------------------------------------- |
-| A `builder` for each build environment: an `image` and its `steps` | Runs them in a container and tracks which files the build installed |
+| A `job` for each build environment: a `runs-on` image and its `steps` | Runs them in a container and tracks which files the build installed |
 | `name`, `version`, `depends`, `scripts`   | Writes them in the way each format wants them                              |
 | A `matrix` of distros, architectures, formats | Builds every combination, side by side, with `-j`                      |
 
 ## How it works
 
 1. **Read.** pkgsmith reads the manifest and expands the matrix into jobs, like a GitHub Actions workflow.
-2. **Set up.** For a job that uses a builder, it runs the setup steps in a container once and keeps the result as an
+2. **Set up.** For a target that needs a job, it runs the `setup` steps in a container once and keeps the result as an
    image. The next run starts from that image.
-3. **Build.** It runs the other steps on top of that image. The source folder is mounted at `/src` as a
+3. **Build.** It runs the `steps` on top of that image. The source folder is mounted at `/src` as a
    throw-away overlay, so the build can write there without changing your checkout.
 4. **Track.** The container's changes against its image are the files the build installed. pkgsmith exports them.
 5. **Package.** pkgsmith sends the file list and the metadata to the plugin that writes the format.
 
-Jobs that use the same builder run its steps once, even when you ask for five formats or several distros.
+Targets that need the same job run its steps once, even when you ask for five formats or several distros.
 
 ## Formats are plugins
 
@@ -71,7 +69,7 @@ The plugins in this repository write:
 - [Getting started](getting-started.md): build a package from scratch.
 - [Manifest reference](manifest.md): every key.
 - [Contents](contents.md): choose the files yourself.
-- [Build environment](build-environment.md): builders, steps, tracking, caching.
+- [Build environment](build-environment.md): jobs, steps, tracking, caching.
 - [Matrix and expressions](matrix-and-expressions.md): one manifest for many distros and architectures.
 - [Versions](versions.md), [install scripts](scripts.md) and [dependencies](dependencies.md).
 - [Plugins](plugins.md): where pkgsmith looks for them, and how to write one.
