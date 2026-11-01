@@ -88,6 +88,11 @@ jobs:
           cp target/release/pkgsmith LICENSE README.md "$name/"
           cp prefix/usr/lib/pkgsmith/plugins/* "$name/plugins/"
           tar -czf "dist/$name.tar.gz" "$name"
+          # A user unpacks the tarball anywhere and runs it there. It must find the plugins folder next to it.
+          unpacked="$(mktemp -d)"
+          tar -xzf "dist/$name.tar.gz" -C "$unpacked"
+          (cd "$unpacked/$name" && ./pkgsmith plugins | tee "$unpacked/plugins.txt")
+          grep -q 'rpm' "$unpacked/plugins.txt"
           ls -l dist
 
       - uses: actions/upload-artifact@v4
