@@ -14,6 +14,7 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 | `name`        | text   | required | Package name. Lowercase letters, digits and `+ - . _`. Starts with a letter or digit     |
 | `version`     | text   | required | `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-prerelease`. See [versions](versions.md)       |
 | `release`     | text   | `1`      | Package revision for one version. Reset it to `1` when the version changes               |
+| `build_axes`  | list   | none     | The matrix keys the build uses. It sees only these, so jobs equal in them share it. See [build environment](build-environment.md#one-build-for-several-distros) |
 | `epoch`       | number | `0`      | Makes the version newer than every version with a lower epoch. `0` leaves it out. See [versions](versions.md#epoch) |
 | `arch`        | text   | `amd64`  | `amd64`, `arm64` or `all` for packages without compiled code. A matrix `arch` overrides it |
 | `description` | text   | required | The first line is the summary. The rest is the long text                                 |

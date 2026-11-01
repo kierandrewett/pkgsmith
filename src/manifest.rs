@@ -204,6 +204,9 @@ pub struct Manifest {
     /// `amd64`, `arm64` or `all` (no compiled code).
     #[serde(default = "amd64")]
     pub arch: String,
+    /// The matrix keys that `setup` and `build` may depend on. When set, a build sees only these matrix values, and no
+    /// `PKGSMITH_DISTRO`, so jobs that are equal in them share one build. Unset, a build sees every matrix value.
+    pub build_axes: Option<Vec<String>>,
     pub description: String,
     /// Defaults for `${NAME}` and `${{ env.NAME }}`. The process environment and `--set` win.
     #[serde(default)]

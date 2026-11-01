@@ -117,6 +117,25 @@ Two jobs share a build when they have the same image, setup, build script, `excl
 build environment. Formats are not part of that. A matrix with `deb`, `tar` and `rpm` jobs on one image runs the build
 once and packages the result three times.
 
+### One build for several distros
+
+A build sees every matrix value, `distro` included, so jobs of different distros are different builds even when they
+use one image. When the build does not depend on the distro, list what it does depend on in `build_axes`:
+
+```yaml
+build_axes: [arch]
+image: debian:13
+matrix:
+  arch: [amd64, arm64]
+  distro: [fedora, debian, arch]
+```
+
+The build then sees only the matrix values in `build_axes`, and no `PKGSMITH_DISTRO`. The jobs of the three distros
+share one build per architecture, and each distro only packages it. `pkgsmith plan` shows this as one `BUILD` letter.
+
+A program built on one distro runs on distros with the same or a newer glibc. Build on the one with the oldest glibc,
+and test the packages on the others. The architecture always counts, because the build environment holds it.
+
 ## Concurrency
 
 `-j N` runs up to `N` jobs at the same time. Each distro and architecture is a lane in the progress output. Jobs that wait for a shared build do not use a slot of their own.

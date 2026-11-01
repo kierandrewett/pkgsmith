@@ -111,7 +111,8 @@ jobs:
             cp "$f" "$name/plugins/pkgsmith-plugin-$base"
           done
           tar -czf "dist/$name.tar.gz" "$name"
-          tar -tzf "dist/$name.tar.gz" | head -30
+          # sed reads all of the listing. head would close the pipe early and pipefail turns the SIGPIPE of tar into exit 141.
+          tar -tzf "dist/$name.tar.gz" | sed -n "1,40p"
       - name: Windows Installer package of pkgsmith, built by pkgsmith
         if: runner.os == 'Windows'
         run: |

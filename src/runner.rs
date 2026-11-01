@@ -24,19 +24,26 @@ pub struct Runner {
 }
 
 /// What a build script can read. The format is left out on purpose: a build must not depend on it, so the formats of one
-/// distro and architecture share one run.
+/// distro and architecture share one run. With `build_axes`, only those matrix values are exposed, so jobs of different
+/// distros that are equal in them share one run as well.
 pub fn build_env(manifest: &Manifest, job: &Job) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert("PKGSMITH_NAME".into(), manifest.name.clone());
     env.insert("PKGSMITH_VERSION".into(), manifest.version.clone());
     env.insert("PKGSMITH_RELEASE".into(), manifest.release.clone());
     env.insert("PKGSMITH_ARCH".into(), manifest.arch.clone());
-    env.insert(
-        "PKGSMITH_DISTRO".into(),
-        job.distro().unwrap_or_default().to_string(),
-    );
+    if manifest.build_axes.is_none() {
+        env.insert(
+            "PKGSMITH_DISTRO".into(),
+            job.distro().unwrap_or_default().to_string(),
+        );
+    }
     for (key, value) in &job.values {
-        if !["format", "setup", "build", "file"].contains(&key.as_str()) {
+        let visible = match &manifest.build_axes {
+            Some(axes) => axes.iter().any(|axis| axis == key),
+            None => true,
+        };
+        if visible && !["format", "setup", "build", "file"].contains(&key.as_str()) {
             let key: String = key
                 .chars()
                 .map(|c| {
@@ -156,5 +163,49 @@ impl Runner {
         })
         .clone()
         .map_err(|error| anyhow!("{error}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::expand::Scope;
+
+    fn keys(extra: &str) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pkg.yaml");
+        std::fs::write(
+            &path,
+            format!(
+                "name: demo\nversion: 1.0.0\ndescription: d\nimage: debian:13\nbuild: make\n{extra}matrix:\n  arch: [amd64, arm64]\n  distro: [fedora, debian]\n"
+            ),
+        )
+        .unwrap();
+        let manifest = Manifest::parse(&path).unwrap();
+        let mut keys = Vec::new();
+        for job in manifest.jobs() {
+            let bound = manifest.bind(&Scope::default(), &job, "rpm").unwrap();
+            keys.push(build_key(&bound, &job).unwrap());
+        }
+        keys
+    }
+
+    #[test]
+    fn a_build_sees_every_matrix_value_by_default_so_each_distro_builds_alone() {
+        let keys = keys("");
+        assert_eq!(keys.len(), 4);
+        assert_eq!(
+            keys.iter().collect::<std::collections::HashSet<_>>().len(),
+            4
+        );
+    }
+
+    #[test]
+    fn build_axes_lets_jobs_of_different_distros_share_a_build_but_never_architectures() {
+        let keys = keys("build_axes: [arch]\n");
+        assert_eq!(
+            keys.iter().collect::<std::collections::HashSet<_>>().len(),
+            2
+        );
     }
 }

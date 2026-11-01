@@ -38,6 +38,18 @@ build: |
   install -Dm644 LICENSE /usr/share/licenses/pkgsmith/LICENSE
   install -Dm644 README.md /usr/share/doc/pkgsmith/README.md
 
+# One build serves the rpm, deb and Arch packages. A program built against the older glibc of Debian 13 runs on the
+# newer glibc of Fedora and Arch. Alpine uses musl, so it needs a build of its own. The build depends on the
+# architecture only, so build_axes hides the distro from it, and `pkgsmith plan` shows one BUILD letter per
+# architecture and image.
+build_axes:
+  - arch
+image: debian:13
+setup: |
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gcc make
+  curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+
 matrix:
   arch:
     - amd64
@@ -50,23 +62,10 @@ matrix:
   include:
     - format: rpm
       distro: fedora
-      image: fedora:43
-      setup: |
-        dnf -y install curl gcc make
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
     - format: deb
       distro: debian
-      image: debian:13
-      setup: |
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gcc make
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
     - format: archlinux
       distro: arch
-      image: archlinux:base
-      setup: |
-        pacman -Sy --noconfirm curl gcc make
-        curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
     - format: apk
       distro: alpine
       image: alpine:3.22
