@@ -314,29 +314,112 @@ STAR
         find ex -type f -name "$long" | grep -q .'
 fi
 if selected nix; then
-    mkdir -p pre-nix/usr/bin pre-nix/usr/share/doc/hi
+    # A program linked against glibc and zlib in the usual places, as a distro build leaves it. Nix must patch it.
+    mkdir -p pre-nix/usr/bin pre-nix/usr/share/doc/hi pre-nix/usr/lib/systemd/system pre-nix/etc
+    printf '#include <stdio.h>\n#include <zlib.h>\nint main(void){puts(zlibVersion()[0] ? "hi-from-zlib" : "no");return 0;}\n' > hiz.c
+    podman run --rm $PULL -v "$PWD:/w:z" -w /w "$IMAGE_DEBIAN" sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null && apt-get install -y -qq gcc libc6-dev zlib1g-dev >/dev/null && cc -O2 -o pre-nix/usr/bin/hiz hiz.c -lz' >>"$LOG" 2>&1 \
+        || echo "could not build the dynamic test program; the nix checks will fail" >&2
     printf '#!/bin/sh\necho hi-from-nix\n' > pre-nix/usr/bin/hi
     chmod 755 pre-nix/usr/bin/hi
     printf 'readme\n' > pre-nix/usr/share/doc/hi/README
+    printf '[Service]\nExecStart=/usr/bin/hi\n' > pre-nix/usr/lib/systemd/system/hi.service
+    printf 'greeting=hi\n' > pre-nix/etc/hi.conf
     ln -s hi pre-nix/usr/bin/hello
     cat > lang-nix.star <<'STAR'
-package("nix", name = "hi", version = "1.0.0", description = "Says hi", homepage = "https://example.org/hi", license = "MIT", options = {"compression": "gzip"})
+# The nixos/nix image has no xz, so the flake archive is gzip. The NARs of the cache are xz, which Nix reads itself.
+package("nix", name = "hi", version = "1.0.0", description = "Says hi", homepage = "https://example.org/hi", license = "MIT OR Apache-2.0",
+        options = {"compression": "gzip", "inputs": ["zlib"], "main_program": "hi"})
+package("nix-cache", name = "hi", version = "1.0.0", description = "Says hi", license = "MIT")
+package("nix-export", name = "hi", version = "1.0.0", description = "Says hi", license = "MIT")
 STAR
-    check "nix: build" build_lang nix
-    # The nixos/nix image has no xz, so the archive is gzip. Needs network for nixpkgs.
-    check "nix: nix-build, and the flake from the archive address (latest nixos/nix)" in_image "$IMAGE_NIX" out-nix '
+    check "nix: build the flake, the cache and the export" "$PKGSMITH" build . -f lang-nix.star --prefix pre-nix -F nix,nix-cache,nix-export -o out-nix --progress plain
+    # Needs network for nixpkgs. The first check writes the flake into a store, so it also proves that the files build.
+    check "nix: the flake builds, patches the program, runs, nix run, nix flake check, nix-build (latest nixos/nix)" in_image "$IMAGE_NIX" out-nix '
+        export NIX_CONFIG="experimental-features = nix-command flakes"
         cd /tmp && tar -xzf /p/hi-1.0.0-amd64.nix.tar.gz && cd hi-1.0.0
-        nix-channel --update >/dev/null 2>&1
-        out=$(nix-build --no-out-link 2>/dev/null | tail -1)
+        test -f flake.nix -a -f package.nix -a -f default.nix -a -f files/bin/hi
+        out=$(nix build --no-write-lock-file --no-link --print-out-paths . 2>/dev/null | tail -1)
         "$out/bin/hi" | grep -q hi-from-nix; "$out/bin/hello" | grep -q hi-from-nix; test -x "$out/bin/hi"; grep -q readme "$out/share/doc/hi/README"
-        export NIX_CONFIG="experimental-features = nix-command flakes"; cd /tmp
+        # The compiled program runs only because autoPatchelfHook gave it the interpreter and the zlib of nixpkgs.
+        "$out/bin/hiz" | grep -q hi-from-zlib
+        nix shell nixpkgs#patchelf -c patchelf --print-interpreter "$out/bin/hiz" | grep -q "^/nix/store/"
+        # The unit names the store path, not /usr.
+        grep -q "ExecStart=$out/bin/hi" "$out/lib/systemd/system/hi.service"
+        test "$(cat "$out/etc/hi.conf")" = greeting=hi
+        nix run --no-write-lock-file . | grep -q hi-from-nix
+        nix flake check --no-write-lock-file . >/dev/null 2>&1
+        nix eval --no-write-lock-file --raw .#hi.meta.mainProgram | grep -qx hi
+        nix eval --no-write-lock-file --json .#hi.meta.license | grep -q Apache
+        nix-channel --update >/dev/null 2>&1
+        old=$(nix-build --no-out-link 2>/dev/null | tail -1); "$old/bin/hiz" | grep -q hi-from-zlib
+        cd /tmp
         flake=$(nix build --no-write-lock-file --no-link --print-out-paths "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz" 2>/dev/null | tail -1)
         test "$flake" = "$out"
         nix profile install --no-write-lock-file "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz#hi" >/dev/null 2>&1
         /root/.nix-profile/bin/hi | grep -q hi-from-nix
-        nix profile list 2>/dev/null | grep -q "packages.x86_64-linux.hi"
         nix profile remove hi >/dev/null 2>&1
         test ! -e /root/.nix-profile/bin/hi'
+    check "nix-cache: nix copy --from file:// accepts the store path without a signature, and the files run (latest nixos/nix)" in_image "$IMAGE_NIX" out-nix '
+        export NIX_CONFIG="experimental-features = nix-command flakes"
+        mkdir /cache && tar -xf /p/hi-1.0.0-amd64.nixcache.tar -C /cache
+        grep -q "^StoreDir: /nix/store" /cache/nix-cache-info
+        path=$(grep "^StorePath: " /cache/*.narinfo | cut -d" " -f2)
+        grep -q "^CA: fixed:r:sha256:" /cache/*.narinfo
+        nix copy --from file:///cache "$path"
+        "$path/bin/hi" | grep -q hi-from-nix; test -x "$path/bin/hi"; test -L "$path/bin/hello"
+        nix store verify "$path" >/dev/null
+        nix path-info --json "$path" | grep -q "\"ca\":\"fixed:r:sha256:"
+        # A path that the cache does not hold is refused.
+        if nix copy --from file:///cache /nix/store/00000000000000000000000000000000-hi-1.0.0 2>/dev/null; then exit 1; fi
+        # A binary cache is also a substituter: delete the path, then build it from the cache.
+        nix-store --delete "$path" >/dev/null
+        test ! -e "$path"
+        nix build --no-link --substituters file:///cache "$path" >/dev/null 2>&1
+        test -x "$path/bin/hi"'
+    # The store path of a cache is computed from the NAR. A narinfo that claims another digest must be refused.
+    nix_wrong_digest() {
+        rm -rf bad && mkdir bad && tar -xf out-nix/hi-1.0.0-amd64.nixcache.tar -C bad || return 1
+        local info digest last wrong
+        info=$(ls bad/*.narinfo); digest=$(basename "$info" .narinfo)
+        last="${digest: -1}"; wrong="${digest%?}$([ "$last" = 0 ] && echo 1 || echo 0)"
+        mv "$info" "bad/$wrong.narinfo"; sed -i "s|/nix/store/$digest-|/nix/store/$wrong-|" "bad/$wrong.narinfo"
+        if podman run --rm $PULL -v "$PWD/bad:/bad:ro,z" "$IMAGE_NIX" sh -c "export NIX_CONFIG='experimental-features = nix-command'; nix copy --from file:///bad /nix/store/$wrong-hi-1.0.0"; then
+            echo "nix accepted a store path with a wrong digest"; return 1
+        fi
+    }
+    check "nix-cache: a narinfo with a wrong digest is refused (latest nixos/nix)" nix_wrong_digest
+    check "nix-export: nix-store --import, then the files run (latest nixos/nix)" in_image "$IMAGE_NIX" out-nix '
+        path=$(nix-store --import < /p/hi-1.0.0-amd64.nixexport | tail -1)
+        case "$path" in /nix/store/*-hi-1.0.0) ;; *) exit 1;; esac
+        "$path/bin/hi" | grep -q hi-from-nix
+        test "$(nix-store --query --references "$path" | wc -l)" -eq 0
+        nix-store --verify-path "$path"'
+
+    # A closure: three store objects, and the third names the other two.
+    rm -rf pre-nixa pre-nixb pre-nixc out-nixrefs; mkdir -p pre-nixa/usr/lib pre-nixb/usr/lib pre-nixc/usr/bin
+    printf 'a\n' > pre-nixa/usr/lib/a.txt; printf 'b\n' > pre-nixb/usr/lib/b.txt
+    printf 'package("nix-cache", name = "ra", version = "1.0.0", description = "a")\n' > lang-nixa.star
+    printf 'package("nix-cache", name = "rb", version = "1.0.0", description = "b")\n' > lang-nixb.star
+    "$PKGSMITH" build . -f lang-nixa.star --prefix pre-nixa -o out-nixrefs --progress plain >>"$LOG" 2>&1
+    "$PKGSMITH" build . -f lang-nixb.star --prefix pre-nixb -o out-nixrefs --progress plain >>"$LOG" 2>&1
+    store_path() { tar -xOf "$1" --wildcards '*.narinfo' | grep '^StorePath: ' | cut -d' ' -f2; }
+    pa=$(store_path out-nixrefs/ra-1.0.0-amd64.nixcache.tar); pb=$(store_path out-nixrefs/rb-1.0.0-amd64.nixcache.tar)
+    printf '#!/bin/sh\ncat %s/lib/a.txt %s/lib/b.txt\n' "$pa" "$pb" > pre-nixc/usr/bin/rc; chmod 755 pre-nixc/usr/bin/rc
+    cat > lang-nixc.star <<'STAR'
+package("nix-cache", name = "rc", version = "1.0.0", description = "c")
+STAR
+    nix_refs_build() {
+        "$PKGSMITH" build . -f lang-nixc.star --prefix pre-nixc -o out-nixrefs --progress plain >/dev/null || return 1
+        test "$(tar -xOf out-nixrefs/rc-1.0.0-amd64.nixcache.tar --wildcards '*.narinfo' | grep '^References: ' | wc -w)" -eq 3
+    }
+    check "nix-cache: the files name two store paths, so they become references" nix_refs_build
+    check "nix-cache: nix copy takes the object and both references, in a store that has none of them (latest nixos/nix)" in_image "$IMAGE_NIX" out-nixrefs '
+        export NIX_CONFIG="experimental-features = nix-command flakes"
+        mkdir /cache; for t in /p/*.tar; do tar -xf "$t" -C /cache; done
+        c=$(grep -h "^StorePath: .*-rc-1.0.0" /cache/*.narinfo | cut -d" " -f2)
+        nix copy --from file:///cache "$c"
+        test "$(nix-store --query --requisites "$c" | wc -l)" -eq 3
+        "$c/bin/rc" | grep -c "^[ab]$" | grep -qx 2'
 fi
 if selected msi; then
     rm -rf pre-msi; mkdir -p "pre-msi/usr/share/hi docs" pre-msi/usr/bin pre-msi/usr/lib/empty

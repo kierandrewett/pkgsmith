@@ -35,6 +35,9 @@ fn known() -> Vec<String> {
         "dmg",
         "msi",
         "nsis",
+        "nix",
+        "nix-cache",
+        "nix-export",
     ]
     .map(String::from)
     .to_vec()
