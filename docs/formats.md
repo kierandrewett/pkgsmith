@@ -42,6 +42,7 @@ that pkgsmith reads files from. See [the prefix](prefix.md) for that.
 | `msi`       | `.msi`                           | Windows                              | `msitools` read and extract, not Windows |
 | `nsis`      | `.exe`                           | Windows                              | `makensis`, run under Wine, not native Windows |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
+| `appx`      | `.appx`                          | Windows 10 1607 and later            | `makemsix` unpack and pack, block hashes, not Windows |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
 | `zip`       | `.zip`                           | Any system                           | `unzip`                             |
@@ -522,6 +523,37 @@ it with a certificate whose subject equals `publisher`, for example with `signto
 
 Checked with `makemsix unpack` and `makemsix pack`, which validates the manifest schema, and with a script that hashes
 every block and compares it with the block map. Not checked: installing on Windows, signing, and a real Windows program.
+
+## appx
+
+An `.appx` is the older name of the same container as an `.msix`: a zip with an `AppxManifest.xml`, a block map and the
+files below `VFS/ProgramFilesX64/<name>`. pkgsmith writes both with one writer, so everything in [msix](#msix) applies
+to `appx` too: the options, the rules for `name`, `version` and `arch`, the warnings, and the need to sign the package
+before Windows installs it. The `appx` plugin sets `options` in the same way as `msix`.
+
+Two things differ from `msix`:
+
+- The file ends in `.appx`, for example `hello_1.2.3.1_x64.appx`.
+- `min_windows` defaults to `10.0.14393.0` (Windows 10 1607, the Anniversary Update), the first Windows 10 version that
+  runs a desktop program from a package. An `msix` defaults to `10.0.17763.0`. Set `min_windows` to change either.
+
+Use `appx` when a tool or a Windows version needs the `.appx` extension. Use `msix` for Windows 10 1809 and later.
+
+```python
+package(
+    "appx", name = "hello", version = "1.2.3", arch = "amd64", description = "Says hi",
+    options = {
+        "executable": "/usr/bin/hello.exe",
+        "logo": "/usr/share/hello/logo.png",
+        "publisher": "CN=Example Ltd",
+    },
+)
+```
+
+Checked like `msix`: `makemsix unpack` gives back every file unchanged, `makemsix pack` accepts the unpacked folder, and a
+script hashes every block and compares it with the block map. Not checked: installing on Windows, signing, and a real
+Windows program. Windows 10 1607 itself was not tried, so `10.0.14393.0` comes from Microsoft's documentation and not
+from a run.
 
 ## freebsd
 

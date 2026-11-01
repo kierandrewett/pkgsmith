@@ -36,6 +36,7 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `msi`       | `.msi`                           | Windows                    |
 | `nsis`      | `.exe`                           | Windows                    |
 | `msix`      | `.msix`                          | Windows 10 and 11          |
+| `appx`      | `.appx`                          | Windows 10 1607 and later  |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                 |
 | `zip`       | `.zip`                           | Any system                 |
 

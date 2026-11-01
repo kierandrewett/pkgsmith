@@ -2590,6 +2590,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-appx"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "pkgsmith-windows-app",
+]
+
+[[package]]
 name = "pkgsmith-plugin-arch"
 version = "0.1.1"
 dependencies = [
@@ -2676,11 +2685,8 @@ name = "pkgsmith-plugin-msix"
 version = "0.1.1"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
- "flate2",
  "pkgsmith-plugin",
- "serde",
- "sha2 0.11.1",
+ "pkgsmith-windows-app",
 ]
 
 [[package]]
@@ -2838,6 +2844,18 @@ dependencies = [
  "pkgsmith-plugin",
  "serde",
  "zip",
+]
+
+[[package]]
+name = "pkgsmith-windows-app"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "flate2",
+ "pkgsmith-plugin",
+ "serde",
+ "sha2 0.11.1",
 ]
 
 [[package]]

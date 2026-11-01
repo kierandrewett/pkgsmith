@@ -463,6 +463,73 @@ STAR
         cmp ex/hi/share/empty.txt /p/src/usr/share/empty.txt
         cmp ex/hi/share/a-rather-long-file-name.configuration /p/src/usr/share/a-rather-long-file-name.configuration'
 fi
+# MSIX and APPX are the same container, so one set of checks runs for both. Nothing here installs the package: there is no
+# Windows. The block map check hashes every 64 KiB block of every file with python3 and compares it with AppxBlockMap.xml.
+# Microsoft's own reader, makemsix (github.com/microsoft/msix-packaging), validates the manifest and the zip layout. The
+# makemsix checks need PKGSMITH_MAKEMSIX, the path of the makemsix program, and PKGSMITH_MAKEMSIX_LIB, the folder of its
+# libmsix.so, and are skipped without them.
+for fmt in msix appx; do
+    selected "$fmt" || continue
+    rm -rf "pre-$fmt"; mkdir -p "pre-$fmt/usr/bin" "pre-$fmt/usr/share/hi"
+    printf 'MZ-fake\n' > "pre-$fmt/usr/bin/hi.exe"; chmod 755 "pre-$fmt/usr/bin/hi.exe"
+    head -c 200000 /dev/urandom > "pre-$fmt/usr/share/hi/big.bin"
+    yes 'text line of text' | head -c 300000 > "pre-$fmt/usr/share/hi/notes.txt"
+    printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==' | base64 -d > "pre-$fmt/usr/share/hi/logo.png"
+    cat > "lang-$fmt.star" <<STAR
+package(
+    "$fmt", name = "hello", version = "1.2.3", arch = "amd64", description = "Says hi",
+    options = {"executable": "/usr/bin/hi.exe", "logo": "/usr/share/hi/logo.png", "publisher": "CN=Example Ltd"},
+)
+STAR
+    check "$fmt: build" build_lang "$fmt"
+    app_package_check() { # app_package_check FORMAT: the zip, the manifest, and every block hash of the block map
+        python3 - "$1" <<'PY'
+import base64, glob, hashlib, sys, zipfile
+import xml.etree.ElementTree as ET
+fmt = sys.argv[1]
+(path,) = glob.glob(f"out-{fmt}/hello_1.2.3.1_x64.{fmt}")
+z = zipfile.ZipFile(path)
+assert z.testzip() is None
+names = z.namelist()
+for part in ("AppxManifest.xml", "AppxBlockMap.xml", "[Content_Types].xml"):
+    assert part in names, part
+manifest = ET.fromstring(z.read("AppxManifest.xml"))
+ns = {"m": "http://schemas.microsoft.com/appx/manifest/foundation/windows10"}
+identity = manifest.find("m:Identity", ns).attrib
+assert identity["Name"] == "hello" and identity["Version"] == "1.2.3.1" and identity["ProcessorArchitecture"] == "x64", identity
+want_min = {"msix": "10.0.17763.0", "appx": "10.0.14393.0"}[fmt]
+assert manifest.find("m:Dependencies/m:TargetDeviceFamily", ns).attrib["MinVersion"] == want_min
+bm = ET.fromstring(z.read("AppxBlockMap.xml"))
+bns = {"b": "http://schemas.microsoft.com/appx/2010/blockmap"}
+files = bm.findall("b:File", bns)
+# The block map lists every member except itself and [Content_Types].xml.
+assert len(files) == len(names) - 2, (len(files), names)
+blocks = 0
+for f in files:
+    data = z.read(f.attrib["Name"].replace("\\", "/"))
+    assert int(f.attrib["Size"]) == len(data), f.attrib["Name"]
+    hashes = [b.attrib["Hash"] for b in f.findall("b:Block", bns)]
+    want = [base64.b64encode(hashlib.sha256(data[i:i + 65536]).digest()).decode() for i in range(0, len(data), 65536)]
+    assert hashes == want, f.attrib["Name"]
+    blocks += len(hashes)
+assert blocks >= 8
+PY
+    }
+    check "$fmt: zip is sound, manifest identity and MinVersion, every block hash matches the block map" app_package_check "$fmt"
+    if [ -n "${PKGSMITH_MAKEMSIX:-}" ] && [ -x "$PKGSMITH_MAKEMSIX" ]; then
+        makemsix_check() { # makemsix_check FORMAT: unpack and compare, then pack, which validates the manifest schema
+            export LD_LIBRARY_PATH="${PKGSMITH_MAKEMSIX_LIB:-}"
+            rm -rf "un-$1" "repacked.$1"
+            "$PKGSMITH_MAKEMSIX" unpack -p "out-$1/hello_1.2.3.1_x64.$1" -d "un-$1" -ss
+            diff -r "un-$1/VFS/ProgramFilesX64/hello" "pre-$1"
+            "$PKGSMITH_MAKEMSIX" pack -d "un-$1" -p "repacked.$1"
+            test -s "repacked.$1"
+        }
+        check "$fmt: makemsix unpack, files identical, makemsix pack" makemsix_check "$fmt"
+    else
+        skip "$fmt: makemsix" "set PKGSMITH_MAKEMSIX to the makemsix program and PKGSMITH_MAKEMSIX_LIB to the folder of libmsix.so"
+    fi
+done
 if selected flatpak; then
     if need flatpak; then
         mkdir -p pre-flatpak/usr/bin

@@ -1,0 +1,17 @@
+[package]
+name = "pkgsmith-plugin-appx"
+version = "0.1.1"
+edition = "2024"
+description = "pkgsmith plugin: APPX packages for Windows 10"
+license = "MIT"
+repository = "https://github.com/kierandrewett/pkgsmith"
+publish = false
+
+[lib]
+name = "pkgsmith_plugin_appx"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.104"
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.1" }
+pkgsmith-windows-app = { path = "../../crates/pkgsmith-windows-app", version = "0.1.1" }

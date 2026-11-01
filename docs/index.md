@@ -28,7 +28,7 @@ turn files into packages without building anything. All three take files you alr
   formats is a `for` loop, a dependency name that differs by format is a dict, and a version can come from a file in the
   prefix. The script cannot run commands or reach the network.
 - **More formats.** Besides rpm, deb, Arch, Alpine and OpenWrt, pkgsmith writes Slackware, Void, FreeBSD, snap, OCI,
-  AppImage, wheel, gem, npm, conda, NuGet, dmg, Flatpak, Nix, msi, NSIS, msix, tar and zip. See [formats](formats.md).
+  AppImage, wheel, gem, npm, conda, NuGet, dmg, Flatpak, Nix, msi, NSIS, msix, appx, tar and zip. See [formats](formats.md).
   Every format is a plugin, and you can write your own.
 - **Signing.** pkgsmith signs with gpg, an OpenPGP key file or an RSA key. See [signing](signing.md).
 - **No external tools.** pkgsmith writes the files itself, and does not call `rpmbuild`, `dpkg-deb` or `makepkg`. Two

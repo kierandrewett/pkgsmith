@@ -9,7 +9,7 @@ those systems. pkgsmith has no cross-compiler, and builds nothing.
 1. **Build on the target system.** Compile your program with its own toolchain, as the release workflow of pkgsmith
    does. Install the result into a prefix folder.
 2. **Pack the prefix.** Run pkgsmith on that machine, or copy the prefix to any other machine and run it there. The
-   pure Rust formats (`dmg`, `msi`, `msix`) need no other tool. `nsis` runs `makensis`, so it needs that program on the
+   pure Rust formats (`dmg`, `msi`, `msix`, `appx`) need no other tool. `nsis` runs `makensis`, so it needs that program on the
    machine that writes the package.
 
 A Linux program is a Linux program. Do not put one in a `dmg` or an `msi`: these formats pack the files you give them and
@@ -84,5 +84,6 @@ The script lists every format once. A format that you do not select with `-F` is
 | Windows | `msi`  | A Windows Installer package. Written unsigned. See [msi](formats.md#msi)                    |
 | Windows | `nsis` | An installer `.exe`. Needs `makensis` on the machine that writes it. See [nsis](formats.md#nsis) |
 | Windows | `msix` | Written unsigned. Windows installs it only after you sign it. See [msix](formats.md#msix)   |
+| Windows | `appx` | The same package as `msix` with the `.appx` extension and an older default Windows version. See [appx](formats.md#appx) |
 
-The `dmg`, `msi` and `msix` writers are pure Rust and run on any system. `nsis` runs `makensis`.
+The `dmg`, `msi`, `msix` and `appx` writers are pure Rust and run on any system. `nsis` runs `makensis`.
