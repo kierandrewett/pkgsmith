@@ -206,7 +206,11 @@ fn builtins(builder: &mut GlobalsBuilder) {
                     .ok()?
                     .join(path.file_name()?);
                 let relative = resolved.strip_prefix(&root).ok()?;
-                Some(format!("/{}", relative.to_string_lossy()))
+                let parts: Vec<_> = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                Some(format!("/{}", parts.join("/")))
             })
             .collect();
         found.sort();
