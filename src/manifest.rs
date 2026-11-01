@@ -239,7 +239,7 @@ pub struct Step {
     /// The script. A `#!` line is not special: the text always runs with `sh -e`. Give `run` or `uses`, not both.
     #[serde(default)]
     pub run: String,
-    /// The name of a step of `shared-steps`. The step takes its `run`, and its `name`, `if` and `env` unless this step
+    /// The name of a step of the top-level `steps`. The step takes its `run`, and its `name`, `if` and `env` unless this step
     /// sets its own. `env` is merged, and this step's value wins.
     pub uses: Option<String>,
     /// An expression that decides whether the step runs. It reads `matrix.NAME` of its job, `arch` and `env.NAME`.
@@ -350,9 +350,9 @@ pub struct Manifest {
     /// The package targets, crossed with the `matrix`. Without targets, the `matrix` alone makes the packages.
     #[serde(default)]
     pub targets: Vec<Target>,
-    /// Steps that several jobs use. A job step with `uses: NAME` takes the step of that name.
-    #[serde(default, rename = "shared-steps")]
-    pub shared_steps: BTreeMap<String, Step>,
+    /// Named steps that several jobs use. A job step with `uses: NAME` takes the step of that name.
+    #[serde(default)]
+    pub steps: BTreeMap<String, Step>,
     /// The jobs that build the files. A target names the one it packs with `needs`.
     #[serde(default)]
     pub jobs: BTreeMap<String, BuildJob>,
@@ -598,22 +598,22 @@ impl Manifest {
             manifest.base = PathBuf::from(".");
         }
         manifest.context = manifest.base.clone();
-        manifest.resolve_shared_steps()?;
+        manifest.resolve_named_steps()?;
         manifest.check_jobs()?;
         Ok(manifest)
     }
 
-    /// Replace every `uses: NAME` step by the shared step of that name, so the rest of pkgsmith sees plain steps.
-    fn resolve_shared_steps(&mut self) -> Result<()> {
-        for (name, step) in &self.shared_steps {
+    /// Replace every `uses: NAME` step by the named step of that name, so the rest of pkgsmith sees plain steps.
+    fn resolve_named_steps(&mut self) -> Result<()> {
+        for (name, step) in &self.steps {
             if step.uses.is_some() {
-                bail!("shared step {name}: a shared step cannot use another one");
+                bail!("step {name} of steps: a named step cannot use another one");
             }
             if step.run.trim().is_empty() {
-                bail!("shared step {name} has no run");
+                bail!("step {name} of steps has no run");
             }
         }
-        let shared = self.shared_steps.clone();
+        let named = self.steps.clone();
         for (job_name, job) in &mut self.jobs {
             for step in job.setup.iter_mut().chain(job.steps.iter_mut()) {
                 match (&step.uses, step.run.trim().is_empty()) {
@@ -623,10 +623,10 @@ impl Manifest {
                         bail!("job {job_name}: a step has both run and uses; use one of them")
                     }
                     (Some(id), true) => {
-                        let Some(base) = shared.get(id) else {
+                        let Some(base) = named.get(id) else {
                             bail!(
-                                "job {job_name}: uses {id:?}, which is not in shared-steps (shared-steps: {})",
-                                shared.keys().cloned().collect::<Vec<_>>().join(", ")
+                                "job {job_name}: uses {id:?}, which is not in the top-level steps (steps: {})",
+                                named.keys().cloned().collect::<Vec<_>>().join(", ")
                             );
                         };
                         let mut env = base.env.clone();
@@ -1489,7 +1489,7 @@ mod tests {
     #[test]
     fn a_shared_step_is_used_by_name_and_a_job_can_override_its_name_if_and_env() {
         let text = format!(
-            "{BASE}shared-steps:\n  build:\n    name: Build\n    run: make\n    env:\n      A: one\n      B: two\njobs:\n  x:\n    runs-on: a\n    steps:\n      - uses: build\n  y:\n    runs-on: b\n    steps:\n      - uses: build\n        name: Build for y\n        if: arch == 'arm64'\n        env:\n          B: three\n"
+            "{BASE}steps:\n  build:\n    name: Build\n    run: make\n    env:\n      A: one\n      B: two\njobs:\n  x:\n    runs-on: a\n    steps:\n      - uses: build\n  y:\n    runs-on: b\n    steps:\n      - uses: build\n        name: Build for y\n        if: arch == 'arm64'\n        env:\n          B: three\n"
         );
         let manifest = parse(&text).unwrap();
         let x = &manifest.jobs["x"].steps[0];
@@ -1509,15 +1509,15 @@ mod tests {
         for (steps, wanted) in [
             ("      - name: empty\n", "neither run nor uses"),
             ("      - run: x\n        uses: build\n", "both run and uses"),
-            ("      - uses: nope\n", "not in shared-steps"),
+            ("      - uses: nope\n", "not in the top-level steps"),
         ] {
             let text = format!(
-                "{BASE}shared-steps:\n  build:\n    run: make\njobs:\n  a:\n    runs-on: a\n    steps:\n{steps}"
+                "{BASE}steps:\n  build:\n    run: make\njobs:\n  a:\n    runs-on: a\n    steps:\n{steps}"
             );
             let error = parse(&text).unwrap_err();
             assert!(format!("{error:#}").contains(wanted), "{wanted}: {error:#}");
         }
-        let nested = format!("{BASE}shared-steps:\n  a:\n    run: x\n  b:\n    uses: a\n");
+        let nested = format!("{BASE}steps:\n  a:\n    run: x\n  b:\n    uses: a\n");
         assert!(format!("{:#}", parse(&nested).unwrap_err()).contains("cannot use another"));
     }
 }

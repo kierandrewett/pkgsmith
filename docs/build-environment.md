@@ -75,12 +75,12 @@ A step is one script.
 - Variables are written as single-quoted text, so quotes, `$` and backticks in a value stay literal. A step that needs a
   value built from another variable sets it with the next method.
 
-### Shared steps
+### Named steps
 
-A step that several jobs use is defined once in `shared-steps` and used by name:
+A step that several jobs use is defined once in the top-level `steps` and used by name:
 
 ```yaml
-shared-steps:
+steps:
   build:
     name: Build
     run: make && make install PREFIX=/usr
@@ -97,9 +97,9 @@ jobs:
           CFLAGS: -O2
 ```
 
-A step with `uses` takes the `run` of the shared step. It also takes the `name`, `if` and `env` of the shared step, unless
+A step with `uses` takes the `run` of the named step. It also takes the `name`, `if` and `env` of the named step, unless
 the step sets its own. The `env` of the two are merged, and the step's value wins. A step has `run` or `uses`, not both,
-and a shared step cannot use another one.
+and a named step cannot use another one.
 
 ### Changing what later steps see
 

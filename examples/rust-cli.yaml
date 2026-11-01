@@ -9,7 +9,7 @@ maintainer: Example Maintainer <maintainer@example.com>
 license: MIT
 
 # One job for each distro, because each one builds against its own libraries. A target names the job it packs.
-shared-steps:
+steps:
   build:
     name: Build
     run: |

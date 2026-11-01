@@ -103,7 +103,7 @@ targets:
     distro: alpine
     needs: alpine
 
-shared-steps:
+steps:
   build:
     name: Build
     run: make && make install PREFIX=/usr

@@ -112,9 +112,9 @@ matrix:
 #
 # Environment inside a step: PKGSMITH_NAME, PKGSMITH_VERSION, PKGSMITH_RELEASE, PKGSMITH_ARCH, and one MATRIX_<KEY>
 # for each key of the job's own matrix cell.
-# Steps that several jobs use. A job step with `uses: NAME` takes the step of that name. It may set its own `name`, `if`
-# and `env`, which replace or merge into those of the shared step. Give `run` or `uses`, not both.
-shared-steps:
+# Named steps that several jobs use. A job step with `uses: NAME` takes the step of that name. It may set its own `name`, `if`
+# and `env`, which replace or merge into those of the named step. Give `run` or `uses`, not both.
+steps:
   build:
     name: Build
     run: |

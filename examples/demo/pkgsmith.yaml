@@ -23,7 +23,7 @@ targets:
     needs: alpine
 
 # The build step is the same everywhere. pkgsmith records the files it installs and packages them.
-shared-steps:
+steps:
   build:
     run: make && make install PREFIX=/usr
 

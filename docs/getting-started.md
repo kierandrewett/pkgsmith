@@ -58,7 +58,7 @@ targets:
     distro: alpine
     needs: alpine
 
-shared-steps:
+steps:
   build:
     run: make && make install PREFIX=/usr
 

@@ -27,7 +27,7 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 | Key       | Type | Meaning                                                                                  |
 | --------- | ---- | ---------------------------------------------------------------------------------------- |
 | `jobs`    | map  | The jobs that build the files. See [build environment](build-environment.md)             |
-| `shared-steps` | map | Steps that several jobs use by name. See [shared steps](build-environment.md#shared-steps) |
+| `steps` | map | Steps that several jobs use by name. See [named steps](build-environment.md#named-steps) |
 | `targets` | list | The packages to make: a distro, formats and the job that builds the files                |
 | `matrix`  | map  | What varies for every target, such as `arch`. See [matrix and expressions](matrix-and-expressions.md) |
 | `include` | list | Manifests to merge underneath this one. See [including other files](#including-other-files) |
@@ -162,7 +162,7 @@ matrix:
     - amd64
     - arm64
 
-shared-steps:
+steps:
   build:
     run: |
       cargo build --release --manifest-path crates/config/Cargo.toml

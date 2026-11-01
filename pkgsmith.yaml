@@ -39,7 +39,7 @@ license: MIT
 # The build installs the binary and every plugin under the name pkgsmith looks for. The distro Rust is too old for the
 # dependencies, so a setup step installs a pinned one with rustup. -crt-static makes the Alpine binary a dynamic one,
 # which it must be to load plugins.
-shared-steps:
+steps:
   rust:
     name: Install Rust
     run: |
