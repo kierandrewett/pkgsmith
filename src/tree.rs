@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use pkgsmith_plugin::{Data, Entry};
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -32,14 +33,37 @@ fn identity(content: &Content) -> (String, String) {
     )
 }
 
+/// The mode of a file on disk. Unix keeps it. Windows has none, so a program (`.exe`, `.bat`, `.cmd`, `.sh`, `.ps1`) gets
+/// 0755 and every other file 0644. A `mode` in the manifest overrides both.
+#[cfg(unix)]
+fn file_mode(metadata: &fs::Metadata, _path: &Path) -> u32 {
+    metadata.permissions().mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn file_mode(_metadata: &fs::Metadata, path: &Path) -> u32 {
+    let program = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        ["exe", "bat", "cmd", "sh", "ps1"].contains(&e.to_ascii_lowercase().as_str())
+    });
+    if program { 0o755 } else { 0o644 }
+}
+
+#[cfg(unix)]
+fn dir_mode(metadata: &fs::Metadata) -> u32 {
+    metadata.permissions().mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn dir_mode(_metadata: &fs::Metadata) -> u32 {
+    0o755
+}
+
 fn file_entry(path: String, src: &Path, content: &Content, config: bool) -> Result<Entry> {
     let metadata = fs::metadata(src).with_context(|| format!("cannot read {}", src.display()))?;
     let (owner, group) = identity(content);
     Ok(Entry {
         path,
-        mode: content
-            .mode
-            .unwrap_or(metadata.permissions().mode() & 0o7777),
+        mode: content.mode.unwrap_or(file_mode(&metadata, src)),
         data: Data::File {
             src: src.to_path_buf(),
             size: metadata.len(),
@@ -56,7 +80,7 @@ fn walk(src: &Path, dst: &str, content: &Content, out: &mut Vec<Entry>) -> Resul
     out.push(Entry {
         path: dst.to_string(),
         data: Data::Dir,
-        mode: metadata.permissions().mode() & 0o7777,
+        mode: dir_mode(&metadata),
         owner,
         group,
         config: false,
@@ -238,6 +262,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_tree_keeps_folders_files_modes_and_links() {
         let dir = tempfile::tempdir().unwrap();

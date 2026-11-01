@@ -69,11 +69,13 @@ enum Reply {
 /// The folders searched for plugins, in order. The first plugin that offers a format wins.
 ///
 /// 1. `extra`, from `--plugin-path`.
-/// 2. `PKGSMITH_PLUGIN_PATH`, a list separated by `:`.
+/// 2. `PKGSMITH_PLUGIN_PATH`, a list of folders separated by `:` (`;` on Windows).
 /// 3. The folder of the `pkgsmith` binary, which is where `cargo build` puts the plugins of this repository.
 /// 4. `lib/pkgsmith/plugins` in the folder above the binary (`/usr/lib/pkgsmith/plugins` for `/usr/bin/pkgsmith`), which finds the plugins of a package installed under any prefix.
-/// 5. `$XDG_DATA_HOME/pkgsmith/plugins`, by default `~/.local/share/pkgsmith/plugins`.
-/// 6. `/usr/local/lib/pkgsmith/plugins`, `/usr/lib/pkgsmith/plugins` and `/usr/lib64/pkgsmith/plugins`.
+/// 5. The data folder of the user: `$XDG_DATA_HOME/pkgsmith/plugins` or `~/.local/share/pkgsmith/plugins` on Linux,
+///    `~/Library/Application Support/pkgsmith/plugins` on macOS, `%LOCALAPPDATA%\\pkgsmith\\plugins` on Windows.
+/// 6. The system folders: `/usr/local/lib`, `/usr/lib` and `/usr/lib64` (all with `/pkgsmith/plugins`) on Linux,
+///    `/usr/local/lib` and `/opt/homebrew/lib` on macOS, `%ProgramData%\\pkgsmith\\plugins` on Windows.
 pub fn search_path(extra: &[PathBuf]) -> Vec<PathBuf> {
     let mut path: Vec<PathBuf> = extra.to_vec();
     if let Some(list) = std::env::var_os("PKGSMITH_PLUGIN_PATH") {
@@ -87,22 +89,55 @@ pub fn search_path(extra: &[PathBuf]) -> Vec<PathBuf> {
             path.push(prefix.join("lib/pkgsmith/plugins"));
         }
     }
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-    if let Some(data) = data {
+    if let Some(data) = user_data_dir() {
         path.push(data.join("pkgsmith/plugins"));
     }
-    for dir in ["/usr/local/lib", "/usr/lib", "/usr/lib64"] {
-        path.push(Path::new(dir).join("pkgsmith/plugins"));
+    for dir in system_dirs() {
+        path.push(dir);
     }
     path
 }
 
-/// Whether a file name is a plugin: `pkgsmith-plugin-NAME.so` or `libpkgsmith_plugin_NAME.so`.
+/// The data folder of the user: the folder that holds `pkgsmith/plugins`.
+pub fn user_data_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    }
+}
+
+/// Folders for all users, where a package manager puts plugins.
+fn system_dirs() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("ProgramData")
+            .map(|p| vec![PathBuf::from(p).join("pkgsmith/plugins")])
+            .unwrap_or_default()
+    } else if cfg!(target_os = "macos") {
+        ["/usr/local/lib", "/opt/homebrew/lib"]
+            .iter()
+            .map(|d| Path::new(d).join("pkgsmith/plugins"))
+            .collect()
+    } else {
+        ["/usr/local/lib", "/usr/lib", "/usr/lib64"]
+            .iter()
+            .map(|d| Path::new(d).join("pkgsmith/plugins"))
+            .collect()
+    }
+}
+
+/// The suffix of a shared library on this system: `.so`, `.dylib` or `.dll`.
+pub const LIBRARY_SUFFIX: &str = std::env::consts::DLL_SUFFIX;
+
+/// Whether a file name is a plugin: `pkgsmith-plugin-NAME` or the name that cargo gives a library (`libpkgsmith_plugin_NAME`
+/// on Linux and macOS, `pkgsmith_plugin_NAME` on Windows), with the suffix of a shared library on this system.
 fn is_plugin_file(name: &str) -> bool {
     let stem = name.strip_prefix("lib").unwrap_or(name);
-    name.ends_with(".so")
+    name.ends_with(LIBRARY_SUFFIX)
         && (stem.starts_with("pkgsmith-plugin-") || stem.starts_with("pkgsmith_plugin_"))
 }
 
