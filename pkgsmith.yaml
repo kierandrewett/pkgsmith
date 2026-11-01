@@ -4,10 +4,14 @@
 #
 # or one distro with `--job distro=fedora`. The packages are written to ./dist.
 #
-# The dmg jobs have no image, so they run no build, and they exist only when STAGE is set. STAGE is the folder that
-# holds a program that was compiled on the target system (see docs/macos-and-windows.md). On a Mac:
+# The dmg, msi and nsis jobs have no image, so they run no build, and they exist only when STAGE is set. STAGE is the
+# folder that holds a program that was compiled on the target system (see docs/macos-and-windows.md). On a Mac:
 #
 #   pkgsmith build -F dmg --job arch=arm64 --build-arg STAGE=pkgsmith-aarch64-apple-darwin
+#
+# On Windows (nsis needs makensis on PATH):
+#
+#   pkgsmith build -F msi,nsis --build-arg STAGE=pkgsmith-x86_64-pc-windows-msvc
 
 name: pkgsmith
 version: ${VERSION:-0.1.0}
@@ -71,6 +75,14 @@ matrix:
         curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
 
     # macOS and Windows jobs have no image, so they run no build. They package the staged files.
+    - format: msi
+      arch: amd64
+      distro: windows
+      if: env.STAGE
+    - format: nsis
+      arch: amd64
+      distro: windows
+      if: env.STAGE
     - format: dmg
       arch: arm64
       distro: macos
@@ -91,9 +103,16 @@ contents:
     dst: /pkgsmith
     only:
       - dmg
+      - msi
+      - nsis
 
 dmg:
   volume_name: pkgsmith
+msi:
+  prefix: /pkgsmith
+  manufacturer: Kieran Drewett
+nsis:
+  prefix: /pkgsmith
 
 # pkgsmith starts containers through Podman, and it does not look inside the binary for libraries.
 depends:

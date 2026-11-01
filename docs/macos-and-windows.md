@@ -56,10 +56,12 @@ the disk image only.
 
 ## Formats
 
-| System  | Format | Notes                                                                                          |
-| ------- | ------ | ---------------------------------------------------------------------------------------------- |
-| macOS   | `dmg`  | A disk image of your files. See [dmg](formats.md#dmg)                                          |
-| Windows | `msix` | Written unsigned. Windows installs it only after you sign it. See [msix](formats.md#msix)      |
+| System  | Format | Notes                                                                                           |
+| ------- | ------ | ----------------------------------------------------------------------------------------------- |
+| macOS   | `dmg`  | A disk image of your files. See [dmg](formats.md#dmg)                                           |
+| Windows | `msi`  | A Windows Installer package. Written unsigned. See [msi](formats.md#msi)                        |
+| Windows | `nsis` | A setup `.exe`. Needs `makensis` on the machine that builds. See [nsis](formats.md#nsis)        |
+| Windows | `msix` | Written unsigned. Windows installs it only after you sign it. See [msix](formats.md#msix)       |
 
-The `.dmg` and `.msix` writers are pure Rust and run on any system. A program that you compile on Linux is a Linux
-program, so do not put it in one of these packages.
+The `dmg`, `msi` and `msix` writers are pure Rust and run on any system. `nsis` runs `makensis`. A program that you
+compile on Linux is a Linux program, so do not put it in one of these packages.

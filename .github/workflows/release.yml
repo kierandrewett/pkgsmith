@@ -4,8 +4,8 @@
 #   1. builds pkgsmith and its plugins and checks the version of every crate against the tag,
 #   2. runs pkgsmith on its own manifest (pkgsmith.yaml) to build the rpm, deb, Arch and Alpine packages,
 #   3. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
-#   4. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows, and on macOS packs them into a
-#      disk image with pkgsmith itself (pkgsmith.yaml),
+#   4. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows, and runs pkgsmith on its own
+#      manifest (pkgsmith.yaml) to pack them: a disk image on macOS and a Windows Installer package on Windows,
 #   5. creates a GitHub release with the packages, a tarball per platform (pkgsmith and its plugins) and checksums.
 #
 # Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
@@ -88,7 +88,7 @@ jobs:
       matrix:
         include:
           - { target: aarch64-apple-darwin, runner: macos-latest }
-          - { target: x86_64-apple-darwin, runner: macos-13 }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
     defaults:
@@ -112,6 +112,15 @@ jobs:
           done
           tar -czf "dist/$name.tar.gz" "$name"
           tar -tzf "dist/$name.tar.gz" | head -30
+      - name: Windows Installer package of pkgsmith, built by pkgsmith
+        if: runner.os == 'Windows'
+        run: |
+          name="pkgsmith-${{ matrix.target }}"
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then version="${GITHUB_REF_NAME#v}"; else
+            version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"; fi
+          # The nsis format needs makensis and has only been tested under Wine, so only the msi is built here.
+          target/release/pkgsmith.exe build . -F msi --build-arg "VERSION=$version" --build-arg "STAGE=$name" -o dist --progress plain
+          ls -l dist
       - name: Disk image of pkgsmith, built by pkgsmith
         if: runner.os == 'macOS'
         run: |
