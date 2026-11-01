@@ -44,32 +44,51 @@ description: A demo that packages a small C program
 maintainer: Your Name <you@example.com>
 license: MIT
 
-build: |
-  make
-  make install PREFIX=/usr
-
 matrix:
   include:
     - format: rpm
       distro: fedora
-      image: fedora:43
-      setup: dnf -y install gcc make
     - format: deb
       distro: debian
-      image: debian:13
-      setup: apt-get update -qq && apt-get install -y gcc make
     - format: archlinux
       distro: arch
-      image: archlinux:base
-      setup: pacman -Sy --noconfirm gcc make
     - format: apk
       distro: alpine
-      image: alpine:3.22
-      setup: apk add --no-cache gcc make musl-dev
+
+builders:
+  fedora:
+    if: distro == 'fedora'
+    image: fedora:43
+    steps:
+      - setup: true
+        run: dnf -y install gcc make
+      - run: make && make install PREFIX=/usr
+  debian:
+    if: distro == 'debian'
+    image: debian:13
+    steps:
+      - setup: true
+        run: apt-get update -qq && apt-get install -y gcc make
+      - run: make && make install PREFIX=/usr
+  arch:
+    if: distro == 'arch'
+    image: archlinux:base
+    steps:
+      - setup: true
+        run: pacman -Sy --noconfirm gcc make
+      - run: make && make install PREFIX=/usr
+  alpine:
+    if: distro == 'alpine'
+    image: alpine:3.22
+    steps:
+      - setup: true
+        run: apk add --no-cache gcc make musl-dev
+      - run: make && make install PREFIX=/usr
 ```
 
-Each `matrix` entry is one package. It names the format, the distro, the image to build in, and the `setup` that image
-needs. The `build` is the same for all of them.
+Each `matrix` entry is one package. It names the format and the distro. The `builders` say which image each distro builds
+in, the setup steps that image needs, and the build steps. A builder is picked by its `if`. When two distros can use one
+builder, they share one build: see [build environment](build-environment.md#one-build-for-several-distros).
 
 ## Plan
 
@@ -114,7 +133,7 @@ Packages in dist:
 
 ```console
 $ pkgsmith files --format rpm
-== rpm [distro=fedora, format=rpm, image=fedora:43]
+== rpm [distro=fedora, format=rpm]
 644 root:root /etc/hello.conf
 755 root:root /usr/bin/hello
 755 root:root /usr/share/hello

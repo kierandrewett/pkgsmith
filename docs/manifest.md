@@ -4,7 +4,7 @@ A manifest is one YAML file for one package. The default name is `pkgsmith.yaml`
 know, so a typo is an error and not a silent no-op.
 
 Text values accept `${NAME}` variables and `${{ expression }}` expressions. See
-[matrix and expressions](matrix-and-expressions.md). [Scripts](scripts.md) and the `setup` and `build` scripts take
+[matrix and expressions](matrix-and-expressions.md). [Scripts](scripts.md) and the `run` text of builder steps take
 expressions only, because `${HOME}` in a script belongs to the shell.
 
 ## Package
@@ -14,7 +14,6 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 | `name`        | text   | required | Package name. Lowercase letters, digits and `+ - . _`. Starts with a letter or digit     |
 | `version`     | text   | required | `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-prerelease`. See [versions](versions.md)       |
 | `release`     | text   | `1`      | Package revision for one version. Reset it to `1` when the version changes               |
-| `build_axes`  | list   | none     | The matrix keys the build uses. It sees only these, so jobs equal in them share it. See [build environment](build-environment.md#one-build-for-several-distros) |
 | `epoch`       | number | `0`      | Makes the version newer than every version with a lower epoch. `0` leaves it out. See [versions](versions.md#epoch) |
 | `arch`        | text   | `amd64`  | `amd64`, `arm64` or `all` for packages without compiled code. A matrix `arch` overrides it |
 | `description` | text   | required | The first line is the summary. The rest is the long text                                 |
@@ -25,17 +24,25 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 
 ## Build
 
-| Key       | Type   | Meaning                                                                                       |
-| --------- | ------ | --------------------------------------------------------------------------------------------- |
-| `image`   | text   | Container image of the build environment. A `matrix` entry may set its own. See [build environment](build-environment.md) |
-| `setup`   | script | Runs once in the image. Not tracked. The result is cached. A `matrix` entry may set its own   |
-| `build`   | script | Runs in the image with the build context at `/src`. Files it installs outside `/src` are packaged |
-| `exclude` | list   | Paths the package leaves out. Prefixes or globs, for example `/usr/share/doc/**`              |
-| `matrix`  | map    | Axes, `include` and `exclude`. See [matrix and expressions](matrix-and-expressions.md)        |
-| `include` | list   | Other manifest files to merge underneath this one. See [including other files](#including-other-files) |
+| Key        | Type | Meaning                                                                                  |
+| ---------- | ---- | ---------------------------------------------------------------------------------------- |
+| `builders` | map  | The containers that build the files. See [build environment](build-environment.md)      |
+| `matrix`   | map  | Axes, `include` and `exclude`. See [matrix and expressions](matrix-and-expressions.md)  |
+| `include`  | list | Manifests to merge underneath this one. See [including other files](#including-other-files) |
 
-`image` needs `build`. A manifest without `image` does not run anything. It packages the files that `contents` names,
-read from the folder of the manifest.
+Each builder has these keys:
+
+| Key       | Type   | Meaning                                                                    |
+| --------- | ------ | -------------------------------------------------------------------------- |
+| `image`   | text   | The container image. Required                                              |
+| `steps`   | list   | The scripts that run in it, in order. Required                             |
+| `if`      | text   | An expression that picks the jobs that use the builder                     |
+| `by`      | list   | Matrix keys the steps may read. Each value makes its own run               |
+| `env`     | map    | Variables for every step                                                   |
+| `exclude` | list   | Paths the package leaves out, such as `/usr/share/doc/**`                  |
+
+A job that uses no builder does not run anything. It packages the files that `contents` names, read from the folder of
+the manifest.
 
 ## Files
 
@@ -145,13 +152,30 @@ matrix:
   distro: [fedora, debian]
   arch: [amd64, arm64]
   include:
-    - { distro: fedora, format: rpm, image: "fedora:43", setup: dnf -y install cargo }
-    - { distro: debian, format: deb, image: "debian:13", setup: apt-get update -qq && apt-get install -y cargo }
+    - { distro: fedora, format: rpm }
+    - { distro: debian, format: deb }
 
-build: |
-  cargo build --release --manifest-path crates/config/Cargo.toml
-  install -Dm755 target/release/bingux-config /usr/bin/bingux-config
-exclude: [/usr/share/doc/**]
+builders:
+  fedora:
+    if: distro == 'fedora'
+    image: fedora:43
+    exclude: [/usr/share/doc/**]
+    steps:
+      - setup: true
+        run: dnf -y install cargo
+      - run: |
+          cargo build --release --manifest-path crates/config/Cargo.toml
+          install -Dm755 target/release/bingux-config /usr/bin/bingux-config
+  debian:
+    if: distro == 'debian'
+    image: debian:13
+    exclude: [/usr/share/doc/**]
+    steps:
+      - setup: true
+        run: apt-get update -qq && apt-get install -y cargo
+      - run: |
+          cargo build --release --manifest-path crates/config/Cargo.toml
+          install -Dm755 target/release/bingux-config /usr/bin/bingux-config
 
 depends: [glibc]
 overrides:

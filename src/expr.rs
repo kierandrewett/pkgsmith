@@ -272,6 +272,18 @@ fn call(name: &str, arguments: &[Value]) -> Result<Value> {
     })
 }
 
+/// The names an expression reads, such as `matrix.distro` or `format`. Used to refuse an expression that reads a value
+/// it must not depend on.
+pub fn names(expression: &str) -> Result<Vec<String>> {
+    Ok(tokens(expression)?
+        .into_iter()
+        .filter_map(|token| match token {
+            Token::Name(name) => Some(name),
+            _ => None,
+        })
+        .collect())
+}
+
 pub fn eval(expression: &str, lookup: &impl Lookup) -> Result<Value> {
     let mut parser = Parser {
         tokens: tokens(expression)?,

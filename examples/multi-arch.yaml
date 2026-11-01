@@ -5,14 +5,21 @@
 name: acme-tool
 version: 1.0.0
 description: A tool for two architectures
+builders:
+  main:
+    image: debian:13
+    by: [triple]
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: apt-get update -qq && apt-get install -y gcc make
+      - name: Build
+        run: |
+          echo "building for $PKGSMITH_ARCH ($MATRIX_TRIPLE)"
+          make
+          make install PREFIX=/usr
 matrix:
   arch: [amd64, arm64]
   include:
     - { arch: amd64, triple: x86_64-linux-gnu }
     - { arch: arm64, triple: aarch64-linux-gnu }
-image: debian:13
-setup: apt-get update -qq && apt-get install -y gcc make
-build: |
-  echo "building for $PKGSMITH_ARCH ($MATRIX_TRIPLE)"
-  make
-  make install PREFIX=/usr

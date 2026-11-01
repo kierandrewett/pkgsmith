@@ -24,26 +24,23 @@ pub struct Runner {
 }
 
 /// What a build script can read. The format is left out on purpose: a build must not depend on it, so the formats of one
-/// distro and architecture share one run. With `build_axes`, only those matrix values are exposed, so jobs of different
-/// distros that are equal in them share one run as well.
+/// distro and architecture share one run. Only the architecture and the matrix keys in the `by` of the builder are
+/// exposed, so jobs of different distros that are equal in them share one run as well.
 pub fn build_env(manifest: &Manifest, job: &Job) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     env.insert("PKGSMITH_NAME".into(), manifest.name.clone());
     env.insert("PKGSMITH_VERSION".into(), manifest.version.clone());
     env.insert("PKGSMITH_RELEASE".into(), manifest.release.clone());
     env.insert("PKGSMITH_ARCH".into(), manifest.arch.clone());
-    if manifest.build_axes.is_none() {
+    if manifest.by.iter().any(|key| key == "distro") {
         env.insert(
             "PKGSMITH_DISTRO".into(),
             job.distro().unwrap_or_default().to_string(),
         );
     }
     for (key, value) in &job.values {
-        let visible = match &manifest.build_axes {
-            Some(axes) => axes.iter().any(|axis| axis == key),
-            None => true,
-        };
-        if visible && !["format", "setup", "build", "file"].contains(&key.as_str()) {
+        let visible = key == "arch" || manifest.by.contains(key);
+        if visible && !["format", "file"].contains(&key.as_str()) {
             let key: String = key
                 .chars()
                 .map(|c| {
@@ -171,13 +168,14 @@ mod tests {
     use super::*;
     use crate::expand::Scope;
 
-    fn keys(extra: &str) -> Vec<String> {
+    /// The build key of every job of a two-distro, two-architecture matrix, for the given `builders:` text.
+    fn keys(builders: &str) -> Vec<String> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pkg.yaml");
         std::fs::write(
             &path,
             format!(
-                "name: demo\nversion: 1.0.0\ndescription: d\nimage: debian:13\nbuild: make\n{extra}matrix:\n  arch: [amd64, arm64]\n  distro: [fedora, debian]\n"
+                "name: demo\nversion: 1.0.0\ndescription: d\n{builders}matrix:\n  arch: [amd64, arm64]\n  distro: [fedora, debian]\n"
             ),
         )
         .unwrap();
@@ -190,22 +188,31 @@ mod tests {
         keys
     }
 
-    #[test]
-    fn a_build_sees_every_matrix_value_by_default_so_each_distro_builds_alone() {
-        let keys = keys("");
-        assert_eq!(keys.len(), 4);
-        assert_eq!(
-            keys.iter().collect::<std::collections::HashSet<_>>().len(),
-            4
-        );
+    fn distinct(keys: &[String]) -> usize {
+        keys.iter().collect::<std::collections::HashSet<_>>().len()
     }
 
     #[test]
-    fn build_axes_lets_jobs_of_different_distros_share_a_build_but_never_architectures() {
-        let keys = keys("build_axes: [arch]\n");
-        assert_eq!(
-            keys.iter().collect::<std::collections::HashSet<_>>().len(),
-            2
+    fn jobs_of_different_distros_share_a_build_per_architecture_by_default() {
+        let keys =
+            keys("builders:\n  linux:\n    image: debian:13\n    steps:\n      - run: make\n");
+        assert_eq!(keys.len(), 4);
+        assert_eq!(distinct(&keys), 2);
+    }
+
+    #[test]
+    fn a_builder_that_is_split_by_distro_builds_once_per_distro() {
+        let keys = keys(
+            "builders:\n  linux:\n    image: debian:13\n    by: [distro]\n    steps:\n      - run: make\n",
         );
+        assert_eq!(distinct(&keys), 4);
+    }
+
+    #[test]
+    fn two_builders_that_pick_different_jobs_make_two_builds() {
+        let keys = keys(
+            "builders:\n  a:\n    if: distro == 'fedora'\n    image: fedora:43\n    steps:\n      - run: make\n  b:\n    if: distro != 'fedora'\n    image: debian:13\n    steps:\n      - run: make\n",
+        );
+        assert_eq!(distinct(&keys), 4);
     }
 }

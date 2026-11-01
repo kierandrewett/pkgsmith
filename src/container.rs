@@ -146,6 +146,14 @@ impl Script {
 
 /// The first line of a script for a step title, with an ellipsis when the script goes on.
 fn title(script: &str) -> String {
+    // A script made of builder steps names them in comment lines, and the progress output shows the names.
+    let names: Vec<&str> = script
+        .lines()
+        .filter_map(|line| line.strip_prefix("#==> "))
+        .collect();
+    if !names.is_empty() {
+        return names.join(", ");
+    }
     let mut lines = script
         .lines()
         .map(str::trim)
@@ -758,5 +766,14 @@ mod tests {
             Script::new("#!/bin/bash\nset -e\n").unwrap().entrypoint(),
             ["/pkgsmith-script"]
         );
+    }
+
+    #[test]
+    fn a_script_made_of_steps_is_titled_with_the_step_names() {
+        assert_eq!(
+            title("#==> Install tools\nsh -e <<'X'\nx\nX\n#==> Compile\nsh -e <<'Y'\ny\nY\n"),
+            "Install tools, Compile"
+        );
+        assert_eq!(title("make\nmake install\n"), "make …");
     }
 }

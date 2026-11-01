@@ -4,10 +4,16 @@ name: acme-agent
 version: 1.4.0
 description: A monitoring agent
 license: Apache-2.0
-image: fedora:43
-setup: dnf -y install golang
-build: |
-  go build -o /usr/bin/acme-agent ./cmd/agent
+builders:
+  main:
+    image: fedora:43
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: dnf -y install golang
+      - name: Build
+        run: |
+          go build -o /usr/bin/acme-agent ./cmd/agent
 
 contents:
   # The unit file comes from the source tree. It is not part of the build output.

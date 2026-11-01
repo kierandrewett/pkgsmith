@@ -1,37 +1,53 @@
-# One manifest, four distros. Each matrix entry names its own image and setup.
-# Entries on the same image (deb and tar) share one build.
+# One manifest, four distros. Each distro has a builder with its own image and setup step. The deb and tar jobs of Debian
+# use one builder, so they share one build.
 name: hello
 version: 1.0.0
 description: A demo that packages a small C program
 maintainer: Kieran Drewett <kieran@drewett.dev>
 license: MIT
 
-# The build is the same everywhere. pkgsmith records the files it installs and packages them.
-build: |
-  make
-  make install PREFIX=/usr
-
 matrix:
   include:
     - format: rpm
       distro: fedora
-      image: fedora:43
-      setup: dnf -y install gcc make
     - format: deb
       distro: debian
-      image: debian:13
-      setup: &apt |
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
     - format: tar
       distro: debian
-      image: debian:13
-      setup: *apt
     - format: archlinux
       distro: arch
-      image: archlinux:base
-      setup: pacman -Sy --noconfirm gcc make
     - format: apk
       distro: alpine
-      image: alpine:3.22
-      setup: apk add --no-cache gcc make musl-dev
+
+# The build steps are the same everywhere. pkgsmith records the files they install and packages them.
+builders:
+  fedora:
+    if: distro == 'fedora'
+    image: fedora:43
+    steps:
+      - setup: true
+        run: dnf -y install gcc make
+      - run: make && make install PREFIX=/usr
+  debian:
+    if: distro == 'debian'
+    image: debian:13
+    steps:
+      - setup: true
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
+      - run: make && make install PREFIX=/usr
+  arch:
+    if: distro == 'arch'
+    image: archlinux:base
+    steps:
+      - setup: true
+        run: pacman -Sy --noconfirm gcc make
+      - run: make && make install PREFIX=/usr
+  alpine:
+    if: distro == 'alpine'
+    image: alpine:3.22
+    steps:
+      - setup: true
+        run: apk add --no-cache gcc make musl-dev
+      - run: make && make install PREFIX=/usr

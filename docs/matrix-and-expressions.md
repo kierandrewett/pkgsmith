@@ -10,8 +10,8 @@ matrix:
   arch: [amd64, arm64]
   distro: [fedora, debian]
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
+    - { distro: fedora, format: rpm }
+    - { distro: debian, format: deb }
   exclude:
     - { distro: debian, arch: arm64 }
 ```
@@ -26,12 +26,10 @@ combination of the axes (here 2 x 2 = 4), then applies `exclude`, then `include`
 | `format` | The format of the job. Without this key, a job builds every format the command line asks for |
 | `arch`   | The architecture. Overrides `arch` in the manifest                                           |
 | `distro` | Selects the matching `overrides` entry                                                       |
-| `image`  | The build image of the job. Replaces the top-level `image`                                   |
-| `setup`  | The setup script of the job. Replaces the top-level `setup`. A full script is allowed        |
-| `build`  | The build script of the job. Replaces the top-level `build`                                  |
 | `file`   | The name of the output file. A template. See below                                           |
 
-`setup`, `build` and `file` are not exported as `MATRIX_` variables and are not shown in job names.
+`file` is not exported as a `MATRIX_` variable and is not shown in job names. A build sees only the matrix keys that
+the `by` of its builder lists. See [build environment](build-environment.md#builders).
 
 ### Naming the output file
 
@@ -85,29 +83,29 @@ with the same axis values, such as `{ format: msi, distro: windows }` and `{ for
 
 That makes two common shapes work.
 
-**Add values to jobs the axes already made.** Give each distro its image and format:
+**Add values to jobs the axes already made.** Give each distro its format:
 
 ```yaml
 matrix:
   distro: [fedora, debian]
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
+    - { distro: fedora, format: rpm }
+    - { distro: debian, format: deb }
 ```
 
-Jobs: `distro=fedora, image=fedora:43, format=rpm` and `distro=debian, image=debian:13, format=deb`.
+Jobs: `distro=fedora, format=rpm` and `distro=debian, format=deb`.
 
 **List the jobs by hand.** With no axes, every entry is a job:
 
 ```yaml
 matrix:
   include:
-    - { distro: fedora, image: "fedora:43", format: rpm }
-    - { distro: debian, image: "debian:13", format: deb }
-    - { distro: debian, image: "debian:13", format: tar }
+    - { distro: fedora, format: rpm }
+    - { distro: debian, format: deb }
+    - { distro: debian, format: tar }
 ```
 
-To cross the hand-written jobs with architectures, make `distro` an axis and `include` the image and format as in
+To cross the hand-written jobs with architectures, make `distro` an axis and `include` the format as in
 the first shape. One distro that needs two formats needs two jobs, so list the jobs by hand and add `arch` as a
 second axis only when each job has all its keys in `include`.
 
@@ -203,12 +201,12 @@ An unset name without a default is an error that names the variable.
 | `depends` and the other relation lists                     | yes       | yes      |
 | `contents` `src` and `dst`                                 | yes       | yes      |
 | `contents` `if`, and `if` of a matrix `include` entry      | no        | yes (bare expression) |
-| `image`                                                    | yes       | yes      |
-| `setup`, `build`, `scripts`                                | no        | `${{ }}` only in `setup` and `build` |
+| `image` of a builder                                       | yes       | yes      |
+| `run` and `env` of a step, `scripts`                       | no        | `${{ }}` only in `run` and `env` |
 
 ## Examples
 
-Pick the image, the architecture and the filename per job:
+Give a build a value per architecture. The builder lists the key in `by`, so each value makes its own run:
 
 ```yaml
 matrix:
@@ -216,8 +214,12 @@ matrix:
   include:
     - { arch: amd64, triple: x86_64-linux-gnu }
     - { arch: arm64, triple: aarch64-linux-gnu }
-build: |
-  echo "building for $MATRIX_TRIPLE"
+builders:
+  main:
+    image: debian:13
+    by: [triple]
+    steps:
+      - run: echo "building for $MATRIX_TRIPLE"
 ```
 
 Build one file only for some formats:

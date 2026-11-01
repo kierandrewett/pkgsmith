@@ -3,11 +3,17 @@
 name: acme-tool
 version: 1.0.0
 description: A tool
-image: debian:13
-setup: apt-get update -qq && apt-get install -y gcc make
-build: |
-  make
-  make install PREFIX=/opt/acme-tool
+builders:
+  main:
+    image: debian:13
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: apt-get update -qq && apt-get install -y gcc make
+      - name: Build
+        run: |
+          make
+          make install PREFIX=/opt/acme-tool
 tar:
   compression: zstd
   top_folder: true

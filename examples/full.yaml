@@ -59,50 +59,110 @@ matrix:
 
   # include: add keys to the jobs an entry matches. An entry matches a job when every key of the entry that is also an
   # axis has the job's value. An entry that matches no job becomes a new job.
-  # An entry may carry `image`, `setup` and `build`. They replace the top-level ones of the jobs it matches, so each
-  # distro names the image it builds in and the setup that image needs. `format` fixes the format of those jobs. `file`
-  # `file` names the output file: `{file}` is the name the format picked, so two distros that make the same format do not
-  # overwrite each other.
+  # `format` fixes the format of the jobs an entry makes. `file` names the output file: `{file}` is the name the format
+  # picked, so two distros that make the same format do not overwrite each other.
   include:
-    - { distro: fedora, format: rpm, image: "fedora:43", setup: dnf -y install gcc make }
-    - { distro: opensuse, format: rpm, file: "opensuse-{file}", image: "registry.opensuse.org/opensuse/tumbleweed", setup: zypper -n install gcc make }
-    - { distro: debian, format: deb, image: "debian:13", setup: apt-get update -qq && apt-get install -y gcc make }
-    - { distro: ubuntu, format: deb, file: "ubuntu-{file}", image: "ubuntu:24.04", setup: apt-get update -qq && apt-get install -y gcc make }
-    - { distro: arch, format: archlinux, image: "archlinux:base", setup: pacman -Sy --noconfirm gcc make }
-    - { distro: alpine, format: apk, image: "alpine:3.22", setup: apk add --no-cache gcc make musl-dev }
+    - { distro: fedora, format: rpm }
+    - { distro: opensuse, format: rpm, file: "opensuse-{file}" }
+    - { distro: debian, format: deb }
+    - { distro: ubuntu, format: deb, file: "ubuntu-{file}" }
+    - { distro: arch, format: archlinux }
+    - { distro: alpine, format: apk }
 
   # exclude: drop every job that matches all the keys of an entry.
   exclude:
     - { distro: alpine, arch: arm64 } # no arm64 Alpine build yet
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Build environment (docs/build-environment.md)
+# Builders (docs/build-environment.md)
 # ---------------------------------------------------------------------------------------------------------------------
 
-# The container image the build runs in. Any image works. A matrix entry replaces it, as above. Put an `image` here
-# when every job uses one image. Expressions work here.
-# image: fedora:43
-
-# Runs once, in the image, and is cached as an image. A matrix entry replaces it, as above.
-# Text with a "#!" first line runs as written. Other text runs with `sh -e`.
-# setup: dnf -y install gcc make
-
-# Runs in the image with the build context at /src. A throw-away overlay covers /src, so the build may write there.
-# Everything the build installs outside /src becomes the package.
-# Environment inside the build:
-#   PKGSMITH_NAME  PKGSMITH_VERSION  PKGSMITH_RELEASE  PKGSMITH_ARCH  PKGSMITH_DISTRO
-#   MATRIX_<AXIS>  one variable per matrix value except `format`, e.g. MATRIX_DISTRO, MATRIX_IMAGE
-build: |
-  #!/bin/sh
-  set -e
-  make
-  make install PREFIX=${PREFIX:-/usr}
-
-# Paths the package leaves out: path prefixes or globs. Defaults are listed in docs/contents.md.
-exclude:
-  - /usr/share/doc/** # glob
-  - /usr/lib/debug # prefix
-  - /usr/share/man
+# A builder is a container image and the steps that run in it, in order. A job uses the builder whose `if` is true. Jobs
+# that use one builder share one run of its steps, so a builder that several distros can use builds once.
+#
+# A step runs in a fresh `sh -e` with the build context at /src. A throw-away overlay covers /src, so the build may write
+# there. Everything the steps install outside /src becomes the package.
+#   setup: true      a leading step that runs once and is cached as an image. What it installs is not packaged.
+#   if:              an expression. A builder reads `matrix.NAME`, `distro`, `arch` and `env.NAME`. A step reads only
+#                    `arch`, `env.NAME` and the matrix keys in the `by` of its builder. Neither can read `format`.
+#   by:              matrix keys the steps may read. Each value makes a separate run. The architecture always does.
+#   env:             variables for every step. Their values are literal text.
+#   exclude:         paths the package leaves out: path prefixes or globs. Defaults are listed in docs/contents.md.
+#
+# Environment inside a step:
+#   PKGSMITH_NAME  PKGSMITH_VERSION  PKGSMITH_RELEASE  PKGSMITH_ARCH
+#   MATRIX_<KEY>   one variable for each matrix key in `by`, and PKGSMITH_DISTRO when `distro` is in `by`
+builders:
+  fedora:
+    if: distro == 'fedora'
+    image: fedora:43
+    exclude:
+      - /usr/share/doc/** # glob
+      - /usr/lib/debug # prefix
+      - /usr/share/man
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: dnf -y install gcc make
+      - name: Build
+        run: |
+          make
+          make install PREFIX=${PREFIX:-/usr}
+  opensuse:
+    if: distro == 'opensuse'
+    image: registry.opensuse.org/opensuse/tumbleweed
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: zypper -n install gcc make
+      - name: Build
+        run: |
+          make
+          make install PREFIX=${PREFIX:-/usr}
+  debian:
+    if: distro == 'debian'
+    image: debian:13
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: apt-get update -qq && apt-get install -y gcc make
+      - name: Build
+        run: |
+          make
+          make install PREFIX=${PREFIX:-/usr}
+  ubuntu:
+    if: distro == 'ubuntu'
+    image: ubuntu:24.04
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: apt-get update -qq && apt-get install -y gcc make
+      - name: Build
+        run: |
+          make
+          make install PREFIX=${PREFIX:-/usr}
+  arch:
+    if: distro == 'arch'
+    image: archlinux:base
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: pacman -Sy --noconfirm gcc make
+      - name: Build
+        run: |
+          make
+          make install PREFIX=${PREFIX:-/usr}
+  alpine:
+    if: distro == 'alpine'
+    image: alpine:3.22
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: apk add --no-cache gcc make musl-dev
+      - name: Build
+        run: |
+          make
+          make install PREFIX=${PREFIX:-/usr}
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Contents: add files, or change tracked ones (docs/contents.md)

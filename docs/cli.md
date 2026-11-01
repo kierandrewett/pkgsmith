@@ -67,7 +67,7 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 
 ## Container engine
 
-A job with an `image` runs in a container, so pkgsmith needs the Podman API. A manifest with no `image` needs no engine.
+A job that uses a builder runs in a container, so pkgsmith needs the Podman API. A job that uses no builder needs no engine.
 pkgsmith looks for the API in this order:
 
 1. `CONTAINER_HOST`, if it is set. It takes a `unix://` or `tcp://` address, on every system.

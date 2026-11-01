@@ -1,17 +1,23 @@
 # Build environment
 
-A manifest with an `image` builds in a container. pkgsmith watches what the build installs and packages that.
-This page explains each step and its limits.
+A manifest with a `builders` section builds in a container. pkgsmith watches what the build installs and packages that.
+This page explains each part and its limits.
 
 A container is Linux, so this build makes Linux programs only. For macOS and Windows, see
 [macOS and Windows](macos-and-windows.md).
 
 ```yaml
-image: fedora:43                      # which container
-setup: dnf -y install gcc make        # runs once, cached
-build: |                              # runs on every build
-  make
-  make install PREFIX=/usr
+builders:
+  linux:                              # the name of the builder
+    image: fedora:43                  # which container
+    steps:
+      - name: Install the tools
+        setup: true                   # runs once, cached
+        run: dnf -y install gcc make
+      - name: Build                   # runs on every build
+        run: |
+          make
+          make install PREFIX=/usr
 ```
 
 ## Requirements
@@ -21,53 +27,90 @@ build: |                              # runs on every build
   with a socket in `$XDG_RUNTIME_DIR/pkgsmith-*/` and stops it when the run ends.
 - Docker is not supported. The overlay mount that protects your source folder is a Podman feature.
 
-## `image`
+## Builders
 
-Any container image. Use the distro you build for, because a program links against the libraries of the distro it was
-built on. Set it at the top of the manifest when every build uses one image. Set it in a `matrix` entry when the images
-differ:
+A builder is a container image and the steps that run in it, in order. It works like a job in a GitHub Actions workflow.
+
+| Key       | Meaning                                                                                                   |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| `image`   | The container image. pkgsmith pulls it when it is not on the machine                                      |
+| `if`      | An expression that picks the jobs that use this builder. Without it, every job does                       |
+| `by`      | Matrix keys, besides `arch`, that the steps may read. Each value makes a separate run                      |
+| `env`     | Variables every step gets. The values are literal text                                                    |
+| `exclude` | Paths the package leaves out. See [contents](contents.md)                                                 |
+| `steps`   | The scripts, in order                                                                                     |
+
+### Which builder a job uses
+
+A job uses the builder whose `if` is true.
+
+- No builder: the job has no build. It packages `contents` only, and it needs no Podman. The `dmg`, `msi` and `nsis`
+  jobs of `pkgsmith.yaml` work this way.
+- One builder: its steps run, and the job packages what they installed.
+- Two builders: an error, so a mistake in an `if` cannot quietly change what is built.
+
+The `if` of a builder reads `matrix.NAME`, `distro`, `arch` and `env.NAME`. It cannot read `format`. A build must not
+depend on the format it is packaged as.
 
 ```yaml
-matrix:
-  include:
-    - { format: rpm, distro: fedora, image: "fedora:43", setup: dnf -y install gcc make }
-    - { format: apk, distro: alpine, image: "alpine:3.22", setup: apk add --no-cache gcc make musl-dev }
+builders:
+  linux:
+    if: matrix.distro == 'fedora' || matrix.distro == 'debian'
+    image: debian:13
+    steps: [...]
+  alpine:
+    if: matrix.distro == 'alpine'
+    image: alpine:3.22
+    steps: [...]
 ```
 
-A matrix entry may also set `setup` and `build`. A value in the entry replaces the top-level one for that package.
+## Steps
 
-pkgsmith pulls an image that is not on the machine.
+A step is one script.
 
-## `setup`
+| Key     | Meaning                                                                                                        |
+| ------- | -------------------------------------------------------------------------------------------------------------- |
+| `run`   | The script. Required                                                                                           |
+| `name`  | Shown in the progress output                                                                                   |
+| `if`    | An expression. A false step is skipped                                                                         |
+| `env`   | Variables for this step. The values are literal text                                                           |
+| `setup` | `true` for a leading step that runs once and is cached. See below                                              |
 
-The setup script runs once per image and architecture. Put slow, stable work here: installing compilers and
-libraries. After it ends, pkgsmith saves the container as a local image tagged
-`localhost/pkgsmith-setup:<hash>`. The hash covers the base image, the architecture and the text of the script. Change
-any of them and the next build runs the script again. Otherwise the step shows `CACHED`.
+- Every step runs in a **fresh `sh -e`** with the build context at `/src`. It does not see what an earlier step
+  exported or where it changed directory. It does see the files that earlier steps wrote. Set `PATH` inside the step
+  that needs it.
+- `sh` is `dash` on Debian and `ash` on Alpine. A `#!` line is not special: the text always
+  runs with `sh -e`. Call `bash -c` or `bash script.sh` when you need bash.
+- The `if` of a step reads `arch`, `env.NAME` and the matrix keys in the `by` of its builder.
+- Environment values are written as single-quoted text, so quotes, `$` and backticks in them stay literal. A step
+  that needs a value built from another variable sets it in its `run`.
 
-- Files that `setup` writes are **not** packaged.
-- `--no-cache` runs every setup script again.
+### Setup steps
+
+Use the distro you build for as the image, because a program links against the libraries it was built on.
+
+Steps with `setup: true` come first. They run once per image and architecture. Put slow, stable work here, such as
+installing compilers and libraries.
+
+After they end, pkgsmith saves the container as a local image tagged `localhost/pkgsmith-setup:<hash>`. The hash covers
+the base image, the architecture and the text of the steps. Change any of them and the next build runs them again.
+Otherwise the step shows `CACHED`.
+
+- Files that setup steps write are **not** packaged.
+- `--no-cache` runs every setup step again.
 - `pkgsmith prune` removes the cached images.
 - Builds that need the same setup image wait for the first one to finish it.
+- A setup step after a step that is not a setup step is an error.
 
-## `build`
+### The other steps
 
-The build script runs on top of the setup image.
+They run on top of the setup image.
 
-- The build context is mounted at `/src`, and the script starts there. The context is the folder you pass to
+- The build context is mounted at `/src`, and each step starts there. The context is the folder you pass to
   `pkgsmith build` (default `.`).
 - `/src` is a **throw-away overlay**. The build can write files into it, such as a `build/` folder, and your checkout
   stays unchanged. The writes are dropped when the container is removed.
-- The script runs as root in the container. It can install to `/usr`, `/etc` and `/opt` directly.
-
-### How a script runs
-
-| Script text                         | How it runs                          |
-| ----------------------------------- | ------------------------------------ |
-| Starts with `#!`, for example `#!/bin/bash` | As written, with that interpreter |
-| Anything else                       | With `sh -e`, so the first failing command stops it |
-
-`sh` is `dash` on Debian and `ash` on Alpine. Start the script with `#!/bin/bash` when you need bash.
+- The steps run as root in the container. They can install to `/usr`, `/etc` and `/opt` directly.
 
 ### Environment
 
@@ -77,10 +120,11 @@ The build script runs on top of the setup image.
 | `PKGSMITH_VERSION`  | `version`, as written in the manifest                                  |
 | `PKGSMITH_RELEASE`  | `release`                                                              |
 | `PKGSMITH_ARCH`     | `amd64` or `arm64`                                                     |
-| `PKGSMITH_DISTRO`   | The matrix `distro`, or empty                                          |
-| `MATRIX_<AXIS>`     | Every matrix value except `format`. `MATRIX_DISTRO`, `MATRIX_IMAGE`, `MATRIX_TRIPLE` ... |
+| `PKGSMITH_DISTRO`   | The matrix `distro`. Only when `distro` is in `by`                     |
+| `MATRIX_<KEY>`      | The matrix value of every key in `by`, and of `arch`                   |
 
-The format is left out on purpose. A build must not depend on it, so the formats of one distro share one build.
+The format and every other matrix value are left out. That is what lets jobs share a run: the steps cannot read what
+the jobs do not share.
 
 ### Architecture
 
@@ -111,30 +155,38 @@ Then `contents` entries are applied on top. See [contents](contents.md).
   numeric ids.
 - If the build installs nothing outside `/src`, pkgsmith stops and says so.
 
-## One build, many formats
+## One build, many formats and distros
 
-Two jobs share a build when they have the same image, setup, build script, `exclude` list, source folder and
-build environment. Formats are not part of that. A matrix with `deb`, `tar` and `rpm` jobs on one image runs the build
-once and packages the result three times.
+Two jobs share a run when they have all of these in common:
 
-### One build for several distros
+- The same builder and the same architecture.
+- The same value for every key in `by`.
+- The same steps, after the conditions are decided.
+- The same `exclude` list and the same source folder.
 
-A build sees every matrix value, `distro` included, so jobs of different distros are different builds even when they
-use one image. When the build does not depend on the distro, list what it does depend on in `build_axes`:
+The format is not part of that. A matrix with `deb`, `tar` and `rpm` jobs on one builder runs the build once and
+packages the result three times.
+
+By default `by` is empty, so the distro is not part of it either. The rpm, deb and Arch jobs of this repository use one
+builder, and `pkgsmith plan` shows one `BUILD` letter for them:
 
 ```yaml
-build_axes: [arch]
-image: debian:13
-matrix:
-  arch: [amd64, arm64]
-  distro: [fedora, debian, arch]
+builders:
+  linux:
+    if: matrix.distro == 'fedora' || matrix.distro == 'debian' || matrix.distro == 'arch'
+    image: debian:13
+    steps: [...]
+  alpine:
+    if: matrix.distro == 'alpine'
+    image: alpine:3.22
+    steps: [...]
 ```
 
-The build then sees only the matrix values in `build_axes`, and no `PKGSMITH_DISTRO`. The jobs of the three distros
-share one build per architecture, and each distro only packages it. `pkgsmith plan` shows this as one `BUILD` letter.
+If a build does depend on the distro, put `distro` in `by`. Then every distro makes its own run, and the steps can read
+`matrix.distro` and `PKGSMITH_DISTRO`.
 
 A program built on one distro runs on distros with the same or a newer glibc. Build on the one with the oldest glibc,
-and test the packages on the others. The architecture always counts, because the build environment holds it.
+and test the packages on the others. A distro with another libc, such as Alpine with musl, needs its own builder.
 
 ## Concurrency
 

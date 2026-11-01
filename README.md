@@ -44,8 +44,8 @@ pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `ma
 
 pkgsmith runs on Linux, macOS and Windows. What a build needs depends on the manifest:
 
-- A manifest with no `image` packages files that are already on your machine. It needs no container engine on any system.
-- A manifest with an `image` runs `setup` and `build` in a container. It needs [Podman](https://podman.io/) and its API.
+- A job that uses no builder packages files that are already on your machine. It needs no container engine on any system.
+- A job that uses a builder runs its steps in a container. It needs [Podman](https://podman.io/) and its API.
   On Linux a user socket is enough. On macOS run `podman machine init` once and `podman machine start`. On Windows start
   Podman and set `CONTAINER_HOST` to a `tcp://` address that it serves. See [command line](docs/cli.md#container-engine).
 
@@ -92,26 +92,45 @@ description: A demo that packages a small C program
 maintainer: Kieran Drewett <kieran@drewett.dev>
 license: MIT
 
-build: |
-  make
-  make install PREFIX=/usr
-
 matrix:
   include:
     - format: rpm
       distro: fedora
-      image: fedora:43
-      setup: dnf -y install gcc make
     - format: deb
       distro: debian
-      image: debian:13
-      setup: |
-        apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
     - format: apk
       distro: alpine
-      image: alpine:3.22
-      setup: apk add --no-cache gcc make musl-dev
+
+builders:
+  fedora:
+    if: distro == 'fedora'
+    image: fedora:43
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: dnf -y install gcc make
+      - name: Build
+        run: make && make install PREFIX=/usr
+  debian:
+    if: distro == 'debian'
+    image: debian:13
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
+      - name: Build
+        run: make && make install PREFIX=/usr
+  alpine:
+    if: distro == 'alpine'
+    image: alpine:3.22
+    steps:
+      - name: Install the build tools
+        setup: true
+        run: apk add --no-cache gcc make musl-dev
+      - name: Build
+        run: make && make install PREFIX=/usr
 ```
 
 Build it:
@@ -121,12 +140,12 @@ cd examples/demo
 pkgsmith build        # the packages go to ./dist
 ```
 
-Each `matrix` entry is one package:
+Each `matrix` entry is one package. A job uses the builder whose `if` is true:
 
-- `image` is the container the entry builds in.
-- `setup` runs once in that image and the result is cached. It can be one command or a full script.
-- `build` runs in the image with your source at `/src`. pkgsmith records the files it installs and packages them.
-  Entries with the same image and scripts share one build.
+- `image` is the container the builder works in.
+- A step with `setup: true` runs once in that image and the result is cached.
+- The other steps run in the image with your source at `/src`. pkgsmith records the files they install and packages them.
+  Jobs that use one builder share one build, so a builder that several distros can use compiles once.
 
 To choose the files yourself, add a `contents` list. See [contents](docs/contents.md). pkgsmith packages itself with
 [pkgsmith.yaml](pkgsmith.yaml).
@@ -152,7 +171,7 @@ Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter
 | [Getting started](docs/getting-started.md)        | A package from scratch, step by step            |
 | [Manifest](docs/manifest.md)                      | Every key                                       |
 | [Contents](docs/contents.md)                      | Files, trees, links and config files            |
-| [Build environment](docs/build-environment.md)    | Images, setup, the tracked build, caching       |
+| [Build environment](docs/build-environment.md)    | Builders, steps, the tracked build, caching     |
 | [macOS and Windows](docs/macos-and-windows.md)    | Compile on the target system, then package      |
 | [Matrix and expressions](docs/matrix-and-expressions.md) | One manifest for many distros and architectures |
 | [Versions](docs/versions.md)                      | How one version becomes each format's spelling  |
@@ -171,9 +190,9 @@ comments each one.
 - pkgsmith does not find the shared libraries a program needs. List them in `depends`.
 - Builds run for `linux/amd64` and `linux/arm64`, and only with Podman. Docker is not supported.
 - pkgsmith does not compile for macOS or Windows. Compile there, or compile with your own tools, and package the files
-  with a manifest that has no `image`. See [macOS and Windows](docs/macos-and-windows.md).
+  with a manifest whose jobs use no builder. See [macOS and Windows](docs/macos-and-windows.md).
 - Packages are signed only when you give `--sign-key`. See [signing](docs/signing.md).
-- There is no built-in support for a language. Install the toolchain in `setup` and run its build in `build`.
+- There is no built-in support for a language. Install the toolchain in a setup step and run its build in a step.
   [examples/rust-cli.yaml](examples/rust-cli.yaml) does this for Cargo.
 
 ## Build and test
