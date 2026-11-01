@@ -22,6 +22,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
 | `dmg`       | `.dmg`                           | macOS                                | `fsck.hfsplus`, `7z`, `dmg2img`, not macOS |
+| `msi`       | `.msi`                           | Windows                              | `msitools` read and extract, not Windows |
 | `nsis`      | `.exe`                           | Windows                              | `makensis`, run under Wine, not native Windows |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
@@ -248,6 +249,51 @@ Not checked:
 - Installing without adding the Flathub remote first.
 - A graphical app.
 - `finish_args` beyond the keys written to the metadata.
+
+## msi
+
+An `.msi` is a Windows Installer package. It is a database of tables, a Summary Information stream and the files in one
+embedded cabinet. pkgsmith writes all three in pure Rust, so no tool is needed to build one. The package is written
+unsigned.
+
+Every folder is a component whose key path is the folder, and every file is a component of its own. A newer package with the
+same name and upgrade code replaces an older one: the `Upgrade` table finds older versions, and `RemoveExistingProducts`
+removes them after the new files are installed.
+
+- The version is `MAJOR.MINOR.PATCH`, with parts of at most 255, 255 and 65535. The release and a pre-release text are
+  not written. Each warns.
+- File names must be ASCII and must not have characters that Windows refuses. Two names that differ only in case stop
+  the build. A name that is not a valid 8.3 name gets a short name, for example `A-RATH~1.CON|a-rather-long-name.conf`.
+- Paths are taken relative to `prefix`. `/usr/bin/hi.exe` goes to `bin\hi.exe` in the install folder.
+- The package needs at least one file, and at most 32767.
+- Dependencies, scripts, `license`, symbolic links, ghost entries, owners and modes have no place in an MSI. Each one
+  warns. A configuration file is installed as an ordinary file.
+
+| Key            | Values                              | Default                                              | Effect                                              |
+| -------------- | ----------------------------------- | ---------------------------------------------------- | --------------------------------------------------- |
+| `scope`        | `machine`, `user`                   | `machine`                                            | `machine` installs for all users and needs elevation. `user` installs for the current user |
+| `install_dir`  | A folder, written with `\` or `/`   | The package name, and `Programs\NAME` for `user`     | The folder below Program Files or the local application data folder |
+| `manufacturer` | Text                                | The maintainer                                       | The manufacturer Windows shows. One of the two is required |
+| `upgrade_code` | A GUID                              | Derived from the package name                        | Every version of a package shares it                |
+| `prefix`       | An absolute Unix path               | `/usr`                                               | Entry paths are taken relative to it. A path outside it stops the build |
+
+With `scope: machine`, the files go to `ProgramFiles64Folder` for `amd64` and `arm64`, and to `ProgramFilesFolder` for
+`all`.
+
+The product code, the component codes and the package code come from the name, version and architecture, so equal input
+gives equal codes.
+
+Checked with `scripts/verify-formats.sh msi`: `msiinfo` lists the tables and the Summary Information, `msiextract` extracts the cabinet,
+and every file is byte for byte equal to its source. That includes a 1.5 MiB file, an empty file and names with spaces. The
+`msiinfo export` output of the tables was read by hand for both scopes.
+
+Not checked:
+
+- Installing and uninstalling with `msiexec` on Windows.
+- Validation with the ICE rules. A `user` package will fail ICE38, which wants a registry key as the key path of each
+  component in the user profile.
+- The sequence numbers beyond the Microsoft documentation. `FindRelatedProducts` at 25 is a convention, and the
+  documentation only requires it to come before `RemoveExistingProducts`.
 
 ## nsis
 

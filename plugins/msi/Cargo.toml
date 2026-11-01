@@ -1,0 +1,21 @@
+[package]
+name = "pkgsmith-plugin-msi"
+version = "0.1.0"
+edition = "2024"
+description = "pkgsmith plugin: Windows Installer packages (.msi)"
+license = "MIT"
+repository = "https://github.com/kierandrewett/pkgsmith"
+publish = false
+
+[lib]
+name = "pkgsmith_plugin_msi"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0.104"
+cab = "0.6.0"
+msi = "0.11.1"
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+serde = { version = "1.0.229", features = ["derive"] }
+time = "0.3"
+uuid = { version = "1", features = ["v5"] }

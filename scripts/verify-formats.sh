@@ -294,6 +294,52 @@ if selected dmg; then
         long="$(printf "n%.0s" $(seq 1 200)).txt"
         find ex -type f -name "$long" | grep -q .'
 fi
+if selected msi; then
+    rm -rf lang/msi; mkdir -p "lang/msi/share/hi docs" lang/msi/bin lang/msi/empty
+    printf 'MZ-fake\n' > lang/msi/bin/hi.exe; chmod 755 lang/msi/bin/hi.exe
+    head -c 1572864 /dev/urandom > lang/msi/share/big.bin
+    : > lang/msi/share/empty.txt
+    printf 'spaced\n' > "lang/msi/share/hi docs/read me.txt"
+    printf 'long\n' > lang/msi/share/a-rather-long-file-name.configuration
+    cat > lang-msi.yaml <<'YAML'
+name: hi
+version: 1.2.3
+arch: amd64
+description: Says hi
+maintainer: Test Person <test@example.org>
+contents:
+  - src: lang/msi/bin/hi.exe
+    dst: /usr/bin/hi.exe
+  - src: lang/msi/share/big.bin
+    dst: /usr/share/big.bin
+  - src: lang/msi/share/empty.txt
+    dst: /usr/share/empty.txt
+  - src: "lang/msi/share/hi docs/read me.txt"
+    dst: "/usr/share/hi docs/read me.txt"
+  - src: lang/msi/share/a-rather-long-file-name.configuration
+    dst: /usr/share/a-rather-long-file-name.configuration
+  - type: dir
+    dst: /usr/lib/empty
+msi:
+  manufacturer: Example Ltd
+YAML
+    check "msi: build" build_lang msi
+    cp -r lang/msi out-msi/src
+    # msitools reads the database and extracts the cabinet. It cannot install, so this does not prove that Windows accepts it.
+    check "msi: msiinfo tables and Summary Information, msiextract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi '
+        dnf -y -q install msitools diffutils findutils >/dev/null
+        cd /tmp; f=$(ls /p/*.msi)
+        msiinfo tables "$f" | grep -qx InstallExecuteSequence
+        msiinfo suminfo "$f" | grep -q "Template: x64;1033"
+        msiinfo export "$f" File | grep -q "A-RATH~1.CON|a-rather-long-file-name.configuration"
+        msiextract -C ex "$f" >/dev/null
+        test "$(find ex -type f | wc -l)" -eq 5
+        cmp ex/hi/share/big.bin /p/src/share/big.bin
+        cmp ex/hi/bin/hi.exe /p/src/bin/hi.exe
+        cmp "ex/hi/share/hi docs/read me.txt" "/p/src/share/hi docs/read me.txt"
+        cmp ex/hi/share/empty.txt /p/src/share/empty.txt
+        cmp ex/hi/share/a-rather-long-file-name.configuration /p/src/share/a-rather-long-file-name.configuration'
+fi
 if selected flatpak; then
     if need flatpak; then
         mkdir -p lang/flatpak/bin
