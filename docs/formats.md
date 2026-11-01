@@ -22,7 +22,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
 | `dmg`       | `.dmg`                           | macOS                                | `fsck.hfsplus`, `7z`, `dmg2img`, not macOS |
-| `nsis`      | `.exe`                           | Windows 10 and 11                    | `makensis`, run under Wine, not native Windows |
+| `nsis`      | `.exe`                           | Windows                              | `makensis`, run under Wine, not native Windows |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
@@ -256,6 +256,13 @@ practical writer in Rust, so pkgsmith writes an `.nsi` script and runs `makensis
 
 `makensis` must be on `PATH` when you build. Without it the build stops and names the packages that carry it: `nsis` on
 Debian and Arch, and `mingw32-nsis` on Fedora.
+
+NSIS itself can build installers that run on any Windows from 95 to 11, according to its own documentation. The script
+that pkgsmith writes is narrower:
+
+- It is a Unicode installer, so it needs a Windows based on NT.
+- The default install folder is `$PROGRAMFILES64`, so it needs 64-bit Windows unless you set `install_dir`.
+- No Windows version has been tested, so the oldest one that works is unknown.
 
 Each file gets its own `File` line, so the uninstaller removes exactly the files of the manifest. Configuration files are
 copied only when they are missing, and the uninstaller keeps them.
