@@ -57,6 +57,7 @@ pub fn outline(manifest: &Manifest, format: &str, options: &Options) -> Package 
         name: manifest.name.clone(),
         version: manifest.version.clone(),
         release: manifest.release.clone(),
+        epoch: manifest.epoch,
         arch: manifest.arch.clone(),
         description: manifest.description.clone(),
         maintainer: manifest.maintainer.clone(),

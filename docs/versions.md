@@ -59,3 +59,23 @@ $ pkgsmith build . --build-arg VERSION=0.4.3-nightly.20261031.142.gabc1234
 when the version changes.
 
 `tar` and `zip` get the version as written.
+
+## Epoch
+
+An epoch makes a version sort above every version with a lower epoch, whatever the numbers are. Use it only to repair
+a version that went the wrong way, for example after a project changed its numbering.
+
+```yaml
+version: 0.1.12
+epoch: 1
+```
+
+| Format      | Where the epoch goes                                              |
+| ----------- | ----------------------------------------------------------------- |
+| `rpm`       | The `Epoch` tag. The file name has no epoch                       |
+| `deb`       | `1:0.1.12-1` in the `Version` field. The file name has no epoch   |
+| `archlinux` | `1:0.1.12-1` in `pkgver`, and in the file name, as `makepkg` does |
+| others      | Ignored                                                           |
+
+A dependency on a version with an epoch carries the epoch in the syntax of its format: `gnoblin = 1:0.1.12-1` for `rpm`.
+

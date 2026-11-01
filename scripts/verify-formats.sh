@@ -120,6 +120,33 @@ if selected zip; then
     check "zip: build" build zip
     check "zip: unzip -t and the symlink" sh -c 'unzip -tq out-zip/hi-1.0.0-amd64.zip && unzip -Z out-zip/hi-1.0.0-amd64.zip | grep -q "usr/bin/hello"'
 fi
+if selected epoch; then
+    rm -rf lang/epoch; mkdir -p lang/epoch
+    printf '#!/bin/sh\necho hi\n' > lang/epoch/hi; chmod 755 lang/epoch/hi
+    cat > lang-epoch.yaml <<'YAML'
+name: hi
+version: 1.0.0
+epoch: 2
+description: Says hi
+maintainer: Test <test@example.org>
+contents:
+  - src: lang/epoch/hi
+    dst: /usr/bin/hi
+YAML
+    check "epoch: build rpm, deb and archlinux" "$PKGSMITH" build . -f lang-epoch.yaml -F rpm,deb,archlinux -o out-epoch --progress plain
+    check "epoch: rpm records Epoch 2 and the provide, installs, rpm -q shows 2: (latest Fedora)" in_image "$IMAGE_FEDORA" out-epoch '
+        f=$(ls /p/*.rpm); test "$(rpm -qp --qf "%{EPOCH}" "$f")" = 2
+        rpm -qp --provides "$f" | grep -q "^hi = 2:1.0.0-1"
+        rpm -i --nodeps "$f"; test "$(rpm -q --qf "%{EPOCH}:%{VERSION}-%{RELEASE}" hi)" = "2:1.0.0-1"
+        rpm -V hi'
+    check "epoch: deb Version has 2: and dpkg orders it above a higher number (latest Debian)" in_image "$IMAGE_DEBIAN" out-epoch '
+        f=$(ls /p/*.deb); test "$(dpkg-deb -f "$f" Version)" = "2:1.0.0-1"
+        dpkg -i "$f" >/dev/null; dpkg --compare-versions "2:1.0.0-1" gt "9.9.9-1"; test "$(dpkg-query -W -f "\${Version}" hi)" = "2:1.0.0-1"'
+    check "epoch: archlinux file name and pkgver have 2: (latest Arch)" in_image "$IMAGE_ARCH" out-epoch '
+        f=$(ls /p/*.pkg.tar.zst); case "$f" in */hi-2:1.0.0-1-*) ;; *) echo "bad name $f"; exit 1;; esac
+        test "$(pacman -Qpi "$f" | sed -n "s/^Version *: //p")" = "2:1.0.0-1"
+        test "$(vercmp 2:1.0.0-1 9.9.9-1)" = 1'
+fi
 if selected rpm; then
     check "rpm: build" build rpm
     check "rpm: install, run, verify, remove (latest Fedora)" in_image "$IMAGE_FEDORA" out-rpm '

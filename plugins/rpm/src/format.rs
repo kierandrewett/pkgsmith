@@ -32,6 +32,7 @@ const HEADERIMMUTABLE: u32 = 63;
 const HEADERI18NTABLE: u32 = 100;
 const NAME: u32 = 1000;
 const VERSION: u32 = 1001;
+const EPOCH: u32 = 1003;
 const RELEASE: u32 = 1002;
 const SUMMARY: u32 = 1004;
 const DESCRIPTION: u32 = 1005;
@@ -541,7 +542,11 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
             tags.push((*program_tag, Value::Str(program)));
         }
     }
-    let nevr = format!("{version}-{}", package.release);
+    let nevr = if package.epoch > 0 {
+        format!("{}:{version}-{}", package.epoch, package.release)
+    } else {
+        format!("{version}-{}", package.release)
+    };
     let mut provides = Deps::new();
     provides.add(&package.name, EQUAL, &nevr);
     if arch != "noarch" {
@@ -605,6 +610,9 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
         (PAYLOADFLAGS, text(flags)),
         (FILEDIGESTALGO, Value::Int32(vec![8])),
     ]);
+    if package.epoch > 0 {
+        tags.push((EPOCH, Value::Int32(vec![package.epoch])));
+    }
     if let Ok(size) = u32::try_from(installed) {
         tags.push((SIZE, Value::Int32(vec![size])));
     } else {

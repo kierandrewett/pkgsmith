@@ -129,7 +129,12 @@ fn control(package: &Package, flavour: Flavour, version: &str) -> Result<String>
 
 pub fn build(package: &Package, flavour: Flavour) -> Result<PathBuf> {
     let semver = Version::parse(&package.version)?;
-    let version = format!("{}-{}", semver.tilde(), package.release);
+    let epoch = if package.epoch > 0 {
+        format!("{}:", package.epoch)
+    } else {
+        String::new()
+    };
+    let version = format!("{epoch}{}-{}", semver.tilde(), package.release);
     let mtime = package.mtime;
 
     let mut control_files = vec![Leading {

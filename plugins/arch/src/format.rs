@@ -122,8 +122,13 @@ fn mtree(entries: &[Entry], leading: &[Leading], mtime: u64) -> Result<String> {
 
 /// `name-pkgver-release-arch.pkg.tar.zst`.
 pub fn file_name(package: &Package) -> Result<String> {
+    let epoch = if package.epoch > 0 {
+        format!("{}:", package.epoch)
+    } else {
+        String::new()
+    };
     let version = format!(
-        "{}-{}",
+        "{epoch}{}-{}",
         Version::parse(&package.version)?.arch(),
         package.release
     );
@@ -135,8 +140,13 @@ pub fn file_name(package: &Package) -> Result<String> {
 }
 
 pub fn build(package: &Package) -> Result<PathBuf> {
+    let epoch = if package.epoch > 0 {
+        format!("{}:", package.epoch)
+    } else {
+        String::new()
+    };
     let version = format!(
-        "{}-{}",
+        "{epoch}{}-{}",
         Version::parse(&package.version)?.arch(),
         package.release
     );

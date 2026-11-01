@@ -23,6 +23,9 @@ pub struct Package {
     /// As written in the manifest, `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-prerelease`. See [`crate::version`].
     pub version: String,
     pub release: String,
+    /// The epoch of the version. `0` means none. `rpm`, `deb` and `archlinux` write it, and the others ignore it.
+    #[serde(default)]
+    pub epoch: u32,
     /// `amd64`, `arm64` or `all`.
     pub arch: String,
     /// The first line is the summary, the rest the long text.

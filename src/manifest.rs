@@ -198,6 +198,9 @@ pub struct Manifest {
     pub version: String,
     #[serde(default = "one")]
     pub release: String,
+    /// Raises a version over every version with a lower epoch, whatever their numbers. `0` leaves it out.
+    #[serde(default)]
+    pub epoch: u32,
     /// `amd64`, `arm64` or `all` (no compiled code).
     #[serde(default = "amd64")]
     pub arch: String,
