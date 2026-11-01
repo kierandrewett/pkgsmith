@@ -460,4 +460,72 @@ mod tests {
         );
         assert_eq!(join("", "/usr/bin/hi"), "usr/bin/hi");
     }
+
+    /// A package with an executable and a logo, written below `dir`.
+    fn sample(dir: &std::path::Path, options: serde_json::Value) -> Package {
+        let mut entries = Vec::new();
+        for (path, text) in [("/usr/bin/hello.exe", "MZ"), ("/usr/share/logo.png", "PNG")] {
+            let src = dir.join(path.rsplit('/').next().unwrap());
+            std::fs::write(&src, text).unwrap();
+            entries.push(Entry {
+                path: path.into(),
+                data: Data::File {
+                    src,
+                    size: text.len() as u64,
+                },
+                mode: 0o755,
+                owner: "root".into(),
+                group: "root".into(),
+                config: false,
+            });
+        }
+        Package {
+            name: "hello".into(),
+            version: "1.2.3".into(),
+            release: "1".into(),
+            arch: "amd64".into(),
+            description: "Says hi".into(),
+            entries,
+            options,
+            mtime: 1_700_000_000,
+            out: dir.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    /// The text of a member of a package.
+    fn member(path: &std::path::Path, name: &str) -> String {
+        use std::io::Read;
+        let mut archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
+        let mut text = String::new();
+        archive.by_name(name).unwrap().read_to_string(&mut text).unwrap();
+        text
+    }
+
+    #[test]
+    fn each_flavour_has_its_extension_and_default_windows_version() {
+        use crate::{APPX, MSIX};
+        let dir = tempfile::tempdir().unwrap();
+        let options = serde_json::json!({
+            "executable": "/usr/bin/hello.exe",
+            "logo": "/usr/share/logo.png",
+            "publisher": "CN=Example Ltd",
+        });
+        for (flavour, extension, min) in [(MSIX, "msix", "10.0.17763.0"), (APPX, "appx", "10.0.14393.0")] {
+            let package = sample(dir.path(), options.clone());
+            assert_eq!(
+                file_name(flavour, &package).unwrap(),
+                format!("hello_1.2.3.1_x64.{extension}")
+            );
+            let path = build(flavour, &package, &Host::silent()).unwrap();
+            assert_eq!(path, dir.path().join(format!("hello_1.2.3.1_x64.{extension}")));
+            let manifest = member(&path, "AppxManifest.xml");
+            assert!(manifest.contains(&format!("MinVersion=\"{min}\"")), "{manifest}");
+        }
+        // An explicit min_windows wins over either default.
+        let mut explicit = options.clone();
+        explicit["min_windows"] = "10.0.19041.0".into();
+        let path = build(APPX, &sample(dir.path(), explicit), &Host::silent()).unwrap();
+        assert!(member(&path, "AppxManifest.xml").contains("MinVersion=\"10.0.19041.0\""));
+    }
 }

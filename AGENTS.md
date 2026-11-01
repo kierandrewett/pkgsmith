@@ -20,8 +20,9 @@ format and every signing method is a plugin: a shared library named `pkgsmith-pl
 
 Update the documentation in the same change as the code. A change is not finished until this list is done.
 
-1. A new or changed **format plugin**: add or update its row in the format table of `README.md`, its options in
-   `docs/plugins.md` (the table of format options), and an example in `examples/` when it helps.
+1. A new or changed **format plugin**: add or update its row in the format table of `README.md`, its row and its section
+   in `docs/formats.md` (the table of format options and what the format was checked with), and an example in
+   `examples/` when it helps. `docs/plugins.md` only says how options reach a plugin, and links to `docs/formats.md`.
 2. A new or changed **signer plugin** or signing option: update `docs/signing.md` and `docs/cli.md`.
 3. A new or changed **command line option or command**: update `docs/cli.md`, and the command table in `README.md`.
 4. A new or changed **script function or field**: update `docs/manifest.md`, `docs/scripting.md` when it changes how a

@@ -474,7 +474,11 @@ for fmt in msix appx; do
     printf 'MZ-fake\n' > "pre-$fmt/usr/bin/hi.exe"; chmod 755 "pre-$fmt/usr/bin/hi.exe"
     head -c 200000 /dev/urandom > "pre-$fmt/usr/share/hi/big.bin"
     yes 'text line of text' | head -c 300000 > "pre-$fmt/usr/share/hi/notes.txt"
-    printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==' | base64 -d > "pre-$fmt/usr/share/hi/logo.png"
+    # A 150 by 150 pixel PNG, the size the docs ask for.
+    python3 -c 'import struct, sys, zlib
+def chunk(kind, data): return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+rows = b"".join(b"\x00" + b"\xff\x00\x00\xff" * 150 for _ in range(150))
+sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 150, 150, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))' > "pre-$fmt/usr/share/hi/logo.png"
     cat > "lang-$fmt.star" <<STAR
 package(
     "$fmt", name = "hello", version = "1.2.3", arch = "amd64", description = "Says hi",
