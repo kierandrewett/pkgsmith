@@ -116,6 +116,15 @@ A package must not own `/usr` or `/usr/bin`. System folders such as `/usr`, `/us
 package made from a prefix, unless a `directory(...)` entry asks for them. The `rpm` carries only the folders that some
 entry names.
 
+A folder that held files and lost them all to `exclude` or `include` is dropped too, so `exclude("/etc/app/**")` removes
+`/etc/app` as well.
+
+To own only some folders, set `own_dirs` to the paths of those folders:
+
+- `own_dirs = ["/usr/share/myapp", "/usr/share/myapp/**"]` owns the folder of the program and the folders below it.
+- `own_dirs = []` owns no folder.
+- A `directory(...)` entry is always kept.
+
 The formats that need folder entries to unpack files (`deb`, `ipk`, `apk`, `archlinux`) add the parents of every file
 as folders owned by root with mode `0755`. The package manager does not change the mode of a folder that already
 exists.

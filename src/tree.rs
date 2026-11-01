@@ -126,7 +126,9 @@ fn walk(src: &Path, dst: &str, content: &Content, out: &mut Vec<Entry>) -> Resul
 /// Is `path` inside one of the excluded locations? An exclude is a path prefix or a glob.
 pub fn excluded(path: &str, excludes: &[String]) -> bool {
     excludes.iter().any(|rule| {
+        // `/etc/app/**` names everything below the folder and the folder itself.
         let rule = rule.trim_end_matches('/');
+        let rule = rule.strip_suffix("/**").unwrap_or(rule);
         path == rule
             || path
                 .strip_prefix(rule)
@@ -318,6 +320,17 @@ pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
         }
     }
     let matches = |path: &str, rules: &[String]| excluded(path, rules);
+    // Folders that hold something now, before the filters take files away.
+    let had_children: Vec<String> = found
+        .values()
+        .filter(|e| e.is_dir())
+        .filter(|dir| {
+            found
+                .keys()
+                .any(|p| p.starts_with(&format!("{}/", dir.path)))
+        })
+        .map(|dir| dir.path.clone())
+        .collect();
     let mut entries: Vec<Entry> = found
         .into_values()
         .filter(|entry| {
@@ -341,6 +354,23 @@ pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
                         .iter()
                         .any(|path| path.starts_with(&format!("{}/", entry.path))))
         });
+    }
+    // A folder that held files and lost them all to exclude or include goes too, unless the script asked for it.
+    loop {
+        let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+        let before = entries.len();
+        entries.retain(|e| {
+            !(e.is_dir()
+                && had_children.contains(&e.path)
+                && !asked.contains(&e.path)
+                && !paths.iter().any(|p| p.starts_with(&format!("{}/", e.path))))
+        });
+        if entries.len() == before {
+            break;
+        }
+    }
+    if let Some(own) = &manifest.own_dirs {
+        entries.retain(|e| !e.is_dir() || asked.contains(&e.path) || matches(&e.path, own));
     }
     for entry in &mut entries {
         if !entry.is_dir() && matches(&entry.path, &manifest.config_files) {
@@ -516,6 +546,55 @@ mod tests {
             entries
                 .iter()
                 .any(|e| e.path == "/etc/passwd" && matches!(e.data, Data::Symlink { .. }))
+        );
+    }
+
+    #[test]
+    fn excluding_everything_in_a_folder_drops_the_folder_and_own_dirs_picks_the_owned_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in [
+            "usr/bin/core",
+            "usr/bin/app",
+            "usr/share/applications/app.desktop",
+            "etc/geoclue/conf.d/50.conf",
+        ] {
+            let path = dir.path().join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "x").unwrap();
+        }
+        let make = |extra: serde_json::Value| {
+            let mut base = json!({"name": "demo", "version": "1", "description": "d", "format": "rpm",
+                "contents": [{"src": "/", "dst": "/", "type": "tree"}]});
+            base.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let m = Manifest::from_spec(
+                Manifest::parse_spec(base).unwrap(),
+                dir.path().to_path_buf(),
+                dir.path().to_path_buf(),
+            )
+            .unwrap();
+            resolve(&m)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.path)
+                .collect::<Vec<_>>()
+        };
+        let paths = make(
+            json!({"exclude": ["/usr/bin/app", "/usr/share/applications/app.desktop", "/etc/geoclue/**"]}),
+        );
+        assert_eq!(paths, ["/usr/bin/core"]);
+        let own = make(json!({"own_dirs": ["/etc/geoclue", "/etc/geoclue/**"]}));
+        assert!(own.contains(&"/etc/geoclue/conf.d".to_string()));
+        assert!(
+            !own.contains(&"/usr/share/applications".to_string()),
+            "{own:?}"
+        );
+        assert!(own.contains(&"/usr/share/applications/app.desktop".to_string()));
+        assert!(
+            !make(json!({"own_dirs": []}))
+                .iter()
+                .any(|p| p == "/etc/geoclue")
         );
     }
 

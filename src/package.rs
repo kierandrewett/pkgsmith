@@ -93,12 +93,13 @@ pub fn assemble(manifest: &Manifest, format: &str, options: &Options) -> Result<
 }
 
 /// The name of the output file. A target may set `file`, a template that replaces the name the plugin picked.
-/// `{file}` is the name the plugin picked. `{name}`, `{version}`, `{release}`, `{arch}`, `{format}` and `{distro}` are
+/// `{file}` is the name the plugin picked. `{name}`, `{version}`, `{release}`, `{epoch}`, `{arch}`, `{format}` and `{distro}` are
 /// the fields of the package. The result is a file name: no folder, not empty, not hidden.
 pub fn output_name(job: &Job, package: &Package, default: &str) -> Result<String> {
     let Some(template) = job.values.get("file") else {
         return Ok(default.to_string());
     };
+    let epoch = package.epoch.to_string();
     let mut name = String::new();
     let mut rest = template.as_str();
     while let Some(open) = rest.find('{') {
@@ -112,11 +113,12 @@ pub fn output_name(job: &Job, package: &Package, default: &str) -> Result<String
             "name" => &package.name,
             "version" => &package.version,
             "release" => &package.release,
+            "epoch" => epoch.as_str(),
             "arch" => &package.arch,
             "format" => &package.format,
             "distro" => package.distro.as_deref().unwrap_or(""),
             other => anyhow::bail!(
-                "file {template:?}: unknown placeholder {{{other}}}; use file, name, version, release, arch, format or distro"
+                "file {template:?}: unknown placeholder {{{other}}}; use file, name, version, release, epoch, arch, format or distro"
             ),
         });
         rest = &after[close + 1..];

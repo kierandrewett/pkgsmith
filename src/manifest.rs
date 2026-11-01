@@ -102,6 +102,10 @@ pub struct TargetSpec {
     /// Paths (globs) of the package that are configuration files: kept on upgrade and removal when the user changed them.
     #[serde(default)]
     pub config_files: Vec<String>,
+    /// The folders that the package owns, as path globs. Without it the package owns every folder of the prefix that
+    /// holds a file of the package, except the folders of the system. An empty list owns none. Folders that
+    /// `directory(...)` asks for are always owned.
+    pub own_dirs: Option<Vec<String>>,
 }
 
 /// One package as the rest of pkgsmith sees it.
@@ -128,6 +132,7 @@ pub struct Manifest {
     pub exclude: Vec<String>,
     pub include: Vec<String>,
     pub config_files: Vec<String>,
+    pub own_dirs: Option<Vec<String>>,
     /// The folder of the script. Script files (install scripts) resolve against it.
     pub base: PathBuf,
     /// The prefix: the read-only folder that holds the files to package. A relative `src` resolves against it.
@@ -234,6 +239,7 @@ impl Manifest {
             exclude: spec.exclude,
             include: spec.include,
             config_files: spec.config_files,
+            own_dirs: spec.own_dirs,
         };
         if manifest.options.as_object().is_some_and(|o| o.is_empty()) {
             manifest.options = serde_json::Value::Null;

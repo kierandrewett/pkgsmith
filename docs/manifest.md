@@ -225,6 +225,7 @@ Each field is a list of text. See [dependencies](dependencies.md) for the syntax
 | `exclude`      | list | `[]`    | Path globs of the package to leave out, such as `"/usr/share/doc/**"`           |
 | `include`      | list | `[]`    | Path globs of the package to keep. Everything else goes. Empty keeps everything |
 | `config_files` | list | `[]`    | Path globs of files that are configuration files, kept on upgrade               |
+| `own_dirs`     | list | unset   | Path globs of the folders the package owns. `[]` owns none. Unset owns all but system folders |
 
 The paths in these lists are paths in the package, as they read on the installed system. A glob such as `/etc/**`
 matches a whole folder. A plain path such as `/usr/lib/debug` matches that path and everything below it.
@@ -300,7 +301,7 @@ template replaces it.
 | Placeholder                        | Value                                    |
 | ---------------------------------- | ---------------------------------------- |
 | `{file}`                           | The name the format picked               |
-| `{name}`, `{version}`, `{release}` | The package fields                       |
+| `{name}`, `{version}`, `{release}`, `{epoch}` | The package fields                    |
 | `{arch}`                           | `amd64`, `arm64` or `all`                |
 | `{format}`, `{distro}`             | The format and the distro of the package |
 
