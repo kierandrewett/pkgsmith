@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith-plugin-signer-openpgp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "pkgsmith plugin: the openpgp signer"
 license = "MIT"
@@ -13,6 +13,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0.104"
-pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.1" }
 pgp = "0.21.0"
 rand = "0.8"

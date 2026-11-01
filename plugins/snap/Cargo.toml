@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith-plugin-snap"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "pkgsmith plugin: snap packages"
 license = "MIT"
@@ -14,6 +14,6 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0.104"
 backhand = { version = "0.25", default-features = false, features = ["xz", "gzip"] }
-pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.1" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_yaml_ng = "0.10.0"

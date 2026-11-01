@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith-plugin-appimage"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "pkgsmith plugin: AppImage packages (type 2)"
 license = "MIT"
@@ -14,5 +14,5 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0.104"
 backhand = { version = "0.25", default-features = false, features = ["zstd", "gzip"] }
-pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.1" }
 serde = { version = "1.0.229", features = ["derive"] }

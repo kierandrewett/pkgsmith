@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith-plugin-zip"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "pkgsmith plugin: zip archives"
 license = "MIT"
@@ -13,6 +13,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0.104"
-pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.1" }
 serde = { version = "1.0.229", features = ["derive"] }
 zip = "9.2.0"

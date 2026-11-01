@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith-plugin"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "The plugin API of pkgsmith: the package description, the C interface and helpers for writing package formats"
 license = "MIT"

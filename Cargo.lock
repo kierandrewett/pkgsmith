@@ -2528,7 +2528,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pkgsmith"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bzip2",
@@ -2554,7 +2554,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bzip2",
@@ -2571,7 +2571,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-apk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-appimage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "backhand",
@@ -2591,7 +2591,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-arch"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-conda"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2611,7 +2611,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-deb"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-dmg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-flatpak"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-freebsd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2650,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-gem"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2660,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-msi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "cab",
@@ -2673,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-msix"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2685,7 +2685,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-nix"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "liblzma",
@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-npm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2709,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-nsis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-nupkg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-oci"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2740,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-rpm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "md-5 0.11.0",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-signer-gpg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-signer-openpgp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pgp",
@@ -2770,7 +2770,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-signer-rsa"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkcs8",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-slackware"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-snap"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "backhand",
@@ -2802,7 +2802,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-tar"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-wheel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-xbps"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",
@@ -2832,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "pkgsmith-plugin-zip"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "pkgsmith-plugin",

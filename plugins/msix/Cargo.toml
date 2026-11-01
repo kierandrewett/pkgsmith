@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith-plugin-msix"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "pkgsmith plugin: MSIX packages for Windows"
 license = "MIT"
@@ -15,6 +15,6 @@ crate-type = ["cdylib"]
 anyhow = "1.0.104"
 base64 = "0.22.1"
 flate2 = "1.1.10"
-pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.0" }
+pkgsmith-plugin = { path = "../../crates/pkgsmith-plugin", version = "0.1.1" }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.1"

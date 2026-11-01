@@ -1,6 +1,6 @@
 [package]
 name = "pkgsmith"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Build rpm, deb, Arch, Alpine, OpenWrt, tar and zip packages from one Starlark script"
 license = "MIT"
@@ -16,7 +16,7 @@ members = ["crates/pkgsmith-plugin", "plugins/*"]
 resolver = "3"
 
 [dependencies]
-pkgsmith-plugin = { path = "crates/pkgsmith-plugin", version = "0.1.0" }
+pkgsmith-plugin = { path = "crates/pkgsmith-plugin", version = "0.1.1" }
 libloading = "0.8"
 anyhow = "1.0.104"
 bzip2 = "0.6.1"

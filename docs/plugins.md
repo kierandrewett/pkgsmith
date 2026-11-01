@@ -11,8 +11,8 @@ Search path:
   ...
 
 Loaded:
-  deb 0.1.0  deb, ipk  (/usr/lib/pkgsmith/plugins/pkgsmith-plugin-deb.so)
-  rpm 0.1.0  rpm  (/usr/lib/pkgsmith/plugins/pkgsmith-plugin-rpm.so)
+  deb 0.1.1  deb, ipk  (/usr/lib/pkgsmith/plugins/pkgsmith-plugin-deb.so)
+  rpm 0.1.1  rpm  (/usr/lib/pkgsmith/plugins/pkgsmith-plugin-rpm.so)
   ...
 ```
 
