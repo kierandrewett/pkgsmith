@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
-use pkgsmith::container::Engine;
 use pkgsmith::install;
 use pkgsmith::package::{self, Options};
 use pkgsmith::plan::{self, Selection};
@@ -18,7 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     name = "pkgsmith",
     version,
     about = "Build distribution packages from one script per project",
-    long_about = "Build distribution packages from one script per project.\n\nLike docker build, `pkgsmith build [PATH]` runs the script in PATH (pkgsmith.star), runs its jobs in containers, and writes the packages to ./dist."
+    long_about = "Build distribution packages from one script per project.\n\nLike docker build, `pkgsmith build [PATH]` runs the script in PATH (pkgsmith.star), runs its build on this system, and writes the packages to ./dist."
 )]
 struct Cli {
     /// A folder to search for plugins (pkgsmith-plugin-*, a shared library) before the standard places. Repeatable. See `pkgsmith plugins`.
@@ -31,8 +30,7 @@ struct Cli {
 /// What every command that reads the script takes.
 #[derive(Args)]
 struct Source {
-    /// The build context: a folder that holds pkgsmith.star, or the script itself. The folder is mounted at /src in a
-    /// tracked build.
+    /// The build context: a folder that holds pkgsmith.star, or the script itself. The build runs in it.
     #[arg(default_value = ".")]
     path: PathBuf,
     /// The script, when it is not PATH/pkgsmith.star.
@@ -45,9 +43,6 @@ struct Source {
     /// arch, name and the keys of the tags of a target. Repeatable.
     #[arg(long = "where", value_name = "KEY=VALUE")]
     filter: Vec<String>,
-    /// Only these platforms, for example `linux/arm64,linux/amd64`. Selects the `arch` of the targets.
-    #[arg(long, value_delimiter = ',', value_name = "LIST")]
-    platform: Vec<String>,
     /// NAME=VALUE for arg("NAME") in the script, on top of the environment. Repeatable.
     #[arg(long = "build-arg", visible_alias = "set", value_name = "NAME=VALUE")]
     build_arg: Vec<String>,
@@ -62,7 +57,7 @@ enum Command {
         /// Folder that receives the packages.
         #[arg(short, long, default_value = "dist")]
         output: PathBuf,
-        /// How many builds and packages run at the same time. Builds that need the same image and script run once.
+        /// How many builds and packages run at the same time. Targets that need the same build run it once.
         #[arg(short, long, default_value_t = default_jobs(), value_name = "N")]
         jobs: usize,
         /// Progress output: auto, tty, plain or quiet.
@@ -71,9 +66,6 @@ enum Command {
         /// Print only the paths of the packages, one per line.
         #[arg(short, long)]
         quiet: bool,
-        /// Run the setup scripts again instead of reusing the cached images.
-        #[arg(long)]
-        no_cache: bool,
         /// Folder for the files a tracked build installs.
         #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
         work: PathBuf,
@@ -116,8 +108,6 @@ enum Command {
         #[command(subcommand)]
         action: Option<PluginsAction>,
     },
-    /// Remove the cached setup images.
-    Prune,
 }
 
 #[derive(Subcommand)]
@@ -211,14 +201,6 @@ fn build_args(set: &[String]) -> Result<std::collections::BTreeMap<String, Strin
     Ok(pairs(set, "--build-arg")?.into_iter().collect())
 }
 
-/// `linux/arm64` -> `arm64`.
-fn platform_arch(platform: &str) -> Result<String> {
-    match platform.strip_prefix("linux/") {
-        Some(arch @ ("amd64" | "arm64")) => Ok(arch.to_string()),
-        _ => bail!("platform {platform:?} must be linux/amd64 or linux/arm64"),
-    }
-}
-
 /// The script and what to build from it.
 fn load(source: &Source, registry: &Registry) -> Result<Vec<plan::Item>> {
     let (file, context) = if source.path.is_file() {
@@ -256,11 +238,6 @@ fn load(source: &Source, registry: &Registry) -> Result<Vec<plan::Item>> {
     let selection = Selection {
         formats: source.format.clone(),
         filters: pairs(&source.filter, "--where")?,
-        arches: source
-            .platform
-            .iter()
-            .map(|p| platform_arch(p))
-            .collect::<Result<_>>()?,
     };
     let items = plan::items(specs, &base, &context, &registry.format_names(), &selection)?;
     if items.is_empty() {
@@ -314,7 +291,6 @@ struct Row {
     format: String,
     distro: String,
     arch: String,
-    image: String,
     build: Option<String>,
     file: Result<String, String>,
 }
@@ -354,16 +330,11 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
             .file_name(&outline)
             .and_then(|name| package::output_name(&item.job, &outline, &name))
             .map_err(|e| format!("{e:#}"));
-        let (arch, image, build) = (
-            bound.arch.clone(),
-            bound.image.clone().unwrap_or_default(),
-            letter,
-        );
+        let (arch, build) = (bound.arch.clone(), letter);
         rows.push(Row {
             format: item.format.clone(),
             distro: item.job.distro().unwrap_or("").to_string(),
             arch,
-            image,
             build,
             file,
         });
@@ -377,7 +348,6 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
                     "format": row.format,
                     "distro": row.distro,
                     "arch": row.arch,
-                    "image": row.image,
                     "build": row.build,
                     "file": row.file.as_ref().ok(),
                     "error": row.file.as_ref().err(),
@@ -404,15 +374,13 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
     let w_format = cell(&rows, "FORMAT", &|r| r.format.clone());
     let w_distro = cell(&rows, "DISTRO", &|r| r.distro.clone());
     let w_arch = cell(&rows, "ARCH", &|r| r.arch.clone());
-    let w_image = cell(&rows, "IMAGE", &|r| r.image.clone());
     let has_builds = rows.iter().any(|r| r.build.is_some());
     println!(
-        "{bold}{:>3}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {:<w_image$}  {}FILE{reset}",
+        "{bold}{:>3}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {}FILE{reset}",
         "#",
         "FORMAT",
         "DISTRO",
         "ARCH",
-        "IMAGE",
         if has_builds { "BUILD  " } else { "" },
     );
     for (number, row) in rows.iter().enumerate() {
@@ -426,12 +394,11 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
             Err(_) => format!("{red}?{reset}"),
         };
         println!(
-            "{dim}{:>3}{reset}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {:<w_image$}  {build}{file}",
+            "{dim}{:>3}{reset}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {build}{file}",
             number + 1,
             row.format,
             row.distro,
             row.arch,
-            row.image,
         );
     }
     let mut problems: Vec<&str> = rows
@@ -564,10 +531,6 @@ fn run() -> Result<()> {
                 println!("\nwarning: {warning}");
             }
         }
-        Command::Prune => {
-            let removed = Engine::connect()?.prune()?;
-            println!("Removed {removed} cached setup images");
-        }
         Command::Plan { source, json } => {
             let items = load(&source, &registry)?;
             plan_table(&registry, &items, json)?;
@@ -580,7 +543,7 @@ fn run() -> Result<()> {
         } => {
             let items = load(&source, &registry)?;
             let ui = Ui::new(Mode::parse(&progress).map_err(|e| anyhow!(e))?);
-            let runner = Runner::new(work, ui.clone(), true);
+            let runner = Runner::new(work, ui.clone());
             let (listings, errors) = run_all(&items, jobs, |item| {
                 let bound = &item.manifest;
                 let options = Options::new(PathBuf::from("."), item.job.distro().map(String::from));
@@ -612,7 +575,6 @@ fn run() -> Result<()> {
             jobs,
             progress,
             quiet,
-            no_cache,
             work,
             sign_key,
             sign_passphrase_file,
@@ -623,7 +585,7 @@ fn run() -> Result<()> {
             let signing = signing_setup(&registry, sign_key, sign_passphrase_file)?;
             let signer: Option<&Signing> = (!signing.is_off()).then_some(&signing);
             if let Some(signing) = signer {
-                // Every key is opened and every signer asked before the first container starts.
+                // Every key is opened and every signer asked before the first build starts.
                 let mut seen: Vec<&str> = Vec::new();
                 for item in &items {
                     if !seen.contains(&item.format.as_str()) {
@@ -638,7 +600,7 @@ fn run() -> Result<()> {
                 Mode::parse(&progress).map_err(|e| anyhow!(e))?
             };
             let ui = Ui::new(mode);
-            let runner = Runner::new(work, ui.clone(), !no_cache);
+            let runner = Runner::new(work, ui.clone());
             let job_number = AtomicUsize::new(0);
             let (written, errors) = run_all(&items, jobs, |item| {
                 let bound = &item.manifest;

@@ -1,22 +1,21 @@
 # Dependencies
 
 ```python
-pkg = package(
+package(
+    "rpm",
     name = "acme-tool",
     version = "1.0.0",
     description = "A tool",
-    depends = ["glibc", "libssl3 >= 3.0"],
+    depends = ["glibc", "openssl-libs >= 3.0"],
     recommends = ["acme-docs"],
     suggests = ["acme-extras"],
     conflicts = ["acme-legacy"],
     replaces = ["acme-legacy"],
     provides = ["acme"],
 )
-
-target(pkg, "rpm", distro = "fedora")
 ```
 
-pkgsmith writes the names as you give them. It does not translate a name between distros. That is your job, in the script.
+pkgsmith writes the names as you give them. It does not translate a name between distros. That is your job, in the script: use `host()` to pick the names.
 
 ## Name and version syntax
 
@@ -48,26 +47,39 @@ Alpine has no weak dependencies, so `recommends` and `suggests` are left out of 
 
 ## One name per distro
 
-The library names differ between distros. Give each target its own list:
+The library names differ between distros. Pick the list in the script, from the system that runs it:
 
 ```python
-pkg = package(name = "acme-tool", version = "1.0.0", description = "A tool", depends = ["glibc"])
+common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
 
-target(pkg, "rpm", distro = "fedora")                              # uses the list of pkg
-target(pkg, "archlinux", distro = "arch")
-target(pkg, "deb", distro = "debian", depends = ["libc6"])
-target(pkg, "apk", distro = "alpine", depends = ["musl"])
-target(pkg, "rpm", distro = "opensuse", depends = ["glibc", "libopenssl3"], file = "opensuse-{file}")
+libc = {"rpm": "glibc", "deb": "libc6", "archlinux": "glibc", "apk": "musl"}
+native = host()["format"]
+
+if native in libc:
+    package(native, depends = [libc[native]], **common)
 ```
 
-A list on a target replaces the list of `pkg`. It does not merge with it. See the
-[target reference](manifest.md#target). To keep the shared names and add one, write
-`depends = pkg["depends"] + ["libopenssl3"]`.
+Or write one branch for each family:
+
+```python
+h = host()
+if h["format"] == "rpm" and h["distro"] == "opensuse-leap":
+    package("rpm", depends = ["glibc", "libopenssl3"], file = "opensuse-{file}", **common)
+elif h["format"] == "rpm":
+    package("rpm", depends = ["glibc", "openssl-libs"], **common)
+```
+
+A field in one `package` call does not carry over to the next. To share names, keep them in a list:
+
+```python
+shared = ["glibc"]
+package("rpm", depends = shared + ["openssl-libs"], **common)
+package("tar", **common)
+```
 
 ## Libraries the program needs
 
 pkgsmith does not look inside your binaries. It does not add the libraries a program links against. rpm and dpkg
 normally do that for you, so a package built here can miss a dependency that a spec file would have found.
 
-List the libraries yourself. To see what a program needs, run `readelf -d /usr/bin/prog | grep NEEDED` in the build
-container and map each library to a package of that distro.
+List the libraries yourself. To see what a program needs, run `readelf -d /usr/bin/prog | grep NEEDED` on the built binary and map each library to a package of that distro.

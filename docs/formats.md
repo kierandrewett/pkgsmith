@@ -1,14 +1,14 @@
 # Formats
 
 Each format is a plugin. `pkgsmith formats` lists what is installed. The options of a format go in the `options`
-dict of the target that writes it, for example `options = {"section": "utils"}`. A key that the format does not know is
+dict of the `package()` call that writes it, for example `options = {"section": "utils"}`. A key that the format does not know is
 an error. The tables below list the keys of each format.
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-target(pkg, "deb", distro = "debian", options = {"section": "utils", "compression": "gzip"})
-target(pkg, "tar", options = {"compression": "zstd", "top_folder": True})
+package("deb", options = {"section": "utils", "compression": "gzip"}, **common)
+package("tar", options = {"compression": "zstd", "top_folder": True}, **common)
 ```
 
 A value is a Starlark value: text in quotes, `True` or `False`, numbers, lists and dicts. The tables write the
@@ -23,7 +23,7 @@ options of each format as keys of that dict. A format with no options needs no `
 | `apk`       | `.apk`                           | Alpine                               | `apk` in Alpine 3.22                |
 | `slackware` | `.txz`                           | Slackware                            | `installpkg` in Slackware 15.0      |
 | `snap`      | `.snap`                          | snapd                                | `unsquashfs` only, not snapd        |
-| `oci`       | `.oci.tar`                       | podman, docker, containerd           | `podman load` and `run`             |
+| `oci`       | `.oci.tar`                       | OCI runtimes                         | `load` and `run` in an OCI tool     |
 | `appimage`  | `.AppImage`                      | Linux desktops                       | The runtime, without FUSE           |
 | `wheel`     | `.whl`                           | pip                                  | `pip`, `twine` in Python 3.14       |
 | `xbps`      | `.xbps`                          | Void Linux                           | `xbps-install` in Void              |
@@ -110,10 +110,9 @@ An app has `command` (required), `daemon` (`simple`, `forking`, `oneshot` or `no
 and `environment` (a map).
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
-
-target(
-    pkg, "snap",
+package(
+    "snap",
+    name = "hello", version = "1.0.0", description = "A small program",
     options = {
         "base": "core24",
         "apps": {"hello": {"command": "/usr/bin/hello", "plugs": ["network"]}},
@@ -129,7 +128,7 @@ image is not installed.
 
 | Key           | Values                    | Default       | Effect                                       |
 | ------------- | ------------------------- | ------------- | -------------------------------------------- |
-| `entrypoint`  | List of text              | None          | The program the container runs               |
+| `entrypoint`  | List of text              | None          | The program the image runs               |
 | `cmd`         | List of text              | None          | Default arguments                            |
 | `env`         | Map                       | None          | Environment variables                        |
 | `workdir`     | Path                      | None          | The folder the program starts in             |
@@ -140,7 +139,7 @@ image is not installed.
 | `tag`         | Text                      | The version   | The image tag                                |
 | `compression` | `gzip`, `none`            | `gzip`        | Compression of the layer                     |
 
-Load it with `podman load -i hello-1.0.0-amd64.oci.tar`.
+Load it with `docker load -i hello-1.0.0-amd64.oci.tar`.
 
 ## appimage
 
@@ -192,7 +191,7 @@ pip does not check the hashes in `RECORD` when it installs, so a changed file in
 
 ## dmg
 
-A `.dmg` is an Apple disk image: a UDIF container that holds one HFS+ volume with your files. pkgsmith writes both parts
+A `.dmg` is an Apple disk image: a UDIF image that holds one HFS+ volume with your files. pkgsmith writes both parts
 itself, in pure Rust, so no tool is needed to build one. The volume writer follows Apple's public
 [TN1150](https://developer.apple.com/library/archive/technotes/tn1150/) and was written without reading GPL code.
 
@@ -538,13 +537,13 @@ The version cannot hold `-`. A package with `arch = "all"` is `noarch`.
 
 | Key            | Values                                 | Default        | Effect                                           |
 | -------------- | -------------------------------------- | -------------- | ------------------------------------------------ |
-| `archive`      | `conda`, `tar.bz2`                     | `conda`        | The package container                            |
+| `archive`      | `conda`, `tar.bz2`                     | `conda`        | The package archive                              |
 | `prefix`       | Absolute path                          | `/usr`         | The folder that becomes the conda prefix         |
 | `build_number` | Number                                 | The `release`  | The build number                                 |
 | `build_string` | Letters, digits, `_`, `.`, `+`         | The build number | The build string                               |
 | `depends`      | List of match specs, such as `zlib >=1.2` | None        | The `depends` of `index.json`                    |
 
-Checked with micromamba against a channel indexed by `conda-index`, for `amd64` only, with both containers. A package
+Checked with micromamba against a channel indexed by `conda-index`, for `amd64` only, with both archives. A package
 from `conda-build` was not compared.
 
 ## nupkg

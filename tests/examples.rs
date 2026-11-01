@@ -1,11 +1,12 @@
-//! The example scripts are documentation. They must keep evaluating and planning, for every target they declare.
+//! The example scripts are documentation. They must keep evaluating and planning.
 
+use pkgsmith::host::Host;
 use pkgsmith::plan::{self, Selection};
 use pkgsmith::script;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Every `.star` file below `folder`, except the ones that other scripts load.
+/// Every `.star` file below `folder`.
 fn scripts(folder: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(folder).unwrap() {
         let path = entry.unwrap().path();
@@ -22,7 +23,7 @@ fn every_example_script_plans() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = vec![root.join("pkgsmith.star")];
     scripts(&root.join("examples"), &mut files);
-    // The formats of the plugins in this repository, and of the packers that need no job.
+    // The formats of the plugins in this repository, and of the packers that need no build.
     let known: Vec<String> = [
         "tar",
         "zip",
@@ -42,17 +43,18 @@ fn every_example_script_plans() {
         .into();
     let mut seen = 0;
     for path in files {
-        // A file that only defines values for others to load declares no target.
+        // A file that only defines values for others to load declares no package.
         if path.file_name().is_some_and(|n| n == "common.star") {
             continue;
         }
-        let specs = script::evaluate(&path, args.clone())
+        let host = Host::from_os_release("ID=fedora\nVERSION_ID=43\n", "amd64", "glibc");
+        let specs = script::evaluate_on(&path, args.clone(), host)
             .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
         let base = path.parent().unwrap();
         let items = plan::items(specs, base, base, &known, &Selection::default())
             .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
-        assert!(!items.is_empty(), "{} declares no target", path.display());
+        assert!(!items.is_empty(), "{} declares no package", path.display());
         seen += 1;
     }
-    assert!(seen >= 10, "expected the example scripts, saw {seen}");
+    assert!(seen >= 14, "expected the example scripts, saw {seen}");
 }

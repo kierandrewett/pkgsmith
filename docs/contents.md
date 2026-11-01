@@ -1,21 +1,23 @@
 # Contents
 
-The files of a package come from two places, and `contents` joins them.
+The files of a package come from three places, in this order.
 
-1. **Tracked files.** When a target has a job, each file its steps install outside `/src` is in
-   the package. See [build environment](build-environment.md).
-2. **`contents` entries.** Each entry adds a file, or replaces the tracked entry that has the same path.
+1. **`$pkgdir`.** Each file that the build commands install into `$pkgdir` is in the package. See
+   [building](building.md#the-folders).
+2. **`expose`.** Each entry offers a file that the build made, or a file from the source tree. Every `package` call
+   after it carries the entry.
+3. **`contents`.** Each entry of one `package` call adds a file for that package only.
 
-An entry that names the same `dst` as a tracked file replaces it. This is how you mark a tracked file as
+An entry that names the same `dst` as an earlier one replaces it. This is how you mark an installed file as
 configuration, or change its mode, without listing every other file.
 
 ## Entries
 
-Each helper returns one entry. Put the entries in the `contents` list of `package`, or of one `target`.
+Each helper returns one entry. Pass the entries to `expose(...)`, or put them in the `contents` list of one `package` call.
 
 | Function                                        | Entry                                                       |
 | ----------------------------------------------- | ----------------------------------------------------------- |
-| `file(src, dst, mode, owner, group, config=False)` | A file, or the files that a glob matches                 |
+| `file(src, dst, mode, owner, group)`            | A file, or the files that a glob matches                    |
 | `config(src, dst, mode, owner, group)`          | A configuration file                                        |
 | `tree(src, dst, mode, owner, group)`            | A folder, copied recursively                                |
 | `symlink(link_target, dst)`                     | A symbolic link                                             |
@@ -34,7 +36,7 @@ To apply an entry to some formats only, build the list in the script:
 
 ```python
 extra = []
-if fmt in ["deb", "rpm"]:
+if host()["format"] in ["deb", "rpm"]:
     extra.append(file("packaging/app.service", "/usr/lib/systemd/system/app.service"))
 ```
 
@@ -59,8 +61,6 @@ How a format records a configuration file:
 | `apk`       | No record. apk protects `/etc` itself |
 | `tar`       | No record                       |
 
-Files that a tracked build installs under `/etc` are marked as configuration without an entry.
-
 ## Parent folders
 
 A package must not own `/usr` or `/usr/bin`. A folder that no entry names is not part of the `rpm`.
@@ -69,65 +69,62 @@ The formats that need folder entries to unpack files (`deb`, `ipk`, `apk`, `arch
 as folders owned by root with mode `0755`. The package manager does not change the mode of a folder that already
 exists.
 
-## Tracked files and excludes
+## Installed files and excludes
 
-The tracked list comes from the container's changes. A new folder is claimed. A changed folder that already existed is
-not. Deleted paths are ignored.
+The files and folders in `$pkgdir` are all packaged, with the mode they have there. Nothing outside `$pkgdir` is
+packaged. The build runs as you, so install into `$pkgdir` and not into the real `/usr`.
 
-These paths are never packaged:
-
-`/tmp`, `/var/tmp`, `/root`, `/run`, `/proc`, `/sys`, `/dev`, `/var/cache`, `/var/log`, `/var/lib/dnf`,
-`/var/lib/rpm`, `/var/lib/pacman`, `/var/lib/dpkg`, `/var/lib/apk`, `/var/lib/zypp`, `/usr/lib/sysimage`,
-`/etc/ld.so.cache`, `/etc/mtab`, `/etc/resolv.conf`, `/etc/hosts`, `/etc/hostname`, `/lib/apk`, `/src`
-
-Add your own with the `exclude` list of the job. An entry is a path prefix or a glob:
+Leave paths out with the `exclude` list of `package`. An entry is a path prefix or a glob, relative to the root of
+`$pkgdir`:
 
 ```python
-build = job(
-    runs_on = "debian:13",
-    steps = [step("make install PREFIX=/usr")],
-    exclude = ["/usr/share/doc/**", "/usr/lib/debug", "/usr/share/man"],
-)
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
+package("deb", exclude = ["/usr/share/doc/**", "/usr/lib/debug", "/usr/share/man"], **common)
 ```
 
 ## Examples
 
-Mark one tracked file as configuration, keep everything else:
+Mark one installed file as configuration, keep everything else:
 
 ```python
-contents = [config(None, "/etc/app.conf")]
+expose(config(None, "/etc/app.conf"))
 ```
 
-An entry with `src=None` keeps the content of the tracked file and changes its flags. `mode`, `owner` and `group` work
-the same way. It is an error when the build did not install `dst`.
+An entry with `src=None` keeps the content of the installed file and changes its flags. It is an error when the build
+did not install `dst`.
 
 Add a file from the source tree for Debian and Fedora only:
 
 ```python
-pkg = package(name = "app", version = "1.0.0", description = "An app")
+common = {"name": "app", "version": "1.0.0", "description": "An app"}
 unit = file("packaging/app.service", "/usr/lib/systemd/system/app.service")
 
-for fmt in ["deb", "rpm", "tar"]:
-    contents = [unit] if fmt in ["deb", "rpm"] else []
-    target(pkg, fmt, contents = contents)
+package("deb", contents = [unit], **common)
+package("rpm", contents = [unit], **common)
+package("tar", **common)
 ```
 
 Link a command name:
 
 ```python
-contents = [symlink("/usr/lib/app/bin/app", "/usr/bin/app")]
+expose(symlink("/usr/lib/app/bin/app", "/usr/bin/app"))
 ```
 
-## Without a container
+## Without a build
 
-A target without a `job` lists every file itself. Build the program yourself and stage it with `DESTDIR`, then point
-`src` at the stage:
+A package with no `sh` before it lists every file itself. Build the program yourself and stage it with `DESTDIR`, then
+point `src` at the stage:
 
 ```python
-pkg = package(name = "tool", version = "1.0.0", description = "A tool")
-stage = arg("STAGE", "/tmp/stage")
+STAGE = arg("STAGE", "/tmp/stage")
 
-target(pkg, "tar", contents = [file(stage + "/usr/bin/tool", "/usr/bin/tool", mode = "0755")])
+package(
+    "tar",
+    name = "tool",
+    version = "1.0.0",
+    description = "A tool",
+    contents = [file(STAGE + "/usr/bin/tool", "/usr/bin/tool", mode = "0755")],
+)
 ```
 
 ```console

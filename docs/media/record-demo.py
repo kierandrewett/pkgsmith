@@ -1,9 +1,9 @@
 import os, pty, sys, time, random, select, fcntl, termios, struct, re
 
 COLS, ROWS = 100, 34
-# Records the demo in docs/media/demo.cast: vi on the manifest with syntax highlighting, :q, then the build.
+# Records the demo in docs/media/demo.cast: vi on the script with syntax highlighting, :q, then the build.
 #   python3 docs/media/record-demo.py OUT.cast [PROJECT_DIR] [PKGSMITH_BINARY]
-# It needs asciinema (uv tool run --from asciinema asciinema), Podman, and a vim with +syntax. The vi of vim-minimal
+# It needs asciinema (uv tool run --from asciinema asciinema) and a vim with +syntax. The vi of vim-minimal
 # has no syntax support, so unpack vim-enhanced and vim-common (dnf download, rpm2cpio | cpio -idm) into a folder and
 # set PKGSMITH_DEMO_VIM to that folder. Render the cast to a GIF with
 #   agg --fps-cap 12 --idle-time-limit 1.2 --theme dracula --font-size 16 demo.cast demo.gif
@@ -96,7 +96,7 @@ random.seed(7)
 pump(2.5)  # the shell starts
 type_text("vi pkgsmith.star")
 os.write(fd, b"\r")
-pump(3.5)  # the editor shows the manifest
+pump(3.5)  # the editor shows the script
 for _ in range(3):  # scroll down a little, as if reading
     os.write(fd, b"\x04")
     pump(1.0)  # Ctrl-D, half a page
@@ -108,7 +108,7 @@ pump(1.5)
 type_text("pkgsmith plan")
 os.write(fd, b"\r")
 pump(2.0)
-type_text("pkgsmith build -j 4 --no-cache")
+type_text("pkgsmith build -j 4")
 os.write(fd, b"\r")
 done = wait_for(r"Packages in", 180)
 pump(3.0)

@@ -25,8 +25,6 @@ pub struct Selection {
     pub formats: Vec<String>,
     /// `KEY=VALUE` pairs that a target must match: `format`, `distro`, `arch`, `name` or a key of its `tags`.
     pub filters: Vec<(String, String)>,
-    /// Architectures to keep. A package with arch `all` is always kept. Empty means all.
-    pub arches: Vec<String>,
 }
 
 /// Every package the targets describe. `known` are the formats the loaded plugins write. `base` is the folder of the
@@ -75,10 +73,7 @@ pub fn items(
             .filters
             .iter()
             .all(|(key, value)| job.values.get(key) == Some(value));
-        let arch_ok = selection.arches.is_empty()
-            || manifest.arch == "all"
-            || selection.arches.contains(&manifest.arch);
-        if wanted && matches && arch_ok {
+        if wanted && matches {
             out.push(Item {
                 job,
                 format,
@@ -145,20 +140,13 @@ mod tests {
         let arm = labels(Selection {
             filters: vec![
                 ("distro".into(), "debian".into()),
-                ("stage".into(), "one".into()),
+                ("arch".into(), "arm64".into()),
             ],
-            arches: vec!["arm64".into()],
-            ..Selection::default()
-        });
-        assert_eq!(arm.len(), 1, "{arm:?}");
-        let all = labels(Selection {
-            arches: vec!["arm64".into()],
             ..Selection::default()
         });
         assert_eq!(
-            all.len(),
-            2,
-            "the arm64 deb, and the tar of arch all: {all:?}"
+            arm,
+            ["deb [arch=arm64, distro=debian, format=deb, name=demo, stage=one]"]
         );
     }
 

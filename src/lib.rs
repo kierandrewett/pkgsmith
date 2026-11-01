@@ -4,7 +4,7 @@
 //! package format a plugin provides. The formats are shared libraries that `plugins` finds and loads, and
 //! `pkgsmith-plugin` is the API they implement.
 
-pub mod container;
+pub mod host;
 pub mod install;
 pub mod manifest;
 pub mod package;

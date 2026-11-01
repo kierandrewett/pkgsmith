@@ -4,20 +4,19 @@
 pkgsmith [--plugin-path DIR] COMMAND [OPTIONS] [PATH]
 ```
 
-`PATH` is the build context: a folder that holds `pkgsmith.star`, or the script file itself. It defaults to `.`. The
-folder is mounted at `/src` in a tracked build.
+`PATH` is the folder of the script, or the script file itself. It defaults to `.`. It is the folder where the build
+commands run (`$srcdir`).
 
 ## Commands
 
 | Command           | What it does                                                                    |
 | ----------------- | ------------------------------------------------------------------------------- |
-| `build`           | Builds every package the script declares and writes them to `dist`           |
-| `plan` (or `ls`)  | Shows what `build` would do, without starting a container                       |
+| `build`           | Runs the script, builds, and writes every package to `dist`                     |
+| `plan` (or `ls`)  | Shows what `build` would do, without running a build                       |
 | `files`           | Builds, then lists the files each package would carry. Writes no package        |
 | `formats`         | Lists the formats that the installed plugins write                              |
 | `plugins`         | Lists the loaded plugins and the folders pkgsmith searches                      |
 | `plugins install` | Downloads the plugins of this version from its GitHub release                   |
-| `prune`           | Removes the cached setup images                                                 |
 
 ## Choosing what to build
 
@@ -26,13 +25,12 @@ folder is mounted at `/src` in a tracked build.
 | Option                  | Values                                         | Default                  | Effect |
 | ----------------------- | ---------------------------------------------- | ------------------------ | ------ |
 | `-f`, `--file FILE`     | A path                                         | `PATH/pkgsmith.star`     | Reads this script |
-| `-F`, `--format LIST`   | Names from `pkgsmith formats`, comma separated | Every format the script declares | Builds only these formats |
-| `--where KEY=VALUE`     | `format`, `distro`, `arch`, `name` or a key of a target's `tags`. Repeatable | All targets | Builds only the targets whose value equals this. Every `--where` must match |
-| `--platform LIST`       | `linux/amd64`, `linux/arm64`, comma separated  | All architectures        | Builds only the targets of these architectures. Targets with `arch="all"` stay |
+| `-F`, `--format LIST`   | Names from `pkgsmith formats`, comma separated | Every format the script writes | Builds only these formats |
+| `--where KEY=VALUE`     | `format`, `distro`, `arch`, `name` or a key of a package's `tags`. Repeatable | All packages | Builds only the packages whose value equals this. Every `--where` must match |
 | `--build-arg NAME=VALUE` | Text. Repeatable. Also `--set`                | None                     | Sets `arg("NAME")` in the script. It wins over the environment |
 
 ```sh
-pkgsmith build --where distro=fedora --platform linux/arm64
+pkgsmith build --where distro=fedora --where arch=amd64
 pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 ```
 
@@ -42,9 +40,9 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 
 | Option               | Values                          | Default     | Effect |
 | -------------------- | ------------------------------- | ----------- | ------ |
-| `-j`, `--jobs N`     | A number                        | CPUs, at most 8 | Runs this many builds at once. Targets that share a build run it once |
+| `-j`, `--jobs N`     | A number                        | CPUs, at most 8 | Runs this many builds at once. Packages that share a build run it once |
 | `--progress MODE`    | `auto`, `tty`, `plain`, `quiet` | `auto`      | `tty` redraws lanes in place. `plain` prints lines. `auto` picks `tty` on a terminal |
-| `--work DIR`         | A path                          | `.pkgsmith` | Holds the files a tracked build installs |
+| `--work DIR`         | A path                          | `.pkgsmith` | Holds the `$pkgdir` of each build |
 
 `build` alone takes these.
 
@@ -52,7 +50,6 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 | -------------------- | -------------- | ------- | ------ |
 | `-o`, `--output DIR` | A path         | `dist`  | Receives the packages |
 | `-q`, `--quiet`      | A flag         | Off     | Prints only the path of each package |
-| `--no-cache`         | A flag         | Off     | Runs the setup scripts again instead of reusing the cached images |
 
 `build` signs packages when it gets a key. See [signing](signing.md) for the key types and how to check a signature.
 
@@ -62,21 +59,13 @@ pkgsmith build -F deb,rpm --build-arg VERSION=0.4.2
 | `--sign-passphrase-file FILE`      | A path                  | None    | Holds the passphrase of the keys |
 | `--sign-armor`                     | A flag                  | Off     | Writes `FILE.asc` instead of `FILE.sig` |
 
-`plan` also takes `--json`, which prints the targets as JSON for scripts. Each row has `format`, `distro`, `arch`, `image`,
+`plan` also takes `--json`, which prints the packages as JSON for scripts. Each row has `format`, `distro`, `arch`,
 `build`, `file`, `error` and `values`.
 
-## Container engine
+## Other systems
 
-A target with a `job` runs in a container, so pkgsmith needs the Podman API. A target without a `job` needs no engine.
-pkgsmith looks for the API in this order:
-
-1. `CONTAINER_HOST`, if it is set. It takes a `unix://` or `tcp://` address, on every system.
-2. Linux: `$XDG_RUNTIME_DIR/podman/podman.sock`. If nothing answers there, pkgsmith starts `podman system service` for the
-   length of the build.
-3. macOS: the socket that `podman machine inspect` names. Run `podman machine init` once and `podman machine start`.
-4. Windows: there is no default. Start Podman and set `CONTAINER_HOST` to a `tcp://` address that it serves.
-
-Docker is not supported.
+`build` makes packages for the system that runs it. pkgsmith has no option to build for another distro or architecture.
+Run it on that system. See [building](building.md#packages-for-other-distros).
 
 ## Plugins
 

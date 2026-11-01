@@ -1,7 +1,7 @@
 # pkgsmith
 
-pkgsmith builds distribution packages from one script. You describe the package once. pkgsmith builds your program
-in a container for each distro and writes the rpm, deb, Arch, Alpine, OpenWrt, tar or zip package.
+pkgsmith builds distribution packages from one script. The script is a small program. pkgsmith runs it on your system,
+builds your program there, and writes the rpm, deb, Arch, Alpine, OpenWrt, tar or zip package.
 
 ![pkgsmith builds one package for Fedora, Debian, Arch and Alpine in a single run](docs/media/demo.gif)
 
@@ -20,7 +20,7 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `xbps`      | `.xbps`                          | Void Linux                 |
 | `freebsd`   | `.pkg`                           | FreeBSD                    |
 | `snap`      | `.snap`                          | snapd                      |
-| `oci`       | `.oci.tar`                       | podman, docker             |
+| `oci`       | `.oci.tar`                       | OCI runtimes               |
 | `appimage`  | `.AppImage`                      | Linux desktops             |
 | `wheel`     | `.whl`                           | pip                        |
 | `gem`       | `.gem`                           | RubyGems                   |
@@ -42,12 +42,8 @@ pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `ma
 
 ## Install
 
-pkgsmith runs on Linux, macOS and Windows. What a build needs depends on the script:
-
-- A target without a `job` packages files that are already on your machine. It needs no container engine on any system.
-- A target with a `job` runs the steps of the job in a container. It needs [Podman](https://podman.io/) and its API.
-  On Linux a user socket is enough. On macOS run `podman machine init` once and `podman machine start`. On Windows start
-  Podman and set `CONTAINER_HOST` to a `tcp://` address that it serves. See [command line](docs/cli.md#container-engine).
+pkgsmith runs on Linux, macOS and Windows. It needs no daemon. The build commands in your
+script run on the system that runs pkgsmith, so that system needs your compiler and tools.
 
 There is no published release yet, so build from source:
 
@@ -83,44 +79,24 @@ you on every system.
 
 ## Quick start
 
-`examples/demo` holds a C program, a Makefile and this `pkgsmith.star`:
+`examples/demo` holds a C program and a Makefile. Its `pkgsmith.star` is a script that pkgsmith runs top to bottom:
 
 ```python
-pkg = package(
-    name = "hello",
-    version = "1.0.0",
-    description = "A demo that packages a small C program",
-    maintainer = "Kieran Drewett <kieran@drewett.dev>",
-    license = "MIT",
-)
+common = {
+    "name": "hello",
+    "version": "1.0.0",
+    "description": "A demo that packages a small C program",
+    "maintainer": "Kieran Drewett <kieran@drewett.dev>",
+    "license": "MIT",
+}
 
-build = step(name = "Build", run = "make && make install PREFIX=/usr")
+sh("make")
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
 
-fedora = job(
-    runs_on = "fedora:43",
-    setup = [step(name = "Install the build tools", run = "dnf -y install gcc make")],
-    steps = [build],
-)
-debian = job(
-    runs_on = "debian:13",
-    setup = [step(
-        name = "Install the build tools",
-        run = """
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
-""",
-    )],
-    steps = [build],
-)
-alpine = job(
-    runs_on = "alpine:3.22",
-    setup = [step(name = "Install the build tools", run = "apk add --no-cache gcc make musl-dev")],
-    steps = [build],
-)
-
-target(pkg, "rpm", distro = "fedora", job = fedora)
-target(pkg, "deb", distro = "debian", job = debian)
-target(pkg, "apk", distro = "alpine", job = alpine)
+native = host()["format"]
+if native:
+    package(native, **common)
+package("tar", **common)
 ```
 
 Build it:
@@ -130,41 +106,41 @@ cd examples/demo
 pkgsmith build        # the packages go to ./dist
 ```
 
-Each `target` call is one package. A target names the job that builds its files:
+- `sh` adds a command to the build. Each command runs in the folder of the script, in order.
+- `$pkgdir` is an empty folder. What `make install` puts there becomes the package.
+- `host()["format"]` is the package format of this system: `rpm` on Fedora, `deb` on Debian, and so on.
+- Each `package` call that runs writes one package. On Fedora this script writes an rpm and a tar.
 
-- `runs_on` is the container image the job works in.
-- `setup` steps run once in that image, and the result is cached.
-- `steps` run in the image with your source at `/src`. pkgsmith records the files they install and packages them.
-- Targets that need one job share one build, so a job that several distros can use compiles once.
+To get a deb, run pkgsmith on Debian. To get an rpm too, run it on Fedora. Use your CI for this: one job for each
+system. See [building](docs/building.md#packages-for-other-distros).
 
-To choose the files yourself, add a `contents` list. See [contents](docs/contents.md). The script is code, so use loops,
-functions and conditions for many distros and architectures. See [scripting](docs/scripting.md). pkgsmith packages itself
-with [pkgsmith.star](pkgsmith.star).
+To choose the files yourself, use `expose` and the content helpers. See [contents](docs/contents.md). The script is
+code, so use `if`, loops and functions for what differs between systems. See [scripting](docs/scripting.md). pkgsmith
+packages itself with [pkgsmith.star](pkgsmith.star).
 
 ## Commands
 
 | Command           | What it does                                                  |
 | ----------------- | ------------------------------------------------------------- |
-| `build`           | Builds every package and writes it to `dist`                  |
-| `plan`            | Shows each package and its file name. Starts no container     |
+| `build`           | Runs the script, builds, and writes every package to `dist`   |
+| `plan`            | Shows each package and its file name. Runs no build           |
 | `files`           | Lists the files each package would carry                      |
 | `formats`         | Lists the formats the installed plugins write                 |
 | `plugins`         | Lists the loaded plugins and the folders searched for them    |
-| `prune`           | Removes the cached setup images                               |
 
-Run `pkgsmith plan` after you change the script. Jobs with the same `BUILD` letter share one build. Every option is in
-[command line](docs/cli.md).
+Run `pkgsmith plan` after you change the script. Packages with the same `BUILD` letter share one build. Every option is
+in [command line](docs/cli.md).
 
 ## Documentation
 
 | Page                                              | Covers                                          |
 | ------------------------------------------------- | ----------------------------------------------- |
 | [Getting started](docs/getting-started.md)        | A package from scratch, step by step            |
-| [Script reference](docs/manifest.md)              | Every function and field                        |
+| [Script reference](docs/manifest.md)              | Every function, field and value                 |
 | [Contents](docs/contents.md)                      | Files, trees, links and config files            |
-| [Build environment](docs/build-environment.md)    | Jobs, steps, the tracked build, caching         |
+| [Building](docs/building.md)                      | How the build runs, `$pkgdir`, other distros    |
 | [macOS and Windows](docs/macos-and-windows.md)    | Compile on the target system, then package      |
-| [Scripting](docs/scripting.md)                    | Loops, functions and conditions for many builds |
+| [Scripting](docs/scripting.md)                    | Write a script: `host()`, conditions, loops     |
 | [Versions](docs/versions.md)                      | How one version becomes each format's spelling  |
 | [Install scripts](docs/scripts.md)                | What runs when, per format                      |
 | [Dependencies](docs/dependencies.md)              | Names, version constraints, per-distro names    |
@@ -173,18 +149,18 @@ Run `pkgsmith plan` after you change the script. Jobs with the same `BUILD` lett
 | [Plugins](docs/plugins.md)                        | Where plugins live, and how to write one        |
 | [Command line](docs/cli.md)                       | Every command and option                        |
 
-Every file in [examples](examples) is a complete script. [examples/full.star](examples/full.star) uses every field and
-comments each one.
+Every file in [examples](examples) is a complete script.
 
 ## Limits
 
 - pkgsmith does not find the shared libraries a program needs. List them in `depends`.
-- Builds run for `linux/amd64` and `linux/arm64`, and only with Podman. Docker is not supported.
+- A build makes packages for the system it runs on. For another distro or architecture, run pkgsmith there. See
+  [building](docs/building.md#packages-for-other-distros).
 - pkgsmith does not compile for macOS or Windows. Compile there, or compile with your own tools, and package the files
-  with targets that have no `job`. See [macOS and Windows](docs/macos-and-windows.md).
+  with a script that has no `sh` commands. See [macOS and Windows](docs/macos-and-windows.md).
 - Packages are signed only when you give `--sign-key`. See [signing](docs/signing.md).
-- There is no built-in support for a language. Install the toolchain in a `setup` step and run its build in a step.
-  [examples/rust-cli.star](examples/rust-cli.star) does this for Cargo.
+- There is no built-in support for a language. Call its build tool with `sh`. [examples/rust-cli.star](examples/rust-cli.star)
+  does this for Cargo.
 
 ## Build and test
 

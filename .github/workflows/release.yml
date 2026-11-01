@@ -2,10 +2,11 @@
 # a tag `vMAJOR.MINOR.PATCH` that matches it. This workflow
 #
 #   1. builds pkgsmith and its plugins and checks the version of every crate against the tag,
-#   2. runs pkgsmith on its own manifest (pkgsmith.star) to build the rpm, deb, Arch and Alpine packages,
+#   2. runs pkgsmith on its own script (pkgsmith.star) on a Fedora, a Debian, an Arch and an Alpine system, so each one
+#      writes the package of its own format: rpm, deb, Arch and Alpine,
 #   3. publishes the crates `pkgsmith-plugin` and `pkgsmith` to crates.io,
 #   4. builds pkgsmith and its plugins for macOS (Apple silicon and Intel) and Windows, and runs pkgsmith on its own
-#      manifest (pkgsmith.star) to pack them: a disk image on macOS and a Windows Installer package on Windows,
+#      script (pkgsmith.star) to pack them: a disk image on macOS and a Windows Installer package on Windows,
 #   5. creates a GitHub release with the packages, a tarball per platform (pkgsmith and its plugins) and checksums.
 #
 # Run it by hand (Actions, "release", Run workflow) to do steps 1 and 2 and a crates.io dry run without publishing.
@@ -27,16 +28,36 @@ env:
 
 jobs:
   packages:
-    name: packages (${{ matrix.arch }})
+    # pkgsmith builds on the system it runs on, so each Linux package is built in a job of its own distro. The job runs
+    # its steps in a container of that distro and asks for the format that distro installs.
+    name: packages (${{ matrix.distro }}, ${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
+        distro: [fedora, debian, arch, alpine]
+        arch: [amd64, arm64]
+        exclude:
+          # The official Arch Linux image exists for amd64 only.
+          - { distro: arch, arch: arm64 }
         include:
-          - { arch: amd64, target: x86_64-unknown-linux-gnu, runner: ubuntu-24.04 }
-          - { arch: arm64, target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm }
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+          - { distro: fedora, image: "fedora:latest", format: rpm, tools: "dnf -y install gcc git tar jq curl" }
+          - { distro: debian, image: "debian:stable", format: deb, tools: "apt-get update && apt-get -y install gcc libc6-dev git tar jq curl ca-certificates" }
+          - { distro: arch, image: "archlinux:base", format: archlinux, tools: "pacman -Syu --noconfirm gcc git tar jq curl" }
+          - { distro: alpine, image: "alpine:latest", format: apk, tools: "apk add --no-cache bash gcc musl-dev git tar jq curl" }
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
     steps:
+      - name: Install the build tools
+        run: ${{ matrix.tools }}
+
       - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Version
         id: version
@@ -52,22 +73,44 @@ jobs:
           if [ -n "$bad" ]; then echo "version $version expected, but: $bad"; exit 1; fi
 
       - name: Build pkgsmith and the plugins
+        env:
+          # The same flags as the build step of pkgsmith.star, so that the package build reuses this build.
+          RUSTFLAGS: -C target-feature=-crt-static
         run: cargo build --release --workspace --locked
 
-      - name: Build the packages with pkgsmith
+      - name: Build the package with pkgsmith
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-          sudo mkdir -p "$XDG_RUNTIME_DIR" && sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           target/release/pkgsmith plugins
-          target/release/pkgsmith plan .
-          target/release/pkgsmith build . -F rpm,deb,archlinux,apk --platform "linux/${{ matrix.arch }}" --build-arg "VERSION=$VERSION" -o dist --progress plain
+          target/release/pkgsmith plan . -F ${{ matrix.format }} --build-arg "VERSION=$VERSION"
+          target/release/pkgsmith build . -F ${{ matrix.format }} --build-arg "VERSION=$VERSION" -o dist --progress plain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.distro }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  tarballs:
+    name: tarball (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, target: x86_64-unknown-linux-gnu, runner: ubuntu-24.04 }
+          - { arch: arm64, target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pkgsmith and the plugins
+        run: cargo build --release --workspace --locked
 
       - name: Tarball of pkgsmith and its plugins
         run: |
           name="pkgsmith-${{ matrix.target }}"
-          mkdir -p "$name/plugins"
+          mkdir -p "$name/plugins" dist
           cp target/release/pkgsmith LICENSE README.md "$name/"
           for f in target/release/libpkgsmith_plugin_*.so; do
             cp "$f" "$name/plugins/pkgsmith-plugin-${f##*/libpkgsmith_plugin_}"
@@ -77,7 +120,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.arch }}
+          name: dist-tarball-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 
@@ -129,7 +172,7 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = tag ]; then version="${GITHUB_REF_NAME#v}"; else
             version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pkgsmith") | .version')"; fi
           arch=amd64; if [[ "${{ matrix.target }}" == aarch64* ]]; then arch=arm64; fi
-          # A target without a job packages files that exist, so no container is needed.
+          # The dmg package packs the files in STAGE and runs no build.
           target/release/pkgsmith build . -F dmg --where "arch=$arch" \
             --build-arg "VERSION=$version" --build-arg "ARCH=$arch" --build-arg "STAGE=$name" -o dist --progress plain
           ls -l dist
@@ -141,7 +184,7 @@ jobs:
 
   crates:
     name: crates.io
-    needs: [packages]
+    needs: [packages, tarballs]
     runs-on: ubuntu-24.04
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -168,7 +211,7 @@ jobs:
   release:
     name: GitHub release
     if: github.event_name == 'push'
-    needs: [packages, binaries, crates]
+    needs: [packages, tarballs, binaries, crates]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4

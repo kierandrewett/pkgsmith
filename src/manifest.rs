@@ -50,9 +50,9 @@ pub struct Scripts {
     pub post_remove: Option<String>,
 }
 
-/// One script of a job. Each step runs in a fresh `sh -e` in `/src`. A step does not see what an earlier step exported or
-/// where it changed directory, but it sees the files earlier steps wrote and the lines they appended to `$PKGSMITH_ENV`
-/// and `$PKGSMITH_PATH`.
+/// One script of a build. Each step runs in a fresh `sh -e` in the build context. A step does not see what an earlier
+/// step exported or where it changed directory, but it sees the files earlier steps wrote and the lines they appended to
+/// `$PKGSMITH_ENV` and `$PKGSMITH_PATH`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
@@ -65,29 +65,22 @@ pub struct Step {
     pub env: BTreeMap<String, String>,
 }
 
-/// A job that builds files: a container image and ordered steps. Its result is the file tree that the steps install.
+/// The build of a target: ordered steps that run on this system, in the build context. Each step installs into
+/// `$pkgdir`, and the files in it are the package.
 ///
-/// Two targets whose jobs are equal share one run, so a job that three formats need is built once. A job sees only
+/// Two targets whose builds are equal share one run, so a build that three formats need is built once. A build sees only
 /// its own fields and the architecture, never the format or the distro of a target.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobSpec {
-    /// The container image the steps run in. It is pulled when it is not on the machine.
-    pub runs_on: String,
-    /// Steps that make the files. Whatever they install outside `/src` is packaged.
+    /// Steps that make the files.
     pub steps: Vec<Step>,
-    /// Steps that prepare the environment, for example by installing compilers. They run once, and the result is cached
-    /// as an image. What they install is not packaged.
-    #[serde(default)]
-    pub setup: Vec<Step>,
     /// Variables for every step. The values are literal text: nothing in them is expanded by a shell.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     /// Paths (globs) that the steps install and the package leaves out.
     #[serde(default)]
     pub exclude: Vec<String>,
-    /// The architecture the job runs for. Without it, the job runs for the architecture of the target.
-    pub arch: Option<String>,
 }
 
 /// One package to write: the fields of the package, the format, and the job that builds its files.
@@ -135,7 +128,7 @@ pub struct TargetSpec {
     /// Labels for `--where`.
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
-    /// The job that builds the files. Without one, the package holds its `contents` only.
+    /// The build that makes the files. Without one, the package holds its `contents` only.
     pub job: Option<JobSpec>,
 }
 
@@ -160,11 +153,7 @@ pub struct Manifest {
     pub contents: Vec<Content>,
     pub scripts: Scripts,
     pub options: serde_json::Value,
-    /// The container image of the job, when there is one.
-    pub image: Option<String>,
-    /// The setup steps of the job as one script. They run once and are cached. Not tracked.
-    pub setup: Option<String>,
-    /// The other steps as one script. Whatever they write outside `/src` is packaged.
+    /// The steps of the build as one script. What they install into `$pkgdir` is packaged.
     pub build: Option<String>,
     /// Paths (globs) the build installed that the package leaves out.
     pub exclude: Vec<String>,
@@ -172,7 +161,7 @@ pub struct Manifest {
     pub build_env: BTreeMap<String, String>,
     /// The folder of the script. Relative `src` paths and script files resolve against it.
     pub base: PathBuf,
-    /// The build context: the folder mounted at `/src` in a tracked build.
+    /// The build context: the folder the build runs in (`$srcdir`).
     pub context: PathBuf,
 }
 
@@ -212,10 +201,10 @@ fn sh_quote(text: &str) -> String {
 /// What every step starts with. `$PKGSMITH_ENV` holds one `NAME=value` per line and `$PKGSMITH_PATH` one folder per line.
 /// Earlier steps append to them, like `GITHUB_ENV` and `GITHUB_PATH` in GitHub Actions. They are read as data: `export
 /// "NAME=value"` assigns the text after the first `=` as it is, so quotes and `$` in a value do nothing. They live in
-/// `/tmp`, which is never packaged, and a setup step's lines reach the later steps through the cached image.
-const PRELUDE: &str = r#"PKGSMITH_ENV=/tmp/pkgsmith-state/env
-PKGSMITH_PATH=/tmp/pkgsmith-state/path
-mkdir -p /tmp/pkgsmith-state && : >> "$PKGSMITH_ENV" && : >> "$PKGSMITH_PATH"
+/// `$PKGSMITH_STATE`, a folder that pkgsmith makes for each build and removes after it.
+const PRELUDE: &str = r#"PKGSMITH_ENV="$PKGSMITH_STATE/env"
+PKGSMITH_PATH="$PKGSMITH_STATE/path"
+mkdir -p "$PKGSMITH_STATE" && : >> "$PKGSMITH_ENV" && : >> "$PKGSMITH_PATH"
 export PKGSMITH_ENV PKGSMITH_PATH
 if [ -s "$PKGSMITH_PATH" ]; then
   PATH="$(paste -sd: "$PKGSMITH_PATH"):$PATH"
@@ -312,7 +301,7 @@ fn octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::E
 
 impl Manifest {
     /// Check a target and turn it into the package pkgsmith works with. `base` is the folder of the script and
-    /// `context` the folder mounted at `/src`.
+    /// `context` the folder the build runs in.
     pub fn from_spec(spec: TargetSpec, base: PathBuf, context: PathBuf) -> Result<Manifest> {
         let mut manifest = Manifest {
             name: spec.name,
@@ -347,64 +336,47 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Fill in `image`, `setup`, `build`, `exclude` and `build_env` from the job.
+    /// Fill in `build`, `exclude` and `build_env` from the build.
     fn use_job(&mut self, job: JobSpec) -> Result<()> {
-        if job.runs_on.trim().is_empty() {
-            bail!("the job has an empty runs_on");
-        }
         if job.steps.is_empty() {
-            bail!("the job has no steps");
+            bail!("the build has no steps");
         }
-        let arch = match &job.arch {
-            Some(arch) if !["amd64", "arm64", "all"].contains(&arch.as_str()) => {
-                bail!("the job arch {arch:?} must be amd64, arm64 or all")
-            }
-            Some(arch) => arch.clone(),
-            None => self.arch.clone(),
-        };
         let valid_name = |key: &str| {
             key.chars()
                 .next()
                 .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
                 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
-        for key in job.env.keys().chain(
-            job.setup
-                .iter()
-                .chain(&job.steps)
-                .flat_map(|s| s.env.keys()),
-        ) {
+        for key in job
+            .env
+            .keys()
+            .chain(job.steps.iter().flat_map(|s| s.env.keys()))
+        {
             if !valid_name(key) {
                 bail!(
-                    "the job has the env name {key:?}; use letters, digits and _, not starting with a digit"
+                    "the build has the env name {key:?}; use letters, digits and _, not starting with a digit"
                 );
             }
         }
-        let render = |steps: &[Step], phase: &str| -> Vec<String> {
-            steps
-                .iter()
-                .enumerate()
-                .map(|(n, step)| {
-                    let title = step
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| format!("{phase} {}", n + 1));
-                    render_step(&title, &job.env, &step.env, &step.run)
-                })
-                .collect()
-        };
-        let setup = render(&job.setup, "setup");
-        let build = render(&job.steps, "step");
-        self.image = Some(job.runs_on.clone());
+        let steps: Vec<String> = job
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(n, step)| {
+                let title = step
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("step {}", n + 1));
+                render_step(&title, &job.env, &step.env, &step.run)
+            })
+            .collect();
         self.exclude = job.exclude.clone();
-        self.setup = (!setup.is_empty()).then(|| setup.join("\n"));
-        self.build = Some(build.join("\n"));
-        self.arch = arch.clone();
+        self.build = Some(steps.join("\n"));
         let mut env = BTreeMap::new();
         env.insert("PKGSMITH_NAME".into(), self.name.clone());
         env.insert("PKGSMITH_VERSION".into(), self.version.clone());
         env.insert("PKGSMITH_RELEASE".into(), self.release.clone());
-        env.insert("PKGSMITH_ARCH".into(), arch);
+        env.insert("PKGSMITH_ARCH".into(), self.arch.clone());
         self.build_env = env;
         Ok(())
     }
@@ -471,7 +443,7 @@ mod tests {
             (m.release.as_str(), m.arch.as_str(), m.epoch),
             ("1", "amd64", 0)
         );
-        assert!(m.image.is_none() && m.build.is_none());
+        assert!(m.build.is_none());
     }
 
     #[test]
@@ -483,33 +455,25 @@ mod tests {
     }
 
     #[test]
-    fn a_job_makes_the_scripts_and_a_job_arch_wins() {
+    fn a_build_makes_the_script() {
         let m = build(json!({
             "arch": "arm64",
-            "job": {"runs_on": "debian:13", "arch": "amd64",
-                    "setup": [{"name": "tools", "run": "apt-get update"}],
-                    "steps": [{"run": "make"}],
-                    "exclude": ["/usr/share/doc/**"]}
+            "job": {"steps": [{"run": "make"}], "exclude": ["/usr/share/doc/**"]}
         }))
         .unwrap();
-        assert_eq!(m.image.as_deref(), Some("debian:13"));
-        assert!(m.setup.as_deref().unwrap().contains("apt-get update"));
         assert!(m.build.as_deref().unwrap().contains("make"));
-        assert_eq!(m.build_env["PKGSMITH_ARCH"], "amd64");
+        assert_eq!(m.build_env["PKGSMITH_ARCH"], "arm64");
         assert_eq!(m.exclude, ["/usr/share/doc/**"]);
     }
 
     #[test]
-    fn bad_names_modes_and_jobs_are_refused() {
+    fn bad_names_modes_and_builds_are_refused() {
         assert!(build(json!({"name": "Bad Name"})).is_err());
         assert!(build(json!({"arch": "sparc"})).is_err());
         assert!(build(json!({"contents": [{"dst": "relative"}]})).is_err());
         assert!(build(json!({"contents": [{"dst": "/a", "type": "symlink"}]})).is_err());
-        assert!(build(json!({"job": {"runs_on": "a", "steps": []}})).is_err());
-        assert!(
-            build(json!({"job": {"runs_on": "a", "steps": [{"run": "x", "env": {"1BAD": "v"}}]}}))
-                .is_err()
-        );
+        assert!(build(json!({"job": {"steps": []}})).is_err());
+        assert!(build(json!({"job": {"steps": [{"run": "x", "env": {"1BAD": "v"}}]}})).is_err());
         let error = Manifest::parse_spec(
             json!({"name": "a", "version": "1", "format": "rpm", "description": "d",
             "contents": [{"dst": "/a", "mode": "9"}]}),
@@ -518,38 +482,35 @@ mod tests {
         assert!(format!("{error:#}").contains("accept"), "{error:#}");
     }
 
+    /// Run the build script of a manifest in `sh`, with a private state folder.
+    #[cfg(unix)]
+    fn run_build(m: &Manifest) -> std::process::Output {
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("sh")
+            .args(["-ec", m.build.as_deref().unwrap()])
+            .env("PKGSMITH_STATE", dir.path().join("state"))
+            .output()
+            .unwrap()
+    }
+
     #[cfg(unix)]
     #[test]
     fn env_values_stay_literal_and_the_state_files_are_data_not_shell() {
         let tricky = "it's \"quoted\" $HOME `id` $(id)";
         let m = build(json!({
-            "job": {"runs_on": "a", "env": {"GREETING": tricky},
-                    "setup": [{"run": "printf 'FROM_SETUP=%s\\n' \"$GREETING\" >> \"$PKGSMITH_ENV\"\necho /opt/tool/bin >> \"$PKGSMITH_PATH\"\n"}],
-                    "steps": [{"run": "printf '%s|%s|%s' \"$GREETING\" \"$FROM_SETUP\" \"$PATH\"\necho\necho PKGSMITH_END\n"}]}
+            "job": {"env": {"GREETING": tricky},
+                    "steps": [{"run": "printf 'FROM_STEP=%s\\n' \"$GREETING\" >> \"$PKGSMITH_ENV\"\necho /opt/tool/bin >> \"$PKGSMITH_PATH\"\n"},
+                              {"run": "printf '%s|%s|%s' \"$GREETING\" \"$FROM_STEP\" \"$PATH\"\necho\necho PKGSMITH_END\n"}]}
         }))
         .unwrap();
-        // Setup and build share one container in real life, so the state directory stays between them. Run both here.
-        let dir = tempfile::tempdir().unwrap();
-        let script = format!(
-            "{}\n{}",
-            m.setup.as_deref().unwrap(),
-            m.build.as_deref().unwrap()
-        )
-        .replace(
-            "/tmp/pkgsmith-state",
-            &format!("{}/state", dir.path().display()),
-        );
-        let output = std::process::Command::new("sh")
-            .args(["-ec", &script])
-            .output()
-            .unwrap();
+        let output = run_build(&m);
         assert!(
             output.status.success(),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("==> step 1"), "{stdout}");
+        assert!(stdout.contains("==> step 2"), "{stdout}");
         assert!(
             stdout.contains(&format!("{tricky}|{tricky}|/opt/tool/bin:")),
             "{stdout}"
@@ -559,27 +520,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_bad_line_in_the_env_file_stops_the_step() {
+    fn a_bad_line_in_the_env_file_stops_the_next_step() {
         let m = build(json!({
-            "job": {"runs_on": "a",
-                    "setup": [{"run": "echo 'not valid' >> \"$PKGSMITH_ENV\""}],
-                    "steps": [{"run": "echo unreachable"}]}
+            "job": {"steps": [{"run": "echo 'not valid' >> \"$PKGSMITH_ENV\""}, {"run": "echo unreachable"}]}
         }))
         .unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let script = format!(
-            "{}\n{}",
-            m.setup.as_deref().unwrap(),
-            m.build.as_deref().unwrap()
-        )
-        .replace(
-            "/tmp/pkgsmith-state",
-            &format!("{}/state", dir.path().display()),
-        );
-        let output = std::process::Command::new("sh")
-            .args(["-ec", &script])
-            .output()
-            .unwrap();
+        let output = run_build(&m);
         assert!(!output.status.success());
         assert!(!String::from_utf8_lossy(&output.stdout).contains("unreachable"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("not NAME=value"));

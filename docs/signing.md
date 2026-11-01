@@ -67,7 +67,7 @@ pkgsmith build --sign-key gpg:release@example.org --sign-key apk=release.rsa
 PKGSMITH_SIGN_KEY="rpm=$RUNNER_TEMP/key.asc;apk=$RUNNER_TEMP/release.rsa" pkgsmith build
 ```
 
-Before the first container starts, pkgsmith opens every key and asks the signers about it. These stop the run at once,
+Before the first build starts, pkgsmith opens every key and asks the signers about it. These stop the run at once,
 with the reason:
 
 - a missing key file

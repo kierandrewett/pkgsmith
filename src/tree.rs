@@ -123,6 +123,27 @@ fn walk(src: &Path, dst: &str, content: &Content, out: &mut Vec<Entry>) -> Resul
     Ok(())
 }
 
+/// Is `path` inside one of the excluded locations? An exclude is a path prefix or a glob.
+pub fn excluded(path: &str, excludes: &[String]) -> bool {
+    excludes.iter().any(|rule| {
+        let rule = rule.trim_end_matches('/');
+        path == rule
+            || path
+                .strip_prefix(rule)
+                .is_some_and(|rest| rest.starts_with('/'))
+            || glob::Pattern::new(rule).is_ok_and(|pattern| pattern.matches(path))
+    })
+}
+
+/// The files and folders below `dir`, as package entries with their paths relative to `/`. A build on this system installs
+/// into such a folder (`$pkgdir`).
+pub fn stage_entries(dir: &Path) -> Result<Vec<Entry>> {
+    let mut entries = Vec::new();
+    walk(dir, "/", &Content::default(), &mut entries)?;
+    entries.retain(|entry| entry.path != "/");
+    Ok(entries)
+}
+
 /// Resolve the `contents` of a target. Later entries replace earlier ones with the same path.
 pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
     resolve_with(manifest, Vec::new())

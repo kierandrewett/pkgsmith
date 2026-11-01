@@ -1,29 +1,24 @@
 # pkgsmith
 
-pkgsmith builds distribution packages. You write one script for a package. pkgsmith runs the build in a
-container for each distro, finds the files the build installed, and writes the package.
+pkgsmith builds distribution packages. You write one script for a package. pkgsmith runs it on your system, builds your
+program there, and writes the package in the format you ask for.
 
-![One build for Fedora, Debian, Arch and Alpine](media/demo.gif)
+![One script, one package for each system](media/demo.gif)
 
 ```python
 # pkgsmith.star
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+sh("make")
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
 
-build = job(
-    runs_on = "fedora:43",
-    setup = [step("dnf -y install gcc make")],
-    steps = [step("make && make install PREFIX=/usr")],
-)
-
-target(pkg, "rpm", distro = "fedora", job = build)
+package("rpm", name = "hello", version = "1.0.0", description = "A small program")
 ```
 
 ```console
 $ pkgsmith build
 ```
 
-This builds `hello` in a Fedora container, takes every file that `make install` wrote outside the source folder,
-and writes `hello-1.0.0-1.x86_64.rpm` to `./dist`.
+This runs `make` in the folder of the script, takes every file that `make install` put in `$pkgdir`, and writes
+`hello-1.0.0-1.x86_64.rpm` to `./dist`.
 
 ## Why
 
@@ -31,23 +26,23 @@ A project that ships to several distributions usually keeps a spec file, a `PKGB
 They list the same files, the same dependencies and the same scripts, each in its own format. pkgsmith keeps that
 information in one place.
 
-| You write                                 | pkgsmith does                                                              |
-| ----------------------------------------- | -------------------------------------------------------------------------- |
-| A `job` for each build environment: a `runs_on` image and its `steps` | Runs them in a container and tracks which files the build installed |
-| `name`, `version`, `depends`, `scripts`   | Writes them in the way each format wants them                              |
-| A loop over distros, architectures and formats | Builds every combination, side by side, with `-j`                    |
+| You write                                         | pkgsmith does                                                  |
+| ------------------------------------------------- | -------------------------------------------------------------- |
+| `sh(...)` for each build command                  | Runs them on this system, in order                             |
+| `expose(...)` for the files the build made        | Offers them to every package that follows                      |
+| `package(format, ...)` with `name`, `version`, `depends`, `scripts` | Writes them in the way each format wants them  |
+| `if` and `for`, with `host()`                     | Writes only the packages that fit this system                  |
 
 ## How it works
 
-1. **Read.** pkgsmith runs the script. It collects every target the script declares.
-2. **Set up.** For a target that needs a job, it runs the `setup` steps in a container once and keeps the result as an
-   image. The next run starts from that image.
-3. **Build.** It runs the `steps` on top of that image. The source folder is mounted at `/src` as a
-   throw-away overlay, so the build can write there without changing your checkout.
-4. **Track.** The container's changes against its image are the files the build installed. pkgsmith exports them.
-5. **Package.** pkgsmith sends the file list and the metadata to the plugin that writes the format.
+1. **Read.** pkgsmith runs the script, top to bottom. Each `package` call that runs adds one package to the list.
+2. **Build.** It runs the `sh` commands that each package needs, in the folder of the script. Packages that follow the
+   same commands share one build.
+3. **Collect.** The files in `$pkgdir` and the files you `expose` are the files of the package.
+4. **Package.** pkgsmith sends the file list and the metadata to the plugin that writes the format.
 
-Targets that need the same job run its steps once, even when you ask for five formats or several distros.
+For another distro or architecture, run pkgsmith on that system, for example in a CI
+job. See [building](building.md#packages-for-other-distros).
 
 ## Formats are plugins
 
@@ -59,13 +54,15 @@ The plugins in this repository write:
 - `rpm`, `deb` and `ipk`
 - `archlinux` and `apk`
 - `tar` and `zip`
+- and more: see [formats](formats.md)
 
 ## Read next
 
 - [Getting started](getting-started.md): build a package from scratch.
-- [Script reference](manifest.md): every function and field.
+- [Scripting](scripting.md): how to write a script.
+- [Script reference](manifest.md): every function, field and value.
+- [Building](building.md): how the build runs, `$pkgdir`, and packages for other distros.
 - [Contents](contents.md): choose the files yourself.
-- [Build environment](build-environment.md): jobs, steps, tracking, caching.
-- [Scripting](scripting.md): one script for many distros and architectures.
 - [Versions](versions.md), [install scripts](scripts.md) and [dependencies](dependencies.md).
+- [macOS and Windows](macos-and-windows.md): compile there, then package.
 - [Plugins](plugins.md): where pkgsmith looks for them, and how to write one.

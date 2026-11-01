@@ -1,13 +1,13 @@
 # pkgsmith: notes for agents and contributors
 
-pkgsmith builds distribution packages from one script. The host runs the script and runs the builds. Every package
+pkgsmith builds distribution packages from one script. The host runs the script on the system it is on, and runs the builds there. Every package
 format and every signing method is a plugin: a shared library named `pkgsmith-plugin-*.so` that the host loads.
 
 ## Layout
 
 | Path                      | What it is                                                                       |
 | ------------------------- | -------------------------------------------------------------------------------- |
-| `src/`                    | The host: script, targets, containers, progress, plugin loader, command line     |
+| `src/`                    | The host: script, builds, progress, plugin loader, command line     |
 | `crates/pkgsmith-plugin/` | The SDK: the `Package` type, the C interface, the `Plugin` trait, shared helpers |
 | `plugins/*/`              | The built-in plugins. One `cdylib` crate each. `plugins/*` joins the workspace by itself |
 | `examples/`               | Complete scripts, and a C and a Rust example plugin in `examples/plugins/`     |
@@ -23,7 +23,7 @@ Update the documentation in the same change as the code. A change is not finishe
 2. A new or changed **signer plugin** or signing option: update `docs/signing.md` and `docs/cli.md`.
 3. A new or changed **command line option or command**: update `docs/cli.md`, and the command table in `README.md`.
 4. A new or changed **script function or field**: update `docs/manifest.md`, `docs/scripting.md` when it changes how a
-   script is written, and `examples/full.star`, which uses every field.
+   script is written, and an example in `examples/`.
 5. A change to the **plugin interface** (`crates/pkgsmith-plugin/src/abi.rs` or `plugin.rs`): update the C interface in
    `docs/plugins.md` and the comment at the top of `abi.rs`, and rebuild `examples/plugins/c-listing`.
 6. Check every link and command you wrote against the current code and `--help` output. Do not document a feature that
@@ -47,11 +47,11 @@ scripts/verify-formats.sh target/debug/pkgsmith rpm deb   # some formats
 scripts/verify-signing.sh target/debug/pkgsmith           # signatures
 ```
 
-Each script builds a small package, installs or inspects it with the tool of the format in Podman, and prints `ok`,
-`FAIL` or `skip` for every check. A run writes `verify-formats.log` with the digest of every image.
+Each script builds a small package, installs or inspects it with the tool of the format, and prints `ok`, `FAIL` or
+`skip` for every check. A run writes `verify-formats.log` with the digest of every test system.
 
-- The suite pulls the newest release of every distro image on each run. Do not pin an image in the script: the suite is
-  there to catch what a new release breaks. Use `IMAGE_FEDORA=fedora:43` and the like to reproduce one fixed release.
+- The suite uses the newest release of every distro on each run. Do not pin a release in the script: the suite is there
+  to catch what a new release breaks. Use `IMAGE_FEDORA=fedora:43` and the like to reproduce one fixed release.
 - A new format plugin gets its checks in `scripts/verify-formats.sh` in the same change. Build, install, run, remove, and
   check the package manager's own verification (`rpm -V`, `dpkg -V`, `pacman -Qkk`).
 - Say which checks could not run here (snap needs snapd, FreeBSD needs FreeBSD) in the commit and in the docs. Never claim

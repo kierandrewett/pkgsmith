@@ -5,12 +5,14 @@
 #   scripts/verify-formats.sh [PATH-TO-pkgsmith] [FORMAT...]
 #
 # Without FORMAT every format is checked. pkgsmith and its plugins must sit together, as `cargo build --workspace` leaves
-# them. It needs podman. Every run pulls the NEWEST version of each image it installs into, on purpose: the suite exists
-# to find the bug that a new distro release brings, so it must not test a frozen environment. The image digests of a
-# run are written to the log. To test one fixed release, set a variable such as IMAGE_FEDORA=fedora:43, and set
-# PKGSMITH_NO_PULL=1 to use the images that are already on the machine. The appimage check needs a runtime file in
-# PKGSMITH_APPIMAGE_RUNTIME (from github.com/AppImage/type2-runtime/releases) and is skipped without it. The wheel check
-# needs python3 with venv. The result is written to verify-formats.log in the current folder.
+# them. pkgsmith builds every package on this machine and never starts a container. Only the checks use podman, to
+# install each package into a clean distro. Every run pulls the NEWEST version of each image it installs into, on
+# purpose: the suite exists to find the bug that a new distro release brings, so it must not test a frozen
+# environment. The image digests of a run are written to the log. To test one fixed release, set a variable such as
+# IMAGE_FEDORA=fedora:43, and set PKGSMITH_NO_PULL=1 to use the images that are already on the machine. The appimage
+# check needs a runtime file in PKGSMITH_APPIMAGE_RUNTIME (from github.com/AppImage/type2-runtime/releases) and is
+# skipped without it. The wheel check needs python3 with venv. The result is written to verify-formats.log in the
+# current folder.
 set -uo pipefail
 
 PKGSMITH="$(realpath "${1:-target/debug/pkgsmith}")"
@@ -59,16 +61,14 @@ for image in "$IMAGE_FEDORA" "$IMAGE_DEBIAN" "$IMAGE_ARCH" "$IMAGE_ALPINE" "$IMA
     echo "image $image $(podman image inspect --format '{{.Digest}} {{.Created}}' "$image" 2>/dev/null)" | tee -a "$LOG"
 done
 
-# The package: a script, a config file, a symlink, a Python module, and a static program for the container image.
-mkdir -p stage/usr/bin stage/etc stage/usr/lib/python3/site-packages/hipkg
-printf '#!/bin/sh\necho hi-from-package\n' > stage/usr/bin/hi; chmod 755 stage/usr/bin/hi
-printf 'greeting=hi\n' > stage/etc/hi.conf
-printf 'VALUE = 1\n' > stage/usr/lib/python3/site-packages/hipkg/__init__.py
+# The package. A static program for the oci and appimage formats is compiled here, in an Alpine container, because this
+# machine may have no static C library. The build in the script makes the other files.
+mkdir -p stage/usr/bin
 printf '#include <stdio.h>\nint main(void){puts("hi-from-image");return 0;}\n' > hello.c
 podman run --rm $PULL -v "$PWD:/w:z" -w /w "$IMAGE_ALPINE" sh -c 'apk add --no-cache gcc musl-dev >/dev/null && cc -static -O2 -o stage/usr/bin/hi-static hello.c' >>"$LOG" 2>&1 \
     || echo "could not build the static test program; the oci check will fail" >&2
 cat > pkgsmith.star <<'STAR'
-# One target for every format. Only some formats get the symlink, and each format has its own options.
+# One build for every format. Only some formats get the symlink, and each format has its own options.
 LINKED = ["rpm", "deb", "ipk", "archlinux", "apk", "slackware", "tar", "zip", "snap", "xbps", "freebsd"]
 FORMATS = LINKED + ["oci", "wheel", "appimage"]
 OPTIONS = {
@@ -79,38 +79,48 @@ OPTIONS = {
     "appimage": {"runtime": arg("APPIMAGE_RUNTIME", ""), "icon": "icon.png", "exec": "usr/bin/hi-static"},
 }
 
-pkg = package(
-    name = "hi",
-    version = "1.0.0",
-    description = """Says hi
-A tiny package that every format test installs.
-""",
-    maintainer = "Test <test@example.org>",
-    homepage = "https://example.org/hi",
-    license = "MIT",
-    scripts = {"post_install": "echo post-install-ran > /tmp/hi-post\n"},
-)
+sh(r"""mkdir -p stage/usr/bin stage/etc stage/usr/lib/python3/site-packages/hipkg
+printf '#!/bin/sh\necho hi-from-package\n' > stage/usr/bin/hi
+chmod 755 stage/usr/bin/hi
+printf 'greeting=hi\n' > stage/etc/hi.conf
+printf 'VALUE = 1\n' > stage/usr/lib/python3/site-packages/hipkg/__init__.py""", name = "Make the test files")
 
-common = [
+expose(
     file("stage/usr/bin/hi", "/usr/bin/hi"),
     file("stage/usr/bin/hi-static", "/usr/bin/hi-static"),
     config("stage/etc/hi.conf", "/etc/hi.conf"),
     file("stage/usr/lib/python3/site-packages/hipkg/__init__.py", "/usr/lib/python3/site-packages/hipkg/__init__.py"),
-]
+)
+
+common = {
+    "name": "hi",
+    "version": "1.0.0",
+    "description": """Says hi
+A tiny package that every format test installs.
+""",
+    "maintainer": "Test <test@example.org>",
+    "homepage": "https://example.org/hi",
+    "license": "MIT",
+    "scripts": {"post_install": "echo post-install-ran > /tmp/hi-post\n"},
+}
 
 for fmt in FORMATS:
     if fmt == "appimage" and not arg("APPIMAGE_RUNTIME"):
         continue
-    contents = common + ([symlink("/usr/bin/hi", "/usr/bin/hello")] if fmt in LINKED else [])
-    extra = {"depends": ["libfoo"]} if fmt == "freebsd" else {}
-    target(pkg, fmt, contents = contents, options = OPTIONS.get(fmt, {}), **extra)
+    fields = dict(common)
+    fields["options"] = OPTIONS.get(fmt, {})
+    if fmt in LINKED:
+        fields["contents"] = [symlink("/usr/bin/hi", "/usr/bin/hello")]
+    if fmt == "freebsd":
+        fields["depends"] = ["libfoo"]
+    package(fmt, **fields)
 STAR
 
 build() { "$PKGSMITH" build . -F "$1" -o "out-$1" --progress plain; }
 
 # The language package formats install into a language's own tree, so each one gets a manifest of its own.
-lang_manifest() { # lang_manifest FORMAT: writes lang-FORMAT.star with the common header, then the given lines (they use pkg and FORMAT)
-    { printf 'pkg = package(name = "hi", version = "1.0.0", arch = "all", description = "Says hi", maintainer = "Test <test@example.org>", homepage = "https://example.org/hi", license = "MIT")\nFORMAT = "%s"\n' "$1"; cat; } > "lang-$1.star"
+lang_manifest() { # lang_manifest FORMAT: writes lang-FORMAT.star with a header (FORMAT and the fields in common), then the given lines
+    { printf 'common = {"name": "hi", "version": "1.0.0", "arch": "all", "description": "Says hi", "maintainer": "Test <test@example.org>", "homepage": "https://example.org/hi", "license": "MIT"}\nFORMAT = "%s"\n' "$1"; cat; } > "lang-$1.star"
 }
 build_lang() { "$PKGSMITH" build . -f "lang-$1.star" -F "$1" -o "out-$1" --progress plain; }
 in_image() { # in_image IMAGE DIR SCRIPT: run a script with the output folder mounted at /p
@@ -126,15 +136,13 @@ if selected zip; then
     check "zip: unzip -t and the symlink" sh -c 'unzip -tq out-zip/hi-1.0.0-amd64.zip && unzip -Z out-zip/hi-1.0.0-amd64.zip | grep -q "usr/bin/hello"'
 fi
 if selected epoch; then
-    rm -rf lang/epoch; mkdir -p lang/epoch
-    printf '#!/bin/sh\necho hi\n' > lang/epoch/hi; chmod 755 lang/epoch/hi
     cat > lang-epoch.star <<'STAR'
-pkg = package(
-    name = "hi", version = "1.0.0", epoch = 2, description = "Says hi", maintainer = "Test <test@example.org>",
-    contents = [file("lang/epoch/hi", "/usr/bin/hi")],
-)
+sh(r"""mkdir -p lang/epoch
+printf '#!/bin/sh\necho hi\n' > lang/epoch/hi
+chmod 755 lang/epoch/hi""", name = "Make the program")
+expose(file("lang/epoch/hi", "/usr/bin/hi"))
 for fmt in ["rpm", "deb", "archlinux"]:
-    target(pkg, fmt)
+    package(fmt, name = "hi", version = "1.0.0", epoch = 2, description = "Says hi", maintainer = "Test <test@example.org>")
 STAR
     check "epoch: build rpm, deb and archlinux" "$PKGSMITH" build . -f lang-epoch.star -F rpm,deb,archlinux -o out-epoch --progress plain
     check "epoch: rpm records Epoch 2 and the provide, installs, rpm -q shows 2: (latest Fedora)" in_image "$IMAGE_FEDORA" out-epoch '
@@ -228,14 +236,16 @@ if selected freebsd; then
 fi
 
 if selected gem; then
-    mkdir -p lang/gem/lib lang/gem/bin
-    printf 'module Hi\n  def self.say = "hi-from-gem"\nend\n' > lang/gem/lib/hi.rb
-    printf '#!/usr/bin/env ruby\nrequire "hi"\nputs Hi.say\n' > lang/gem/bin/hi; chmod 755 lang/gem/bin/hi
     lang_manifest gem <<'STAR'
-target(pkg, FORMAT, contents = [
+sh(r"""mkdir -p lang/gem/lib lang/gem/bin
+printf 'module Hi\n  def self.say = "hi-from-gem"\nend\n' > lang/gem/lib/hi.rb
+printf '#!/usr/bin/env ruby\nrequire "hi"\nputs Hi.say\n' > lang/gem/bin/hi
+chmod 755 lang/gem/bin/hi""", name = "Make the gem files")
+expose(
     file("lang/gem/lib/hi.rb", "/usr/share/gems/gems/hi-1.0.0/lib/hi.rb"),
     file("lang/gem/bin/hi", "/usr/bin/hi"),
-])
+)
+package(FORMAT, **common)
 STAR
     check "gem: build" build_lang gem
     check "gem: install, require, run, uninstall (latest Ruby)" in_image "$IMAGE_RUBY" out-gem '
@@ -243,10 +253,11 @@ STAR
         hi | grep -q hi-from-gem; gem spec /p/hi-1.0.0.gem name | grep -q hi; gem uninstall hi -x >/dev/null'
 fi
 if selected npm; then
-    mkdir -p lang/npm
-    printf 'module.exports = "hi-from-npm";\n' > lang/npm/index.js
     lang_manifest npm <<'STAR'
-target(pkg, FORMAT, contents = [file("lang/npm/index.js", "/usr/lib/node_modules/hi/index.js")])
+sh(r"""mkdir -p lang/npm
+printf 'module.exports = "hi-from-npm";\n' > lang/npm/index.js""", name = "Make the module")
+expose(file("lang/npm/index.js", "/usr/lib/node_modules/hi/index.js"))
+package(FORMAT, **common)
 STAR
     check "npm: build" build_lang npm
     check "npm: install and require (latest Node)" in_image "$IMAGE_NODE" out-npm '
@@ -254,10 +265,12 @@ STAR
         node -p "require(\"hi\")" | grep -q hi-from-npm; npm publish --dry-run /p/hi-1.0.0.tgz >/dev/null 2>&1'
 fi
 if selected conda; then
-    mkdir -p lang/conda/bin
-    printf '#!/bin/sh\necho hi-from-conda\n' > lang/conda/bin/hi; chmod 755 lang/conda/bin/hi
     lang_manifest conda <<'STAR'
-target(pkg, FORMAT, contents = [file("lang/conda/bin/hi", "/usr/bin/hi")])
+sh(r"""mkdir -p lang/conda/bin
+printf '#!/bin/sh\necho hi-from-conda\n' > lang/conda/bin/hi
+chmod 755 lang/conda/bin/hi""", name = "Make the program")
+expose(file("lang/conda/bin/hi", "/usr/bin/hi"))
+package(FORMAT, **common)
 STAR
     check "conda: build" build_lang conda
     check "conda: index, create an environment, run, remove (latest micromamba)" in_image "$IMAGE_MAMBA" out-conda '
@@ -268,10 +281,11 @@ STAR
         micromamba run -n t hi | grep -q hi-from-conda; micromamba remove -y -q -n t hi >/dev/null'
 fi
 if selected nupkg; then
-    mkdir -p lang/nupkg
-    printf 'hi-from-nupkg\n' > lang/nupkg/hi.txt
     lang_manifest nupkg <<'STAR'
-target(pkg, FORMAT, contents = [file("lang/nupkg/hi.txt", "/usr/share/hi/hi.txt")], options = {"prefix": "/usr/share/hi"})
+sh(r"""mkdir -p lang/nupkg
+printf 'hi-from-nupkg\n' > lang/nupkg/hi.txt""", name = "Make the file")
+expose(file("lang/nupkg/hi.txt", "/usr/share/hi/hi.txt"))
+package(FORMAT, options = {"prefix": "/usr/share/hi"}, **common)
 STAR
     check "nupkg: build" build_lang nupkg
     check "nupkg: dotnet add package from a local feed (latest .NET SDK)" in_image "$IMAGE_DOTNET" out-nupkg '
@@ -290,14 +304,14 @@ if selected dmg; then
     printf 'spaced\n' > "lang/dmg/with space.txt"
     long="$(printf 'n%.0s' $(seq 1 200)).txt"; printf 'long\n' > "lang/dmg/$long"
     {
-        echo 'target(pkg, FORMAT, options = {"volume_name": "Hi Tools"}, contents = ['
+        echo 'package(FORMAT, distro = "macos", options = {"volume_name": "Hi Tools"}, contents = ['
         echo '    file("lang/dmg/bin/hi", "/usr/bin/hi"),'
         echo '    file("lang/dmg/big.bin", "/usr/share/hi/big.bin"),'
         echo '    file("lang/dmg/empty.txt", "/usr/share/hi/empty.txt"),'
         echo '    file("lang/dmg/with space.txt", "/usr/share/hi/with space.txt"),'
         echo "    file(\"lang/dmg/$long\", \"/usr/share/hi/$long\"),"
         for f in lang/dmg/many/*.txt; do echo "    file(\"$f\", \"/usr/share/hi/many/${f##*/}\"),"; done
-        echo '])'
+        echo '], **common)'
     } | lang_manifest dmg
     check "dmg: build" build_lang dmg
     cp -r lang/dmg out-dmg/src
@@ -319,16 +333,17 @@ if selected dmg; then
         find ex -type f -name "$long" | grep -q .'
 fi
 if selected nix; then
-    rm -rf lang/nix; mkdir -p lang/nix/bin lang/nix/doc
-    printf '#!/bin/sh\necho hi-from-nix\n' > lang/nix/bin/hi; chmod 755 lang/nix/bin/hi
-    printf 'readme\n' > lang/nix/doc/README
     cat > lang-nix.star <<'STAR'
-pkg = package(name = "hi", version = "1.0.0", description = "Says hi", homepage = "https://example.org/hi", license = "MIT")
-target(pkg, "nix", options = {"compression": "gzip"}, contents = [
+sh(r"""mkdir -p lang/nix/bin lang/nix/doc
+printf '#!/bin/sh\necho hi-from-nix\n' > lang/nix/bin/hi
+chmod 755 lang/nix/bin/hi
+printf 'readme\n' > lang/nix/doc/README""", name = "Make the files")
+expose(
     file("lang/nix/bin/hi", "/usr/bin/hi"),
     file("lang/nix/doc/README", "/usr/share/doc/hi/README"),
     symlink("hi", "/usr/bin/hello"),
-])
+)
+package("nix", name = "hi", version = "1.0.0", description = "Says hi", homepage = "https://example.org/hi", license = "MIT", options = {"compression": "gzip"})
 STAR
     check "nix: build" build_lang nix
     # The nixos/nix image has no xz, so the archive is gzip. Needs network for nixpkgs.
@@ -354,15 +369,18 @@ if selected msi; then
     printf 'spaced\n' > "lang/msi/share/hi docs/read me.txt"
     printf 'long\n' > lang/msi/share/a-rather-long-file-name.configuration
     cat > lang-msi.star <<'STAR'
-pkg = package(name = "hi", version = "1.2.3", description = "Says hi", maintainer = "Test Person <test@example.org>")
-target(pkg, "msi", options = {"manufacturer": "Example Ltd"}, contents = [
-    file("lang/msi/bin/hi.exe", "/usr/bin/hi.exe"),
-    file("lang/msi/share/big.bin", "/usr/share/big.bin"),
-    file("lang/msi/share/empty.txt", "/usr/share/empty.txt"),
-    file("lang/msi/share/hi docs/read me.txt", "/usr/share/hi docs/read me.txt"),
-    file("lang/msi/share/a-rather-long-file-name.configuration", "/usr/share/a-rather-long-file-name.configuration"),
-    directory("/usr/lib/empty"),
-])
+package(
+    "msi", name = "hi", version = "1.2.3", description = "Says hi", maintainer = "Test Person <test@example.org>",
+    distro = "windows", options = {"manufacturer": "Example Ltd"},
+    contents = [
+        file("lang/msi/bin/hi.exe", "/usr/bin/hi.exe"),
+        file("lang/msi/share/big.bin", "/usr/share/big.bin"),
+        file("lang/msi/share/empty.txt", "/usr/share/empty.txt"),
+        file("lang/msi/share/hi docs/read me.txt", "/usr/share/hi docs/read me.txt"),
+        file("lang/msi/share/a-rather-long-file-name.configuration", "/usr/share/a-rather-long-file-name.configuration"),
+        directory("/usr/lib/empty"),
+    ],
+)
 STAR
     check "msi: build" build_lang msi
     cp -r lang/msi out-msi/src
@@ -395,14 +413,14 @@ STAR
 fi
 if selected flatpak; then
     if need flatpak; then
-        mkdir -p lang/flatpak/bin
-        printf '#!/bin/sh\necho hi-from-flatpak\n' > lang/flatpak/bin/hi
-        chmod 755 lang/flatpak/bin/hi
-        # A bundle is for one architecture, so this manifest does not use the arch: all of lang_manifest.
         cat > lang-flatpak.star <<'STAR'
-pkg = package(name = "hi", version = "1.0.0", description = "Says hi")
-target(
-    pkg, "flatpak", contents = [file("lang/flatpak/bin/hi", "/usr/bin/hi")],
+# A bundle is for one architecture, so this script does not set arch to all.
+sh(r"""mkdir -p lang/flatpak/bin
+printf '#!/bin/sh\necho hi-from-flatpak\n' > lang/flatpak/bin/hi
+chmod 755 lang/flatpak/bin/hi""", name = "Make the program")
+expose(file("lang/flatpak/bin/hi", "/usr/bin/hi"))
+package(
+    "flatpak", name = "hi", version = "1.0.0", description = "Says hi",
     options = {"app_id": "org.example.Hi", "runtime_version": "24.08"},
 )
 STAR

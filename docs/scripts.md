@@ -3,7 +3,8 @@
 A package can run scripts when it is installed or removed.
 
 ```python
-pkg = package(
+package(
+    "rpm",
     name = "app",
     version = "1.0.0",
     description = "An app with a service",
@@ -14,14 +15,13 @@ pkg = package(
         "post_remove": "packaging/post-remove.sh",
     },
 )
-
-target(pkg, "rpm", distro = "fedora")
 ```
 
 ## Writing a script
 
-- Inline text, or the name of a file next to the script. A value with a line break is the script. A one-line value
-  is read as a file name. End an inline script with a line break, as above, or pkgsmith reads it as a file name.
+- Inline text, the name of a file next to the script, or a function. A value with a line break is the script. A
+  one-line value is read as a file name. End an inline script with a line break, as above, or pkgsmith reads it as a
+  file name. For a function, see below.
 - A script without a `#!` line gets `#!/bin/sh` and `set -e` in front of it. Add your own `#!` line to use another
   interpreter, for example `#!/bin/bash`.
 - Expect an install to be an **upgrade** as well. The same script runs, and it must work when the files are already
@@ -48,20 +48,34 @@ Differences to know about:
 - **rpm** takes the interpreter from the `#!` line.
 - **apk** runs scripts as written. Alpine has no `bash`, so a `#!/bin/bash` script needs the `bash` package.
 
-## Per format or per distro
+## A function as a script
 
-`target` can replace the whole `scripts` dict. Pick the scripts in a function:
+A value can be a function. pkgsmith calls it, and the `sh()` calls in it become the script. They do not join the build:
+they run on the system that installs the package.
 
 ```python
-pkg = package(name = "app", version = "1.0.0", description = "An app with a service")
+def post_install():
+    sh("systemctl daemon-reload || true")
+    sh("systemctl enable app.service || true")
+
+package("rpm", name = "app", version = "1.0.0", description = "An app", scripts = {"post_install": post_install})
+```
+
+## Per format or per distro
+
+Pick the scripts in a function, or with `if`:
+
+```python
+common = {"name": "app", "version": "1.0.0", "description": "An app with a service"}
 
 def scripts_for(fmt):
     if fmt == "apk":
         return {"post_install": "rc-update add app default || true\n"}
     return {"post_install": "systemctl daemon-reload || true\n"}
 
-for fmt in ["rpm", "deb", "apk"]:
-    target(pkg, fmt, scripts = scripts_for(fmt))
+native = host()["format"]
+if native in ["rpm", "deb", "apk"]:
+    package(native, scripts = scripts_for(native), **common)
 ```
 
 ## Example: a service

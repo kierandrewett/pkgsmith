@@ -70,11 +70,11 @@ pkgsmith sends one JSON document, a package, for every package it builds. It hol
 | `name`, `version`, `release`, `arch` | Identity. `version` is as written in the script. `arch` is `amd64`, `arm64` or `all` |
 | `description` | The first line is the summary, the rest is the long text |
 | `maintainer`, `homepage`, `license` | Text, or `null` |
-| `depends`, `recommends`, `suggests`, `conflicts`, `replaces`, `provides` | Lists of package names, as the target gives them |
+| `depends`, `recommends`, `suggests`, `conflicts`, `replaces`, `provides` | Lists of package names, as the script gives them |
 | `scripts` | `pre_install`, `post_install`, `pre_remove`, `post_remove`. The text of each script, which starts with `#!`, or `null` |
 | `entries` | The files, see below |
-| `options` | The `options` dict of the target, for example `{"section": "utils"}`. An empty object when the target sets none |
-| `distro` | The distro of the job, or `null` |
+| `options` | The `options` dict of the package, for example `{"section": "utils"}`. An empty object when the package sets none |
+| `distro` | The `distro` of the package, or `null` |
 | `mtime` | Seconds since the epoch for every time stamp, so equal input gives equal bytes |
 | `out` | The folder for the package. It exists |
 
@@ -100,12 +100,14 @@ see a real document.
 
 ### Format options
 
-The `options` dict of a target is passed to its format as `options`:
+The `options` dict of a `package()` call is passed to its format as `options`:
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
-
-target(pkg, "deb", distro = "debian", options = {"section": "utils", "compression": "gzip"})
+package(
+    "deb",
+    name = "hello", version = "1.0.0", description = "A small program",
+    options = {"section": "utils", "compression": "gzip"},
+)
 ```
 
 pkgsmith does not know the keys. The plugin decides, and a good plugin refuses a key it does not know, so `sectoin` does

@@ -1,26 +1,17 @@
-# A Python program with no compiled code: `arch = "all"` gives a package that installs on every architecture.
+# A Python program with no compiled code: `arch = "all"` gives a package that installs on every architecture, and any
+# system can build it.
+#
 #   pkgsmith build -f examples/python-app.star
-build = job(
-    runs_on = "debian:13",
-    exclude = ["**/__pycache__", "**/*.pyc"],
-    setup = [step(name = "Install the build tools", run = "apt-get update -qq && apt-get install -y python3-pip")],
-    steps = [
-        step(
-            name = "Build",
-            run = """
-pip install --break-system-packages --no-deps --root=/ --prefix=/usr .
-# pip writes caches and bytecode that the package does not need
-""",
-        ),
-    ],
-)
 
-pkg = package(
+sh('pip install --no-deps --root="$pkgdir" --prefix=/usr .', name = "Install")
+
+package(
+    host()["format"],
     name = "notes-cli",
     version = "0.9.0",
-    arch = "all",
     description = "A note taking tool",
+    arch = "all",
     depends = ["python3"],
+    # pip writes caches and bytecode that the package does not need.
+    exclude = ["**/__pycache__", "**/*.pyc"],
 )
-
-target(pkg, "deb", distro = "debian", job = build)

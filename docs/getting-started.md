@@ -1,16 +1,29 @@
 # Getting started
 
-This page builds a small C program into packages for four distributions and installs them.
+This page builds a small C program into packages and installs one.
 
 ## Requirements
 
-- Linux and [Podman](https://podman.io/). Rootless Podman is enough. It was tested with Podman 5.8.4.
 - A Rust toolchain, to build pkgsmith: `cargo build --release --workspace`. The binary is `target/release/pkgsmith`.
   The formats are plugins, and the same command builds them next to the binary, where pkgsmith finds them.
+- The tools your build calls. This example needs a C compiler and `make`.
 
-pkgsmith talks to Podman through its API socket. It uses `$XDG_RUNTIME_DIR/podman/podman.sock` when that socket
-answers. Otherwise it starts `podman system service` for the length of the run and stops it afterwards. You do not
-have to enable `podman.socket`.
+pkgsmith runs on Linux, macOS and Windows. It needs no daemon. The script builds on the system
+that runs pkgsmith, so you get packages for that system.
+
+## Install
+
+There is no published release yet, so build from source:
+
+```console
+$ git clone https://github.com/kierandrewett/pkgsmith
+$ cd pkgsmith
+$ cargo build --release --workspace
+$ export PATH="$PWD/target/release:$PATH"
+$ pkgsmith plugins
+```
+
+`pkgsmith plugins` lists the plugins that loaded. If it lists none, see [plugins](plugins.md#where-pkgsmith-looks).
 
 ## The project
 
@@ -20,7 +33,7 @@ Make a folder with three files.
 
 ```c
 #include <stdio.h>
-int main(void) { puts("hello from a tracked build"); return 0; }
+int main(void) { puts("hello from pkgsmith"); return 0; }
 ```
 
 `Makefile`:
@@ -38,75 +51,63 @@ install: hello
 `pkgsmith.star`:
 
 ```python
-pkg = package(
-    name = "hello",
-    version = "1.0.0",
-    description = "A demo that packages a small C program",
-    maintainer = "Your Name <you@example.com>",
-    license = "MIT",
-)
+common = {
+    "name": "hello",
+    "version": "1.0.0",
+    "description": "A demo that packages a small C program",
+    "maintainer": "Your Name <you@example.com>",
+    "license": "MIT",
+}
 
-build = step("make && make install PREFIX=/usr")
+sh("make")
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
 
-distros = [
-    # distro, format, image, command that installs the compiler
-    ("fedora", "rpm", "fedora:43", "dnf -y install gcc make"),
-    ("debian", "deb", "debian:13", "apt-get update -qq && apt-get install -y gcc make"),
-    ("arch", "archlinux", "archlinux:base", "pacman -Sy --noconfirm gcc make"),
-    ("alpine", "apk", "alpine:3.22", "apk add --no-cache gcc make musl-dev"),
-]
-
-for distro, fmt, image, install in distros:
-    target(
-        pkg, fmt, distro = distro,
-        job = job(runs_on = image, setup = [step(install)], steps = [build]),
-    )
+native = host()["format"]
+if native:
+    package(native, **common)
+package("tar", **common)
 ```
 
-Each `target` is one package. It names the format, the distro, and the job that builds its files.
+pkgsmith runs this script from top to bottom.
 
-- A job names the image to build in, the `setup` steps that image needs, and the build `steps`.
-- The loop makes one target for each row.
-- Targets whose jobs are equal share one build: see [build environment](build-environment.md#one-build-many-packages).
-- The script is code, so you can use loops, functions and conditions: see [scripting](scripting.md).
+- `sh` adds a command to the build. Each one runs in the folder of the script.
+- `$pkgdir` is an empty folder. The files that `make install` puts there become the package.
+- `host()["format"]` is the package format of this system: `rpm` on Fedora, `deb` on Debian, `archlinux` on Arch, `apk`
+  on Alpine. It is empty when pkgsmith does not know it.
+- Each `package` call that runs writes one package. Both calls come after the same commands, so the build runs once.
+
+The script is code, so you can use conditions, loops and functions. See [scripting](scripting.md).
 
 ## Plan
 
 ```console
 $ pkgsmith plan
-  #  FORMAT     DISTRO  ARCH   IMAGE           BUILD  FILE
-  1  rpm        fedora  amd64  fedora:43       a      hello-1.0.0-1.x86_64.rpm
-  2  deb        debian  amd64  debian:13       b      hello_1.0.0-1_amd64.deb
-  3  archlinux  arch    amd64  archlinux:base  c      hello-1.0.0-1-x86_64.pkg.tar.zst
-  4  apk        alpine  amd64  alpine:3.22     d      hello-1.0.0-r1.apk
+  #  FORMAT  DISTRO  ARCH   BUILD  FILE
+  1  rpm     fedora  amd64  a      hello-1.0.0-1.x86_64.rpm
+  2  tar     fedora  amd64  a      hello-1.0.0-amd64.tar.xz
 
-4 packages from 4 builds.
+2 packages from 1 builds. Jobs with the same BUILD letter share one build.
 ```
 
-`plan` shows each package and the file it would write, without starting a container. Jobs with the same `BUILD`
-letter share one build. If `plan` says that no plugin was found, run `pkgsmith plugins`: it lists the folders that
-pkgsmith searches. See [plugins](plugins.md).
+`plan` runs the script, but not the build. It shows each package and the file it would write. Packages with the same
+`BUILD` letter share one build. The rows depend on your system: on Debian you see a deb instead of an rpm.
+
+If `plan` says that no plugin was found, run `pkgsmith plugins`: it lists the folders that pkgsmith searches. See
+[plugins](plugins.md).
 
 ## Build
 
 ```console
-$ pkgsmith build -j 4
+$ pkgsmith build
 ```
 
-On a terminal you see one lane per distro. Each lane shows its steps, a spinner, the time of each step, and the last
-lines of output of the step that runs.
-
-A step whose result is cached shows `CACHED`. The first run downloads the images and installs the compilers. The next
-run reuses the setup images and takes a few seconds.
-
-When the build ends, the packages are in `./dist`:
+On a terminal you see one line for the build, with a spinner, the time and the last lines of its output. When it ends,
+the packages are in `./dist`:
 
 ```console
 Packages in dist:
-  rpm        hello-1.0.0-1.x86_64.rpm  (4.2 KiB)
-  deb        hello_1.0.0-1_amd64.deb  (2.7 KiB)
-  archlinux  hello-1.0.0-1-x86_64.pkg.tar.zst  (2.8 KiB)
-  apk        hello-1.0.0-r1.apk  (3.9 KiB)
+  rpm  hello-1.0.0-1.x86_64.rpm  (4.2 KiB)
+  tar  hello-1.0.0-amd64.tar.xz  (2.1 KiB)
 ```
 
 ## Look inside
@@ -114,32 +115,41 @@ Packages in dist:
 ```console
 $ pkgsmith files --format rpm
 == rpm [arch=amd64, distro=fedora, format=rpm, name=hello]
+755 root:root /etc
 644 root:root /etc/hello.conf
+755 root:root /usr
+755 root:root /usr/bin
 755 root:root /usr/bin/hello
+755 root:root /usr/share
 755 root:root /usr/share/hello
 644 root:root /usr/share/hello/hello.c
-4 files, 12604 bytes installed
+8 files, 12604 bytes installed
 ```
 
-Four entries: the three files that `make install` wrote, and the new folder `/usr/share/hello`. The build also
-changed `/usr`, `/usr/share` and other folders that already existed. pkgsmith does not claim those.
+The package holds the three files that `make install` wrote, and the folders that lead to them, with the mode they have
+in `$pkgdir`. `files` runs the build and writes no package.
 
-## Install
+## Install the package
 
-Each package installs in the distribution it was built for.
+Each package installs on the distribution it was built on.
 
-| Distro | Command                                              |
-| ------ | ---------------------------------------------------- |
-| Fedora | `sudo dnf install ./dist/hello-1.0.0-1.x86_64.rpm`   |
-| Debian | `sudo dpkg -i ./dist/hello_1.0.0-1_amd64.deb`        |
-| Arch   | `sudo pacman -U ./dist/hello-1.0.0-1-x86_64.pkg.tar.zst` |
-| Alpine | `apk add --allow-untrusted ./dist/hello-1.0.0-r1.apk` |
+| Distro | Command                                                   |
+| ------ | --------------------------------------------------------- |
+| Fedora | `sudo dnf install ./dist/hello-1.0.0-1.x86_64.rpm`        |
+| Debian | `sudo dpkg -i ./dist/hello_1.0.0-1_amd64.deb`             |
+| Arch   | `sudo pacman -U ./dist/hello-1.0.0-1-x86_64.pkg.tar.zst`  |
+| Alpine | `apk add --allow-untrusted ./dist/hello-1.0.0-r1.apk`     |
 
 Then run `hello`.
 
+## Packages for other distros
+
+To get a deb, run the same script on Debian. To get an rpm, run it on Fedora. In CI, use one job for each system. See
+[building](building.md#packages-for-other-distros).
+
 ## Next
 
-- Mark `/etc/hello.conf` as a configuration file, and set install scripts: see
-  [contents](contents.md) and [scripts](scripts.md).
-- Add dependencies: see [dependencies](dependencies.md).
-- Build for arm64 as well: loop over architectures, see [scripting](scripting.md#every-architecture).
+- Mark `/etc/hello.conf` as a configuration file, and set install scripts: see [contents](contents.md) and
+  [scripts](scripts.md).
+- Add dependencies that differ by distro: see [dependencies](dependencies.md).
+- List every field: see the [script reference](manifest.md).

@@ -1,15 +1,18 @@
-//! Runs the tracked builds of a manifest and keeps their results, so a build that several formats share runs once,
-//! also when those formats are built at the same time on different threads.
+//! Runs the builds of a script and keeps their results, so a build that several formats share runs once, also when those
+//! formats are built at the same time on different threads.
+//!
+//! A build runs on this system, like makepkg: in the build context (`$srcdir`), with `$pkgdir` an empty folder that the
+//! steps install into. The files in `$pkgdir` are the package.
 
-use crate::container::{Engine, Tracking};
 use crate::manifest::{Job, Manifest};
+use crate::tree;
 use crate::ui::Ui;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use pkgsmith_plugin::Entry;
 use pkgsmith_plugin::hash::hex;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 type Slot = Arc<OnceLock<std::result::Result<Vec<Entry>, String>>>;
@@ -17,71 +20,43 @@ type Slot = Arc<OnceLock<std::result::Result<Vec<Entry>, String>>>;
 pub struct Runner {
     work: PathBuf,
     ui: Ui,
-    cache: bool,
-    engine: OnceLock<std::result::Result<Engine, String>>,
     /// One slot per distinct build. The thread that gets there first runs it. The others wait on the slot.
     builds: Mutex<HashMap<String, Slot>>,
 }
 
-/// Identifies a tracked build. Jobs with the same key share one run. `None` for a manifest without an image.
+/// Identifies a build. Targets with the same key share one run. `None` for a target without a build.
 pub fn build_key(manifest: &Manifest) -> Option<String> {
-    let image = manifest.image.as_ref()?;
     let build = manifest.build.as_ref()?;
     let source =
         std::fs::canonicalize(&manifest.context).unwrap_or_else(|_| manifest.context.clone());
     Some(hex(&Sha256::digest(format!(
-        "{image}\0{:?}\0{build}\0{:?}\0{}\0{:?}",
-        manifest.setup,
+        "{build}\0{:?}\0{}\0{:?}",
         manifest.exclude,
         source.display(),
         manifest.build_env
     ))))
 }
 
-/// The lane a job runs in: its distro and architecture, or the image name.
+/// The lane a target is built in, in the progress output: its distro and architecture.
 pub fn lane(manifest: &Manifest, job: &Job) -> String {
-    let name = job.distro().map(String::from).unwrap_or_else(|| {
-        manifest
-            .image
-            .as_deref()
-            .map(|image| image.rsplit('/').next().unwrap_or(image).to_string())
-            .unwrap_or_else(|| manifest.name.clone())
-    });
-    format!("{name}/{}", manifest.arch)
+    format!("{}/{}", job.distro().unwrap_or("host"), manifest.arch)
 }
 
 impl Runner {
-    /// `cache` false rebuilds the setup images instead of reusing them.
-    pub fn new(work: PathBuf, ui: Ui, cache: bool) -> Runner {
+    pub fn new(work: PathBuf, ui: Ui) -> Runner {
         Runner {
             work,
             ui,
-            cache,
-            engine: OnceLock::new(),
             builds: Mutex::new(HashMap::new()),
         }
     }
 
-    fn engine(&self) -> Result<&Engine> {
-        self.engine
-            .get_or_init(|| Engine::connect().map_err(|error| format!("{error:#}")))
-            .as_ref()
-            .map_err(|error| anyhow!("{error}"))
-    }
-
-    /// The files the manifest's build installs, for this target. Empty when it has no job.
+    /// The files the build of the target installs. Empty when the target has no build.
     pub fn tracked(&self, manifest: &Manifest, job: &Job) -> Result<Vec<Entry>> {
-        let Some(image) = &manifest.image else {
+        let Some(build) = &manifest.build else {
             return Ok(Vec::new());
         };
-        let Some(build) = &manifest.build else {
-            return Err(anyhow!(
-                "the target names an image but no build script to run in it"
-            ));
-        };
-        let env = &manifest.build_env;
-        let source = std::fs::canonicalize(&manifest.context)?;
-        let key = build_key(manifest).expect("image and build are set above");
+        let key = build_key(manifest).expect("build is set above");
         let slot = self
             .builds
             .lock()
@@ -91,41 +66,55 @@ impl Runner {
             .clone();
         let label = lane(manifest, job);
         slot.get_or_init(|| {
-            (|| -> Result<Vec<Entry>> {
-                let engine = self.engine()?;
-                let prepared = engine.prepare(
-                    &self.ui,
-                    &label,
-                    image,
-                    manifest.setup.as_deref(),
-                    &manifest.arch,
-                    self.cache,
-                )?;
-                let stage = self
-                    .work
-                    .join(format!("{}-{}", manifest.name, &key[..10]))
-                    .join("stage");
-                std::fs::create_dir_all(&self.work)?;
-                let built = engine.track(
-                    &self.ui,
-                    &Tracking {
-                        label: &label,
-                        image: &prepared,
-                        build,
-                        source: &source,
-                        env,
-                        arch: &manifest.arch,
-                        excludes: &manifest.exclude,
-                        stage: &stage,
-                        id: &key[..10],
-                    },
-                )?;
-                Ok(built.entries)
-            })()
-            .map_err(|error| format!("{error:#}"))
+            let folder = self.work.join(format!("{}-{}", manifest.name, &key[..10]));
+            self.run(manifest, build, &label, &folder)
+                .map_err(|error| format!("{error:#}"))
         })
         .clone()
         .map_err(|error| anyhow!("{error}"))
+    }
+
+    /// Run the build. `folder` holds `pkg`, the `$pkgdir`, and `state`, where the steps pass variables to each other.
+    fn run(
+        &self,
+        manifest: &Manifest,
+        build: &str,
+        label: &str,
+        folder: &Path,
+    ) -> Result<Vec<Entry>> {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        let (pkgdir, state) = (folder.join("pkg"), folder.join("state"));
+        if folder.exists() {
+            std::fs::remove_dir_all(folder)?;
+        }
+        std::fs::create_dir_all(&pkgdir)?;
+        let source = std::fs::canonicalize(&manifest.context)?;
+        let step = self.ui.step(label, "build");
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(format!("exec 2>&1\n{build}"))
+            .current_dir(&source)
+            .envs(&manifest.build_env)
+            .env("srcdir", &source)
+            .env("pkgdir", std::fs::canonicalize(&pkgdir)?)
+            .env("PKGSMITH_STATE", &state)
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("cannot start sh")?;
+        for line in BufReader::new(child.stdout.take().expect("piped")).lines() {
+            step.log(&line?);
+        }
+        let status = child.wait()?;
+        let _ = std::fs::remove_dir_all(&state);
+        if !status.success() {
+            step.fail();
+            bail!("the build failed ({status})");
+        }
+        step.done();
+        let mut entries = tree::stage_entries(&pkgdir)?;
+        entries.retain(|entry| !tree::excluded(&entry.path, &manifest.exclude));
+        Ok(entries)
     }
 }
 
@@ -140,7 +129,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("pkgsmith.star");
         std::fs::write(&file, source).unwrap();
-        script::evaluate(&file, BTreeMap::new())
+        let host = crate::host::Host::from_os_release("ID=fedora\n", "amd64", "glibc");
+        script::evaluate_on(&file, BTreeMap::new(), host)
             .unwrap()
             .into_iter()
             .map(|spec| {
@@ -155,39 +145,28 @@ mod tests {
         keys.iter().collect::<HashSet<_>>().len()
     }
 
-    const HEAD: &str = "pkg = package(name = 'demo', version = '1', description = 'd')
-";
+    const HEAD: &str = "c = {'name': 'demo', 'version': '1', 'description': 'd'}\n";
 
     #[test]
-    fn targets_with_equal_jobs_share_a_run_per_architecture() {
+    fn packages_after_one_build_share_a_run_and_a_longer_build_is_another_run() {
         let keys = keys(&format!(
-            "{HEAD}glibc = job('debian:13', [step('make')])
-musl = job('alpine:3.22', [step('make')])
-for arch in ['amd64', 'arm64']:
-    target(pkg, 'rpm', distro = 'fedora', job = glibc, arch = arch)
-    target(pkg, 'deb', distro = 'debian', job = glibc, arch = arch)
-    target(pkg, 'apk', distro = 'alpine', job = musl, arch = arch)
-"
+            "{HEAD}sh('make')\nfor f in ['rpm', 'deb', 'tar']:\n    package(f, **c)\nsh('make docs')\npackage('zip', **c)\n"
         ));
-        assert_eq!(keys.len(), 6);
-        assert_eq!(
-            distinct(&keys),
-            4,
-            "glibc and musl, each for two architectures"
-        );
+        assert_eq!(keys.len(), 4);
+        assert_eq!(distinct(&keys[..3]), 1);
+        assert_eq!(distinct(&keys), 2);
     }
 
     #[test]
-    fn a_job_is_equal_by_content_and_not_by_name() {
-        let keys = keys(&format!(
-            "{HEAD}one = job('debian:13', [step('make')])
-two = job('debian:13', [step('make')])
-three = job('debian:13', [step('make CC=clang')])
-target(pkg, 'rpm', job = one)
-target(pkg, 'deb', job = two)
-target(pkg, 'tar', job = three)
-"
+    fn a_different_command_or_environment_is_a_different_run() {
+        let one = keys(&format!("{HEAD}sh('make')\npackage('rpm', **c)\n"));
+        let other_step = keys(&format!("{HEAD}sh('make CC=clang')\npackage('rpm', **c)\n"));
+        let other_env = keys(&format!(
+            "{HEAD}sh('make', env = {{'A': '1'}})\npackage('rpm', **c)\n"
         ));
-        assert_eq!(distinct(&keys), 2);
+        assert_eq!(
+            distinct(&[one[0].clone(), other_step[0].clone(), other_env[0].clone()]),
+            3
+        );
     }
 }

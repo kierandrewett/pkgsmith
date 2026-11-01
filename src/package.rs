@@ -77,7 +77,7 @@ pub fn outline(manifest: &Manifest, format: &str, options: &Options) -> Package 
     }
 }
 
-/// The whole package. Its files start as what a tracked build installed (see `container`), then the `contents` of the
+/// The whole package. Its files start as what the build installed into `$pkgdir` (see `runner`), then the `contents` of the
 /// manifest apply.
 pub fn assemble(
     manifest: &Manifest,

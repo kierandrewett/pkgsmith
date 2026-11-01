@@ -1,40 +1,52 @@
 # Scripting
 
-A `pkgsmith.star` is a program in Starlark, a small language with the syntax of Python. The script declares packages.
-pkgsmith runs it, collects the packages it declared, and builds them. Use ordinary code for what varies: a loop for
-every architecture and distro, a function for what packages share, an `if` for a package that is optional.
+A `pkgsmith.star` is a program in Starlark, a small language with the syntax of Python. pkgsmith runs it top to bottom on
+this system, like `makepkg` runs a `PKGBUILD`. Only the code that the run reaches counts: each `package(...)` call that
+runs writes one package, and a branch that does not run writes none.
 
-This page shows how to write that code. The functions and fields are in the [script reference](manifest.md).
+This page shows how to write a script. Every function and field is in the [script reference](manifest.md).
 
 ## A script that runs
 
 ```python
 # pkgsmith.star
-pkg = package(
-    name = "hello",
-    version = "1.0.0",
-    description = "A small program",
-)
+sh("make")
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
 
-build = job(
-    runs_on = "fedora:43",
-    setup = [step("dnf -y install gcc make")],
-    steps = [step("make && make install PREFIX=/usr")],
-)
-
-target(pkg, "rpm", distro = "fedora", job = build)
+package("tar", name = "hello", version = "1.0.0", description = "A small program")
 ```
 
-Run `pkgsmith plan` to see what the script declares. A script that declares no `target` is an error.
+- `sh` adds a command to the build. It does not run yet.
+- `package` packs the commands so far and writes a tar package.
+
+Run `pkgsmith plan` to see what the script writes. A script that calls `package` no time is an error.
 
 ## The language
 
 - Starlark has `def`, `for`, `if`, lists, dicts, comprehensions and f-strings. It has no classes, no `while` and no
   `import`.
-- A script cannot read files, use the network or start a process. It can only compute, read build arguments and load
-  other `.star` files.
+- A script cannot read files, use the network or start a process. It can compute, read build arguments, ask what system
+  it runs on and load other `.star` files.
 - A call with a name that does not exist, or a field that a function does not accept, is an error that names it.
-- The functions of pkgsmith (`package`, `target`, `job`, `step` and the content helpers) need no `load`.
+- The functions of pkgsmith (`sh`, `expose`, `package`, `host`, `arg` and the content helpers) need no `load`.
+- There are no global variables with special meaning. Everything is a function call.
+
+## The order of calls
+
+A package sees the commands and the files that came before it, and nothing after:
+
+```python
+sh("make")
+expose(file("hello", "/usr/bin/hello", mode = "0755"))
+package("tar", name = "hello", version = "1.0.0", description = "A small program")
+
+sh("make docs")
+expose(tree("doc", "/usr/share/doc/hello"))
+package("zip", name = "hello-docs", version = "1.0.0", description = "Docs for hello")
+```
+
+The tar holds `hello`. The zip holds `hello` and the docs, because its build is longer. Packages with the same
+commands, name, version, release and arch share one build run. See [building](building.md#one-build-many-packages).
 
 ## Build arguments
 
@@ -52,179 +64,191 @@ $ VERSION=0.2.0 pkgsmith build
 
 The value is always text, or `None` when there is no default and nothing is set. An empty value is false in a condition.
 
-## Functions
+## The system you run on
 
-Put what packages share in a function. A function that returns a package keeps every target short:
-
-```python
-def base(name, description):
-    return package(
-        name = name,
-        version = arg("VERSION", "1.0.0"),
-        description = description,
-        maintainer = "Your Name <you@example.com>",
-        license = "MIT",
-    )
-
-tool = base("tool", "A command line tool")
-tool_docs = base("tool-docs", "Documentation for tool")
-
-target(tool, "tar")
-target(tool_docs, "tar")
-```
-
-## Loops: architectures and distros
-
-There is no matrix. Write the loop yourself. Each pass makes one or more targets.
-
-### Every architecture
+`host()` returns a dict that describes this system. Use it to choose dependencies, commands and formats.
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
-build = job(runs_on = "debian:13", steps = [step("make && make install PREFIX=/usr")])
-
-for arch in ["amd64", "arm64"]:
-    target(pkg, "deb", distro = "debian", job = build, arch = arch)
+h = host()
+print(h["distro"], h["arch"], h["format"])
 ```
 
-This declares two packages. A job without `arch` runs for the architecture of each target, so the build runs once for
-each architecture. An arm64 build on an x86_64 host needs `qemu-user`. See
-[architecture](build-environment.md#architecture).
+| Key       | Values                                                                      |
+| --------- | --------------------------------------------------------------------------- |
+| `os`      | `linux`, `macos`, `windows`                                                 |
+| `arch`    | `amd64`, `arm64`                                                            |
+| `distro`  | `fedora`, `debian`, `ubuntu`, `arch`, `alpine`, `macos`, `windows`, and so on |
+| `like`    | The `ID_LIKE` words, as a list                                              |
+| `version` | The `VERSION_ID`                                                            |
+| `libc`    | `glibc`, `musl` or `""`                                                     |
+| `format`  | `deb`, `rpm`, `archlinux`, `apk`, `dmg`, `msi` or `""`                      |
 
-### Every distro and architecture
+`format` is the native package format of this system. It is `""` when pkgsmith does not know it, so test it before you
+use it as a format name.
 
-Keep one row for each distro. Loop over the rows and then over the architectures:
+## Shared fields
+
+Put the fields that every package shares in a dict, then pass it with `**`:
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+common = {
+    "name": "hello",
+    "version": arg("VERSION", "1.0.0"),
+    "description": "A small program",
+    "maintainer": "Your Name <you@example.com>",
+    "license": "MIT",
+}
 
-def make_job(image, install):
-    return job(
-        runs_on = image,
-        setup = [step(install)],
-        steps = [step("make && make install PREFIX=/usr")],
-    )
+sh("make && make install PREFIX=/usr DESTDIR=\"$pkgdir\"")
 
-distros = [
-    # distro, format, image, install command, libc package
-    ("fedora", "rpm", "fedora:43", "dnf -y install gcc make", "glibc"),
-    ("debian", "deb", "debian:13", "apt-get update -qq && apt-get install -y gcc make", "libc6"),
-    ("alpine", "apk", "alpine:3.22", "apk add --no-cache gcc make musl-dev", "musl"),
-]
-
-for distro, fmt, image, install, libc in distros:
-    build = make_job(image, install)
-    for arch in ["amd64", "arm64"]:
-        target(pkg, fmt, distro = distro, job = build, arch = arch, depends = [libc])
+package("deb", depends = ["libc6"], **common)
+package("tar", **common)
 ```
 
-This declares six packages. `plan` shows six rows and six builds, one for each distro and architecture.
-
-### A list of targets
-
-A list comprehension is a loop that makes a list. A target call does not return anything, so use a plain `for` to
-declare targets. Use a comprehension for the data:
-
-```python
-arches = ["amd64", "arm64"]
-names = {"amd64": "x86_64", "arm64": "aarch64"}
-triples = [names[arch] + "-linux-gnu" for arch in arches]
-```
-
-## One build for many packages
-
-Targets whose jobs are equal share one run. Declare the job once, outside the loop, and use it for every target:
-
-```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
-glibc = job(runs_on = "debian:13", steps = [step("make && make install PREFIX=/usr")])
-
-for arch in ["amd64", "arm64"]:
-    target(pkg, "rpm", distro = "fedora", job = glibc, arch = arch, depends = ["glibc"])
-    target(pkg, "deb", distro = "debian", job = glibc, arch = arch, depends = ["libc6"])
-```
-
-`plan` shows one `BUILD` letter for the rpm and the deb of each architecture. Two jobs are equal when their image,
-architecture, setup, steps, environment and excludes are equal, and their source folder is the same. The format and the
-distro do not matter. See [build environment](build-environment.md#one-build-many-packages).
+A field that you pass twice is an error, so keep per-package fields out of `common`.
 
 ## Conditions
 
-Use `if`. These forms are the ones a script needs most.
-
-A target for one architecture only:
+Use `if` to write a package only on some systems. One package for the native format:
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
-build = job(runs_on = "archlinux:base", steps = [step("make && make install PREFIX=/usr")])
-
-for arch in ["amd64", "arm64"]:
-    # The archlinux image has no arm64 build.
-    if arch == "amd64":
-        target(pkg, "archlinux", distro = "arch", job = build, arch = arch)
+h = host()
+if h["format"] == "rpm":
+    package("rpm", depends = ["glibc"], **common)
+elif h["format"] == "deb":
+    package("deb", depends = ["libc6"], **common)
+elif h["format"] == "apk":
+    package("apk", depends = ["musl"], **common)
 ```
 
-A different value for one format:
+A different value for one system, with a dict lookup:
 
 ```python
-def libc(fmt):
-    if fmt == "deb":
-        return "libc6"
-    if fmt == "apk":
-        return "musl"
-    return "glibc"
+libc = {"rpm": "glibc", "deb": "libc6", "archlinux": "glibc", "apk": "musl"}.get(host()["format"], "glibc")
 ```
 
 A different value in one expression:
 
 ```python
-triple = "aarch64-linux-gnu" if arch == "arm64" else "x86_64-linux-gnu"
+flags = "-static-pie" if host()["libc"] == "musl" else ""
 ```
 
-## Optional targets
+## Loops over formats
 
-A target that depends on a build argument is an `if` on `arg`. This one exists only when `STAGE` is set:
+A `for` loop writes one package for each item. All of them share the build:
 
 ```python
-pkg = package(name = "hello", version = "1.0.0", description = "A small program")
+for fmt in ["tar", "zip"]:
+    package(fmt, **common)
+```
+
+Add a native package to the list when the system has one:
+
+```python
+formats = ["tar"]
+native = host()["format"]
+if native in ["deb", "rpm", "archlinux", "apk"]:
+    formats.append(native)
+
+for fmt in formats:
+    package(fmt, **common)
+```
+
+## Functions
+
+Put what packages share in a function:
+
+```python
+def make_package(fmt, **fields):
+    package(fmt, name = "tool", version = arg("VERSION", "1.0.0"), description = "A command line tool", **fields)
+
+make_package("tar")
+make_package("zip", file = "{name}-{version}-source.zip")
+```
+
+A function can also hold build commands. Calling it adds them:
+
+```python
+def compile(optimise):
+    sh("make OPT=" + optimise)
+
+compile("2")
+package("tar", **common)
+```
+
+## Split packages
+
+One build can feed several packages. Expose the files for each, then call `package` between the exposures:
+
+```python
+common = {"version": "1.0.0", "description": "Part of the hello suite"}
+
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
+
+expose(file("hello", "/usr/bin/hello", mode = "0755"))
+package("tar", name = "hello", **common)
+
+expose(tree("docs", "/usr/share/doc/hello"))
+package("tar", name = "hello-docs", **common)
+```
+
+`hello-docs` also holds `/usr/bin/hello`, because `expose` adds to what the script offers. To keep the packages apart,
+leave files out of one with `exclude`, or pass the files of each package in `contents` and expose nothing:
+
+```python
+sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
+
+package("tar", name = "hello", contents = [file("hello", "/usr/bin/hello", mode = "0755")], **common)
+package("tar", name = "hello-docs", contents = [tree("docs", "/usr/share/doc/hello")], **common)
+```
+
+Files that a command installs into `$pkgdir` go into every package that follows it. Use `exclude` to keep them out of
+one:
+
+```python
+package("tar", name = "hello", exclude = ["/usr/share/doc/**"], **common)
+package("tar", name = "hello-docs", exclude = ["/usr/bin/**"], **common)
+```
+
+## Packages without a build
+
+A package with no `sh` before it runs no build. It packs its `contents` only. This is how you package files that you
+compiled somewhere else. This one exists only when `STAGE` is set:
+
+```python
+common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 STAGE = arg("STAGE")
 
-target(pkg, "tar", contents = [file("README.md", "/usr/share/doc/hello/README.md")])
-
 if STAGE:
-    target(
-        pkg, "dmg", distro = "macos",
+    package(
+        "dmg", distro = "macos",
         contents = [tree(STAGE, "/hello")],
         options = {"volume_name": "hello"},
+        **common
     )
 ```
 
-Without `STAGE`, `pkgsmith plan` lists only the tar. With `--build-arg STAGE=stage` it lists the disk image too.
-A target without a `job` runs no build. It packs its `contents` and needs no Podman. See
-[macOS and Windows](macos-and-windows.md).
-
-An empty string is false, so `STAGE=` turns the target off. Test `arg("X") != None` when you need to tell a missing
-value from an empty one.
+Without `STAGE`, the script writes no package, which is an error. With `--build-arg STAGE=stage` it writes the disk image.
+An empty string is false, so `STAGE=` turns the package off. Test `arg("X") != None` to tell a missing value from an
+empty one. See [macOS and Windows](macos-and-windows.md).
 
 ## Text with f-strings
 
-An f-string puts values in text. It works in every text field, and in the `run` text of a step.
+An f-string puts values in text. It works in every text field, and in the `run` text of `sh`.
 
 ```python
 VERSION = arg("VERSION", "1.0.0")
-arch = "arm64"
 
-label = f"hello-{VERSION}-{arch}"
-build = step(f"make VERSION={VERSION} && make install PREFIX=/usr")
+sh(f"make VERSION={VERSION} && make install PREFIX=/usr DESTDIR=\"$pkgdir\"")
 ```
 
 A shell script uses `$` and braces for its own variables. In an f-string, write `{{` and `}}` for a literal brace.
-Outside an f-string the shell text stays as written, so keep the script in a normal string when it has `${...}`:
+Outside an f-string the shell text stays as written, so keep a script in a normal string when it has `${...}`:
 
 ```python
-step("""
+sh("""
 for f in build/*.so; do
-  install -Dm755 "$f" "/usr/lib/hello/${f##*/}"
+  install -Dm755 "$f" "$pkgdir/usr/lib/hello/${f##*/}"
 done
 """)
 ```
@@ -234,27 +258,27 @@ The values in `env` are literal text. pkgsmith never expands them in a shell.
 ## Loading other files
 
 `load("file.star", "name")` brings names from another `.star` file. The path is relative to the file that holds the
-`load`. A loaded file can use the same functions, and the targets it declares count.
+`load`. A loaded file can call the same functions. Every command, exposure and package that it adds counts.
 
 ```python
 # common.star
-def base(name):
-    return package(
-        name = name,
+def base(fmt, **fields):
+    package(
+        fmt,
+        name = "hello",
         version = arg("VERSION", "1.0.0"),
-        description = "Part of the hello suite",
+        description = "A small program",
         license = "MIT",
+        **fields
     )
-
-debian_job = job(runs_on = "debian:13", steps = [step("make && make install PREFIX=/usr")])
 ```
 
 ```python
 # pkgsmith.star
-load("common.star", "base", "debian_job")
+load("common.star", "base")
 
-target(base("hello-core"), "deb", distro = "debian", job = debian_job)
-target(base("hello-extra"), "deb", distro = "debian", job = debian_job)
+sh("make")
+base("tar")
 ```
 
 Load only what you name. A relative `src` in a loaded file still resolves against the folder of the script you build,
@@ -266,18 +290,18 @@ not the folder of the loaded file.
 
 ```python
 settings = json.encode({"port": 8080, "debug": False})
-build = step(f"echo '{settings}' > /etc/hello.json")
+sh(f"echo '{settings}' > hello.json")
 ```
 
 ## Check the result
 
-Run `pkgsmith plan` after every change. It evaluates the script, lists every package and its file name, and starts no
-container. Use `--where` and `-F` to look at part of it:
+Run `pkgsmith plan` after every change. It evaluates the script, lists every package and its file name, and runs no
+build. Use `--where` and `-F` to look at part of it:
 
 ```console
-$ pkgsmith plan --where arch=arm64
-$ pkgsmith plan -F deb --where distro=debian
+$ pkgsmith plan --where format=deb
+$ pkgsmith plan -F tar,zip
 ```
 
-An error in the script stops the command with the file, the line and the message. A target that is wrong stops it with
-the number of the target, counted in the order the script declared them.
+An error in the script stops the command with the file, the line and the message. To see what a script does on another
+system, you must run `plan` there. `host()` always describes the system that runs it.
