@@ -14,7 +14,8 @@ use pkgsmith_plugin::{Host, Package};
 use serde::Deserialize;
 use std::fs;
 use std::io::ErrorKind;
-use std::os::unix::fs::{PermissionsExt, symlink};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -238,9 +239,26 @@ fn link_target(target: &str, base: &str) -> String {
     }
 }
 
+#[cfg(unix)]
 fn set_mode(path: &Path, mode: u32) -> Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o7777))
         .with_context(|| format!("cannot set the mode of {}", path.display()))
+}
+
+/// A bundle keeps file modes and links. Without Unix modes they would be lost, so the build stops instead.
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> Result<()> {
+    bail!("a Flatpak bundle needs Unix file modes, so it can only be built on Linux or macOS")
+}
+
+#[cfg(unix)]
+fn make_symlink(target: &str, dest: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, dest)
+}
+
+#[cfg(not(unix))]
+fn make_symlink(_target: &str, _dest: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::other("symbolic links need Linux or macOS"))
 }
 
 /// Copies the entries into `files/`. Folders get their mode last, so a read-only folder still takes its files.
@@ -274,7 +292,7 @@ fn install(entries: &[Entry], base: &str, files: &Path) -> Result<()> {
                 if let Some(parent) = dest.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                symlink(link_target(target, base), &dest)
+                make_symlink(&link_target(target, base), &dest)
                     .with_context(|| format!("cannot make the link {}", entry.path))?;
             }
             Data::Ghost => {}
