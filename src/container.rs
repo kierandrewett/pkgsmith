@@ -24,7 +24,6 @@ use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 /// Folders and files that builds and package managers touch but no package should carry.
 pub const DEFAULT_EXCLUDES: &[&str] = &[
@@ -283,7 +282,7 @@ impl Engine {
         }
         if cfg!(target_os = "macos") {
             // Podman runs in a virtual machine here. Its socket is on the Mac, and `podman machine inspect` names it.
-            let socket = Command::new("podman")
+            let socket = std::process::Command::new("podman")
                 .args([
                     "machine",
                     "inspect",
@@ -313,11 +312,11 @@ impl Engine {
             .prefix("pkgsmith-")
             .tempdir_in(base)?;
         let socket = directory.path().join("podman.sock");
-        let service = Command::new("podman")
+        let service = std::process::Command::new("podman")
             .args(["system", "service", "--time=0"])
             .arg(format!("unix://{}", socket.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn()
             .context("cannot start podman; is podman installed?")?;
         let podman = Podman::unix(&socket);
