@@ -135,48 +135,102 @@ pub fn excluded(path: &str, excludes: &[String]) -> bool {
     })
 }
 
-/// The files and folders below `dir`, as package entries with their paths relative to `/`. A build on this system installs
-/// into such a folder (`$pkgdir`).
-pub fn stage_entries(dir: &Path) -> Result<Vec<Entry>> {
-    let mut entries = Vec::new();
-    walk(dir, "/", &Content::default(), &mut entries)?;
-    entries.retain(|entry| entry.path != "/");
-    Ok(entries)
+/// Folders that the system owns. A package that copies a prefix does not own them: an rpm that did would conflict with the
+/// `filesystem` package, because its folders have other modes than the ones in the prefix.
+const SYSTEM_DIRS: &[&str] = &[
+    "/",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/usr",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/libexec",
+    "/usr/share",
+    "/usr/include",
+    "/usr/src",
+    "/usr/local",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/local/lib",
+    "/usr/local/share",
+    "/usr/local/include",
+    "/etc",
+    "/opt",
+    "/var",
+    "/var/lib",
+    "/var/log",
+    "/var/cache",
+    "/var/spool",
+    "/var/tmp",
+    "/run",
+    "/tmp",
+    "/srv",
+    "/home",
+    "/root",
+    "/boot",
+    "/mnt",
+    "/media",
+];
+
+/// The path a `src` names. A relative path is inside the prefix, and an absolute one must be inside the prefix or in the
+/// folder of the script. Packaging never reads anything else, so a script cannot pull in files of the system by accident.
+fn locate(manifest: &Manifest, text: &str) -> Result<PathBuf> {
+    let path = Path::new(text);
+    let candidate = if !path.is_absolute() {
+        manifest.prefix.join(path)
+    } else if path.starts_with(&manifest.prefix) || path.starts_with(&manifest.base) {
+        path.to_path_buf()
+    } else {
+        // `/usr/bin/x` names a file of the prefix, as it does in a package.
+        manifest.prefix.join(text.trim_start_matches('/'))
+    };
+    // The path itself may be a symbolic link that the package keeps as a link, so only its folder is resolved, unless the
+    // path is the root itself. A glob is resolved by its folder part.
+    let resolved = |p: &Path| fs::canonicalize(p).ok();
+    let folder = candidate.parent().and_then(resolved);
+    let inside = |root: &Path| {
+        fs::canonicalize(root).is_ok_and(|root| {
+            folder.as_ref().is_some_and(|f| f.starts_with(&root))
+                || resolved(&candidate).is_some_and(|c| c == root)
+        })
+    };
+    if inside(&manifest.prefix) || inside(&manifest.base) {
+        Ok(candidate)
+    } else {
+        bail!(
+            "{text}: outside the prefix {} and the script folder {}",
+            manifest.prefix.display(),
+            manifest.base.display()
+        )
+    }
 }
 
-/// Resolve the `contents` of a target. Later entries replace earlier ones with the same path.
+/// Resolve the `contents` of a target into one sorted list of entries. Later entries replace earlier ones with the same
+/// path. Then `include`, `exclude` and `config_files` apply to the paths of the package.
 pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
-    resolve_with(manifest, Vec::new())
-}
-
-/// Like `resolve`, starting from the files a tracked build installed. The manifest's `contents` then add to them or
-/// replace them, for example to mark a file as configuration or to change its mode.
-pub fn resolve_with(manifest: &Manifest, tracked: Vec<Entry>) -> Result<Vec<Entry>> {
-    let mut found: BTreeMap<String, Entry> = tracked
-        .into_iter()
-        .map(|entry| (entry.path.clone(), entry))
-        .collect();
+    let mut found: BTreeMap<String, Entry> = BTreeMap::new();
+    // Folders that a `directory(...)` entry asks for are the package's, even the ones of the system.
+    let mut asked: Vec<String> = Vec::new();
     for content in &manifest.contents {
         let mut entries = Vec::new();
         let src = content.src.as_deref().unwrap_or("");
-        let source = |text: &str| -> PathBuf {
-            let path = Path::new(text);
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                manifest.base.join(path)
-            }
-        };
         let (owner, group) = identity(content);
         match content.kind {
-            Kind::Dir => entries.push(Entry {
-                path: normalise(&content.dst),
-                data: Data::Dir,
-                mode: content.mode.unwrap_or(0o755),
-                owner,
-                group,
-                config: false,
-            }),
+            Kind::Dir => {
+                asked.push(normalise(&content.dst));
+                entries.push(Entry {
+                    path: normalise(&content.dst),
+                    data: Data::Dir,
+                    mode: content.mode.unwrap_or(0o755),
+                    owner,
+                    group,
+                    config: false,
+                });
+            }
             Kind::Ghost => entries.push(Entry {
                 path: normalise(&content.dst),
                 data: Data::Ghost,
@@ -196,31 +250,18 @@ pub fn resolve_with(manifest: &Manifest, tracked: Vec<Entry>) -> Result<Vec<Entr
                 config: false,
             }),
             Kind::Tree => walk(
-                &source(src),
+                &locate(manifest, src)?,
                 &normalise(&content.dst),
                 content,
                 &mut entries,
             )?,
-            Kind::File | Kind::Config if content.src.is_none() => {
-                // No src: change the file a tracked build installed, and keep its content.
-                let path = normalise(&content.dst);
-                let Some(entry) = found.get_mut(&path) else {
-                    bail!("{path}: no tracked file to change; name a src to add this file");
-                };
-                entry.config |= content.kind == Kind::Config;
-                entry.mode = content.mode.unwrap_or(entry.mode);
-                if let Some(owner) = &content.owner {
-                    entry.owner = owner.clone();
-                }
-                if let Some(group) = &content.group {
-                    entry.group = group.clone();
-                }
-                continue;
-            }
             Kind::File | Kind::Config => {
                 let config = content.kind == Kind::Config;
+                if src.is_empty() {
+                    bail!("{}: a file needs a src", content.dst);
+                }
                 if has_glob(src) {
-                    let pattern = source(src);
+                    let pattern = locate(manifest, src)?;
                     let mut matches: Vec<PathBuf> = glob::glob(&pattern.to_string_lossy())
                         .with_context(|| format!("bad glob {src:?}"))?
                         .filter_map(Result::ok)
@@ -240,7 +281,7 @@ pub fn resolve_with(manifest: &Manifest, tracked: Vec<Entry>) -> Result<Vec<Entr
                         )?);
                     }
                 } else {
-                    let path = source(src);
+                    let path = locate(manifest, src)?;
                     let destination = if content.dst.ends_with('/') {
                         join(&content.dst, &path.file_name().unwrap().to_string_lossy())
                     } else {
@@ -254,7 +295,37 @@ pub fn resolve_with(manifest: &Manifest, tracked: Vec<Entry>) -> Result<Vec<Entr
             found.insert(entry.path.clone(), entry);
         }
     }
-    Ok(found.into_values().collect())
+    let matches = |path: &str, rules: &[String]| excluded(path, rules);
+    let mut entries: Vec<Entry> = found
+        .into_values()
+        .filter(|entry| {
+            !(entry.is_dir()
+                && SYSTEM_DIRS.contains(&entry.path.as_str())
+                && !asked.contains(&entry.path))
+        })
+        .filter(|entry| !matches(&entry.path, &manifest.exclude))
+        .collect();
+    if !manifest.include.is_empty() {
+        let kept: Vec<String> = entries
+            .iter()
+            .filter(|entry| !entry.is_dir() && matches(&entry.path, &manifest.include))
+            .map(|entry| entry.path.clone())
+            .collect();
+        // A folder stays when something below it stays.
+        entries.retain(|entry| {
+            kept.contains(&entry.path)
+                || (entry.is_dir()
+                    && kept
+                        .iter()
+                        .any(|path| path.starts_with(&format!("{}/", entry.path))))
+        });
+    }
+    for entry in &mut entries {
+        if !entry.is_dir() && matches(&entry.path, &manifest.config_files) {
+            entry.config = true;
+        }
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -333,30 +404,74 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_without_a_src_changes_the_tracked_file_and_keeps_its_content() {
+    fn include_exclude_and_config_files_apply_to_the_paths_of_the_package() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest = manifest(
-            dir.path(),
-            json!([{"dst": "/etc/app.conf", "type": "config", "mode": "0600", "owner": "app"}]),
+        fs::create_dir_all(dir.path().join("usr/bin")).unwrap();
+        fs::create_dir_all(dir.path().join("usr/share/doc")).unwrap();
+        fs::create_dir_all(dir.path().join("etc")).unwrap();
+        for file in ["usr/bin/a", "usr/share/doc/a.md", "etc/a.conf"] {
+            fs::write(dir.path().join(file), "x").unwrap();
+        }
+        let spec = |extra: serde_json::Value| {
+            let mut base = json!({"name": "demo", "version": "1", "description": "d", "format": "deb",
+                "contents": [{"src": "/", "dst": "/", "type": "tree"}]});
+            base.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            Manifest::from_spec(
+                Manifest::parse_spec(base).unwrap(),
+                dir.path().to_path_buf(),
+                dir.path().to_path_buf(),
+            )
+            .unwrap()
+        };
+        let paths = |m: &Manifest| {
+            resolve(m)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            paths(&spec(json!({}))),
+            [
+                "/etc/a.conf",
+                "/usr/bin/a",
+                "/usr/share/doc",
+                "/usr/share/doc/a.md"
+            ],
+            "the files, and no folder of the system"
         );
-        let tracked = vec![Entry {
-            path: "/etc/app.conf".into(),
-            data: Data::File {
-                src: "/stage/etc/app.conf".into(),
-                size: 7,
-            },
-            mode: 0o644,
-            owner: "root".into(),
-            group: "root".into(),
-            config: false,
-        }];
-        let entries = resolve_with(&manifest, tracked).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert!(entries[0].config);
-        assert_eq!((entries[0].mode, entries[0].owner.as_str()), (0o600, "app"));
-        assert_eq!(entries[0].size(), 7);
-        let missing = resolve(&manifest).unwrap_err().to_string();
-        assert!(missing.contains("no tracked file"), "{missing}");
+        assert!(
+            !paths(&spec(json!({"exclude": ["/usr/share/doc"]})))
+                .iter()
+                .any(|p| p.contains("doc"))
+        );
+        assert_eq!(
+            paths(&spec(json!({"include": ["/usr/bin/**"]}))),
+            ["/usr/bin/a"]
+        );
+        let configs: Vec<_> = resolve(&spec(json!({"config_files": ["/etc/**"]})))
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.config)
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(configs, ["/etc/a.conf"]);
+    }
+
+    #[test]
+    fn a_src_outside_the_prefix_and_the_script_folder_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = Manifest::parse_spec(
+            json!({"name": "demo", "version": "1", "description": "d", "format": "deb",
+            "contents": [{"src": "../x", "dst": "/x"}]}),
+        )
+        .unwrap();
+        let manifest =
+            Manifest::from_spec(spec, dir.path().to_path_buf(), dir.path().to_path_buf()).unwrap();
+        let error = resolve(&manifest).unwrap_err().to_string();
+        assert!(error.contains("outside the prefix"), "{error}");
     }
 
     #[test]

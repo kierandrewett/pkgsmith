@@ -1,10 +1,10 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 use pkgsmith::install;
+use pkgsmith::manifest::Manifest;
 use pkgsmith::package::{self, Options};
 use pkgsmith::plan::{self, Selection};
 use pkgsmith::plugins::{self, Registry, Signer};
-use pkgsmith::runner::{Runner, build_key, lane};
 use pkgsmith::script;
 use pkgsmith::signing::Signing;
 use pkgsmith::ui::{Mode, Ui};
@@ -16,8 +16,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[command(
     name = "pkgsmith",
     version,
-    about = "Build distribution packages from one script per project",
-    long_about = "Build distribution packages from one script per project.\n\nLike docker build, `pkgsmith build [PATH]` runs the script in PATH (pkgsmith.star), runs its build on this system, and writes the packages to ./dist."
+    about = "Write distribution packages from one script per project",
+    long_about = "Write distribution packages from one script per project.\n\n`pkgsmith build [PATH]` runs the script in PATH (pkgsmith.star). The script reads files from a prefix that you made with your own build, and pkgsmith writes the packages to ./dist. pkgsmith does not build your program."
 )]
 struct Cli {
     /// A folder to search for plugins (pkgsmith-plugin-*, a shared library) before the standard places. Repeatable. See `pkgsmith plugins`.
@@ -30,9 +30,13 @@ struct Cli {
 /// What every command that reads the script takes.
 #[derive(Args)]
 struct Source {
-    /// The build context: a folder that holds pkgsmith.star, or the script itself. The build runs in it.
+    /// A folder that holds pkgsmith.star, or the script itself.
     #[arg(default_value = ".")]
     path: PathBuf,
+    /// The prefix: a folder with the files to package, laid out like an installed system (usr/bin/..., etc/...). A
+    /// script reads it and never changes it. For example the result of `make install DESTDIR=prefix`.
+    #[arg(long, default_value = "prefix", value_name = "DIR")]
+    prefix: PathBuf,
     /// The script, when it is not PATH/pkgsmith.star.
     #[arg(short = 'f', long, value_name = "FILE")]
     file: Option<PathBuf>,
@@ -57,7 +61,7 @@ enum Command {
         /// Folder that receives the packages.
         #[arg(short, long, default_value = "dist")]
         output: PathBuf,
-        /// How many builds and packages run at the same time. Targets that need the same build run it once.
+        /// How many packages are written at the same time.
         #[arg(short, long, default_value_t = default_jobs(), value_name = "N")]
         jobs: usize,
         /// Progress output: auto, tty, plain or quiet.
@@ -66,9 +70,6 @@ enum Command {
         /// Print only the paths of the packages, one per line.
         #[arg(short, long)]
         quiet: bool,
-        /// Folder for the files a tracked build installs.
-        #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
-        work: PathBuf,
         /// Sign the packages. `[FORMAT=][SIGNER:]KEY`: a key file, or for the gpg signer a key id. FORMAT limits the key
         /// to one format and SIGNER names the signer plugin. Repeatable. Also PKGSMITH_SIGN_KEY, a list separated by
         /// `;`. See `pkgsmith plugins` for the signers.
@@ -81,7 +82,7 @@ enum Command {
         #[arg(long)]
         sign_armor: bool,
     },
-    /// List what `build` would do as a table: one row per job, with the file it would write and which jobs share a build.
+    /// List what `build` would do as a table: one row per package, with the file it would write.
     #[command(alias = "ls")]
     Plan {
         #[command(flatten)]
@@ -98,8 +99,6 @@ enum Command {
         jobs: usize,
         #[arg(long, default_value = "auto", value_name = "MODE")]
         progress: String,
-        #[arg(long, default_value = ".pkgsmith", value_name = "DIR")]
-        work: PathBuf,
     },
     /// List the formats the installed plugins write.
     Formats,
@@ -178,6 +177,11 @@ fn check_unique_names(registry: &Registry, output: &Path, items: &[plan::Item]) 
     Ok(())
 }
 
+/// The lane of a package in the progress output: its distro, or the format, and its architecture.
+fn lane(manifest: &Manifest) -> String {
+    format!("{}/{}", manifest.name, manifest.arch)
+}
+
 fn default_jobs() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get().min(8))
@@ -201,15 +205,12 @@ fn build_args(set: &[String]) -> Result<std::collections::BTreeMap<String, Strin
     Ok(pairs(set, "--build-arg")?.into_iter().collect())
 }
 
-/// The script and what to build from it.
+/// The script and the packages it declares.
 fn load(source: &Source, registry: &Registry) -> Result<Vec<plan::Item>> {
-    let (file, context) = if source.path.is_file() {
-        (
-            source.path.clone(),
-            source.path.parent().unwrap_or(Path::new(".")).to_path_buf(),
-        )
+    let file = if source.path.is_file() {
+        source.path.clone()
     } else {
-        let file = match &source.file {
+        match &source.file {
             Some(file) => file.clone(),
             None => {
                 let file = source.path.join("pkgsmith.star");
@@ -221,25 +222,25 @@ fn load(source: &Source, registry: &Registry) -> Result<Vec<plan::Item>> {
                 }
                 file
             }
-        };
-        (file, source.path.clone())
+        }
     };
-    let context = if context.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        context
-    };
-    let base = file
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let specs = script::evaluate(&file, build_args(&source.build_arg)?)?;
+    let base = std::fs::canonicalize(
+        file.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )?;
+    let prefix = std::fs::canonicalize(&source.prefix).with_context(|| {
+        format!(
+            "cannot read the prefix {}; make it with your build, or name it with --prefix",
+            source.prefix.display()
+        )
+    })?;
+    let specs = script::evaluate(&file, build_args(&source.build_arg)?, &prefix)?;
     let selection = Selection {
         formats: source.format.clone(),
         filters: pairs(&source.filter, "--where")?,
     };
-    let items = plan::items(specs, &base, &context, &registry.format_names(), &selection)?;
+    let items = plan::items(specs, &base, &prefix, &registry.format_names(), &selection)?;
     if items.is_empty() {
         bail!("nothing to build: no target of this script matches the selection");
     }
@@ -291,36 +292,14 @@ struct Row {
     format: String,
     distro: String,
     arch: String,
-    build: Option<String>,
     file: Result<String, String>,
-}
-
-/// Letters for the distinct builds, in order of first use: a, b, c, ... aa, ab.
-fn build_letter(index: usize) -> String {
-    let mut n = index;
-    let mut letters = String::new();
-    loop {
-        letters.insert(0, (b'a' + (n % 26) as u8) as char);
-        if n < 26 {
-            return letters;
-        }
-        n = n / 26 - 1;
-    }
 }
 
 fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<()> {
     use std::io::IsTerminal;
-    let mut keys: Vec<String> = Vec::new();
     let mut rows = Vec::new();
     for item in items {
         let bound = &item.manifest;
-        let letter = build_key(bound).map(|key| {
-            let index = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
-                keys.push(key);
-                keys.len() - 1
-            });
-            build_letter(index)
-        });
         let outline = package::outline(
             bound,
             &item.format,
@@ -330,12 +309,11 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
             .file_name(&outline)
             .and_then(|name| package::output_name(&item.job, &outline, &name))
             .map_err(|e| format!("{e:#}"));
-        let (arch, build) = (bound.arch.clone(), letter);
+        let arch = bound.arch.clone();
         rows.push(Row {
             format: item.format.clone(),
             distro: item.job.distro().unwrap_or("").to_string(),
             arch,
-            build,
             file,
         });
     }
@@ -348,7 +326,6 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
                     "format": row.format,
                     "distro": row.distro,
                     "arch": row.arch,
-                    "build": row.build,
                     "file": row.file.as_ref().ok(),
                     "error": row.file.as_ref().err(),
                     "values": item.job.values,
@@ -374,27 +351,17 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
     let w_format = cell(&rows, "FORMAT", &|r| r.format.clone());
     let w_distro = cell(&rows, "DISTRO", &|r| r.distro.clone());
     let w_arch = cell(&rows, "ARCH", &|r| r.arch.clone());
-    let has_builds = rows.iter().any(|r| r.build.is_some());
     println!(
-        "{bold}{:>3}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {}FILE{reset}",
-        "#",
-        "FORMAT",
-        "DISTRO",
-        "ARCH",
-        if has_builds { "BUILD  " } else { "" },
+        "{bold}{:>3}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  FILE{reset}",
+        "#", "FORMAT", "DISTRO", "ARCH",
     );
     for (number, row) in rows.iter().enumerate() {
-        let build = if has_builds {
-            format!("{:<5}  ", row.build.as_deref().unwrap_or("-"))
-        } else {
-            String::new()
-        };
         let file = match &row.file {
             Ok(name) => name.clone(),
             Err(_) => format!("{red}?{reset}"),
         };
         println!(
-            "{dim}{:>3}{reset}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {build}{file}",
+            "{dim}{:>3}{reset}  {:<w_format$}  {:<w_distro$}  {:<w_arch$}  {file}",
             number + 1,
             row.format,
             row.distro,
@@ -411,21 +378,7 @@ fn plan_table(registry: &Registry, items: &[plan::Item], json: bool) -> Result<(
         })
         .collect();
     problems.dedup();
-    let builds = keys.len();
-    let shared = if builds > 0 && builds < rows.len() {
-        " Jobs with the same BUILD letter share one build."
-    } else {
-        ""
-    };
-    println!(
-        "\n{} packages{}.{shared}",
-        rows.len(),
-        if builds > 0 {
-            format!(" from {builds} builds")
-        } else {
-            String::new()
-        }
-    );
+    println!("\n{} packages.", rows.len());
     for problem in problems {
         println!("{red}error:{reset} {problem}");
     }
@@ -539,16 +492,13 @@ fn run() -> Result<()> {
             source,
             jobs,
             progress,
-            work,
         } => {
             let items = load(&source, &registry)?;
             let ui = Ui::new(Mode::parse(&progress).map_err(|e| anyhow!(e))?);
-            let runner = Runner::new(work, ui.clone());
             let (listings, errors) = run_all(&items, jobs, |item| {
                 let bound = &item.manifest;
                 let options = Options::new(PathBuf::from("."), item.job.distro().map(String::from));
-                let tracked = runner.tracked(bound, &item.job)?;
-                let package = package::assemble(bound, &item.format, &options, tracked)?;
+                let package = package::assemble(bound, &item.format, &options)?;
                 let mut text = format!("== {}\n", item.label());
                 for entry in &package.entries {
                     text += &format!(
@@ -575,7 +525,6 @@ fn run() -> Result<()> {
             jobs,
             progress,
             quiet,
-            work,
             sign_key,
             sign_passphrase_file,
             sign_armor,
@@ -600,7 +549,6 @@ fn run() -> Result<()> {
                 Mode::parse(&progress).map_err(|e| anyhow!(e))?
             };
             let ui = Ui::new(mode);
-            let runner = Runner::new(work, ui.clone());
             let job_number = AtomicUsize::new(0);
             let (written, errors) = run_all(&items, jobs, |item| {
                 let bound = &item.manifest;
@@ -613,9 +561,8 @@ fn run() -> Result<()> {
                     job_number.fetch_add(1, Ordering::Relaxed)
                 ));
                 let options = Options::new(private.clone(), item.job.distro().map(String::from));
-                let tracked = runner.tracked(bound, &item.job)?;
-                let package = package::assemble(bound, &item.format, &options, tracked)?;
-                let step = ui.step(&lane(bound, &item.job), format!("package {}", item.format));
+                let package = package::assemble(bound, &item.format, &options)?;
+                let step = ui.step(&lane(bound), format!("package {}", item.format));
                 let built = registry
                     .build(
                         &package,

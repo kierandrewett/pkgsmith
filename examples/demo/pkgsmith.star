@@ -1,9 +1,12 @@
-# The script of the demo. The build runs on this system, in this folder, and installs below $pkgdir. The native package
-# of the system is written: rpm on Fedora, deb on Debian, and so on. The tar is the same files for any system.
+# The script of the demo. First install the program into a prefix, then build the packages from it:
 #
+#   make install DESTDIR=prefix
 #   pkgsmith build
+#
+# pkgsmith does not build the program. The Makefile does, and `make install` puts hello and its files in ./prefix. This
+# script describes the packages made from that folder, in every format, and pkgsmith writes them to ./dist.
 
-sh("make && make install PREFIX=/usr DESTDIR=\"$pkgdir\"")
+expose(tree("/", "/"))
 
 common = {
     "name": "hello",
@@ -11,10 +14,9 @@ common = {
     "description": "A demo that packages a small C program",
     "maintainer": "Kieran Drewett <kieran@drewett.dev>",
     "license": "MIT",
+    # The Makefile installs this file. The package manager keeps the changes that the user made to it.
+    "config_files": ["/etc/hello.conf"],
 }
 
-package("tar", **common)
-
-format = host()["format"]
-if format in ["deb", "rpm", "archlinux", "apk"]:
+for format in ["rpm", "deb", "archlinux", "apk", "tar"]:
     package(format, **common)

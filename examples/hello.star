@@ -1,17 +1,17 @@
-# The smallest script. pkgsmith runs it on this system and writes the native package of the system: an rpm on Fedora, a
-# deb on Debian, a pacman package on Arch, an apk on Alpine.
+# The smallest script. pkgsmith builds nothing: you install your program into a prefix, and this script describes the
+# packages made from it. The prefix is a folder laid out like an installed system.
 #
+#   make install DESTDIR=prefix PREFIX=/usr        (see examples/demo for a C program with a Makefile)
 #   pkgsmith build -f examples/hello.star
 #
-# The folder of the script is the build folder, so it needs a Makefile next to it (see examples/demo). The commands run
-# in that folder. The Makefile installs below $pkgdir, an empty folder, and everything that ends up in $pkgdir is packed.
+# Every package() call writes one package of the files in the prefix. The loop writes the same files in four formats.
 
-sh("make")
-sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
+expose(tree("/", "/"))
 
-package(
-    host()["format"],
-    name = "hello",
-    version = "1.0.0",
-    description = "A small program",
-)
+for format in ["rpm", "deb", "archlinux", "tar"]:
+    package(
+        format,
+        name = "hello",
+        version = "1.0.0",
+        description = "A small program",
+    )

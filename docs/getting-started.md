@@ -1,15 +1,15 @@
 # Getting started
 
-This page builds a small C program into packages and installs one.
+This page turns a small C program into packages and installs one. You build the program, install it into a prefix, and
+describe the packages in a script.
 
 ## Requirements
 
 - A Rust toolchain, to build pkgsmith: `cargo build --release --workspace`. The binary is `target/release/pkgsmith`.
   The formats are plugins, and the same command builds them next to the binary, where pkgsmith finds them.
-- The tools your build calls. This example needs a C compiler and `make`.
+- The tools your own build calls. This example needs a C compiler and `make`. pkgsmith itself runs no build.
 
-pkgsmith runs on Linux, macOS and Windows. It needs no daemon. The script builds on the system
-that runs pkgsmith, so you get packages for that system.
+pkgsmith runs on Linux, macOS and Windows. It needs no daemon.
 
 ## Install
 
@@ -27,7 +27,7 @@ $ pkgsmith plugins
 
 ## The project
 
-Make a folder with three files.
+Make a folder with two files.
 
 `hello.c`:
 
@@ -48,7 +48,24 @@ install: hello
 	install -Dm644 /dev/null $(DESTDIR)/etc/hello.conf
 ```
 
-`pkgsmith.star`:
+## Make a prefix
+
+Install the program into a folder named `prefix`. This is your build, not pkgsmith's:
+
+```console
+$ make install PREFIX=/usr DESTDIR="$PWD/prefix"
+$ find prefix -type f
+prefix/etc/hello.conf
+prefix/usr/bin/hello
+prefix/usr/share/hello/hello.c
+```
+
+The prefix is laid out like an installed system. See [the prefix](prefix.md) for the rules, and for CMake, Meson, Cargo
+and Python.
+
+## Write the script
+
+Add `pkgsmith.star` next to the Makefile:
 
 ```python
 common = {
@@ -59,22 +76,18 @@ common = {
     "license": "MIT",
 }
 
-sh("make")
-sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
+expose(tree("/", "/"))
 
-native = host()["format"]
-if native:
-    package(native, **common)
-package("tar", **common)
+for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
+    package(fmt, config_files = ["/etc/hello.conf"], **common)
 ```
 
 pkgsmith runs this script from top to bottom.
 
-- `sh` adds a command to the build. Each one runs in the folder of the script.
-- `$pkgdir` is an empty folder. The files that `make install` puts there become the package.
-- `host()["format"]` is the package format of this system: `rpm` on Fedora, `deb` on Debian, `archlinux` on Arch, `apk`
-  on Alpine. It is empty when pkgsmith does not know it.
-- Each `package` call that runs writes one package. Both calls come after the same commands, so the build runs once.
+- `expose(tree("/", "/"))` offers the whole prefix to the packages that follow.
+- Each `package` call that runs writes one package. The loop writes six, from the same prefix, on any system: the
+  plugins write the files of every format.
+- `config_files` marks `/etc/hello.conf` as a configuration file, which the package manager keeps on upgrade.
 
 The script is code, so you can use conditions, loops and functions. See [scripting](scripting.md).
 
@@ -82,15 +95,19 @@ The script is code, so you can use conditions, loops and functions. See [scripti
 
 ```console
 $ pkgsmith plan
-  #  FORMAT  DISTRO  ARCH   BUILD  FILE
-  1  rpm     fedora  amd64  a      hello-1.0.0-1.x86_64.rpm
-  2  tar     fedora  amd64  a      hello-1.0.0-amd64.tar.xz
+  #  FORMAT     DISTRO  ARCH   FILE
+  1  rpm                amd64  hello-1.0.0-1.x86_64.rpm
+  2  deb                amd64  hello_1.0.0-1_amd64.deb
+  3  archlinux          amd64  hello-1.0.0-1-x86_64.pkg.tar.zst
+  4  apk                amd64  hello-1.0.0-r1.apk
+  5  tar                amd64  hello-1.0.0-amd64.tar.xz
+  6  zip                amd64  hello-1.0.0-amd64.zip
 
-2 packages from 1 builds. Jobs with the same BUILD letter share one build.
+6 packages.
 ```
 
-`plan` runs the script, but not the build. It shows each package and the file it would write. Packages with the same
-`BUILD` letter share one build. The rows depend on your system: on Debian you see a deb instead of an rpm.
+`plan` runs the script and writes nothing. It shows each package and the file it would write. The `ARCH` is the
+architecture of your system, unless the script sets `arch`.
 
 If `plan` says that no plugin was found, run `pkgsmith plugins`: it lists the folders that pkgsmith searches. See
 [plugins](plugins.md).
@@ -101,55 +118,51 @@ If `plan` says that no plugin was found, run `pkgsmith plugins`: it lists the fo
 $ pkgsmith build
 ```
 
-On a terminal you see one line for the build, with a spinner, the time and the last lines of its output. When it ends,
-the packages are in `./dist`:
+pkgsmith prints a line for each package while it writes, and then the list. The packages are in `./dist`:
 
 ```console
 Packages in dist:
-  rpm  hello-1.0.0-1.x86_64.rpm  (4.2 KiB)
-  tar  hello-1.0.0-amd64.tar.xz  (2.1 KiB)
+  rpm        hello-1.0.0-1.x86_64.rpm  (4.2 KiB)
+  deb        hello_1.0.0-1_amd64.deb  (2.9 KiB)
+  archlinux  hello-1.0.0-1-x86_64.pkg.tar.zst  (3.0 KiB)
+  apk        hello-1.0.0-r1.apk  (3.0 KiB)
+  tar        hello-1.0.0-amd64.tar.xz  (2.2 KiB)
+  zip        hello-1.0.0-amd64.zip  (2.8 KiB)
 ```
+
+`-F rpm,deb` writes only some formats. `-o DIR` changes the folder. `--prefix DIR` names another prefix.
 
 ## Look inside
 
 ```console
-$ pkgsmith files --format rpm
-== rpm [arch=amd64, distro=fedora, format=rpm, name=hello]
-755 root:root /etc
+$ pkgsmith files -F rpm
+== rpm [arch=amd64, format=rpm, name=hello]
 644 root:root /etc/hello.conf
-755 root:root /usr
-755 root:root /usr/bin
 755 root:root /usr/bin/hello
-755 root:root /usr/share
 755 root:root /usr/share/hello
 644 root:root /usr/share/hello/hello.c
-8 files, 12604 bytes installed
+4 files, 12597 bytes installed
 ```
 
-The package holds the three files that `make install` wrote, and the folders that lead to them, with the mode they have
-in `$pkgdir`. `files` runs the build and writes no package.
+`files` lists the paths, modes and owners that a package would carry, and writes no package. Use it to check a script
+before you build.
 
-## Install the package
+## Install a package
 
-Each package installs on the distribution it was built on.
+Each package installs on the system of its format. Write the packages once, install them anywhere.
 
-| Distro | Command                                                   |
-| ------ | --------------------------------------------------------- |
-| Fedora | `sudo dnf install ./dist/hello-1.0.0-1.x86_64.rpm`        |
-| Debian | `sudo dpkg -i ./dist/hello_1.0.0-1_amd64.deb`             |
-| Arch   | `sudo pacman -U ./dist/hello-1.0.0-1-x86_64.pkg.tar.zst`  |
-| Alpine | `apk add --allow-untrusted ./dist/hello-1.0.0-r1.apk`     |
+| Format      | Command                                                   |
+| ----------- | --------------------------------------------------------- |
+| `rpm`       | `sudo dnf install ./dist/hello-1.0.0-1.x86_64.rpm`        |
+| `deb`       | `sudo dpkg -i ./dist/hello_1.0.0-1_amd64.deb`             |
+| `archlinux` | `sudo pacman -U ./dist/hello-1.0.0-1-x86_64.pkg.tar.zst`  |
+| `apk`       | `apk add --allow-untrusted ./dist/hello-1.0.0-r1.apk`     |
 
 Then run `hello`.
 
-## Packages for other distros
-
-To get a deb, run the same script on Debian. To get an rpm, run it on Fedora. In CI, use one job for each system. See
-[building](building.md#packages-for-other-distros).
-
 ## Next
 
-- Mark `/etc/hello.conf` as a configuration file, and set install scripts: see [contents](contents.md) and
-  [scripts](scripts.md).
+- Choose the files yourself, and set install scripts: see [contents](contents.md) and [scripts](scripts.md).
 - Add dependencies that differ by distro: see [dependencies](dependencies.md).
+- Package a program built for another architecture or libc: see [the prefix](prefix.md#other-architectures-and-c-libraries).
 - List every field: see the [script reference](manifest.md).

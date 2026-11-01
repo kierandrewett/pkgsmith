@@ -5,11 +5,11 @@
 #
 #   scripts/verify-signing.sh [PATH-TO-pkgsmith]
 #
-# It needs gpg, openssl and podman. pkgsmith builds on this machine and starts no container. Podman only installs the
-# packages into a clean distro. Like verify-formats.sh it installs into the newest Fedora and Alpine on every run, so a
-# new release that breaks a signature is found. Set IMAGE_FEDORA or IMAGE_ALPINE to test one fixed release. pkgsmith
-# and its plugins must sit together, as `cargo build --workspace` leaves them. Every key is made fresh in a temporary
-# folder, with a private GNUPGHOME.
+# It needs gpg, openssl and podman. pkgsmith builds nothing and starts no container: this script makes a small prefix
+# and pkgsmith packs it. Podman only installs the packages into a clean distro. Like verify-formats.sh it installs into
+# the newest Fedora and Alpine on every run, so a new release that breaks a signature is found. Set IMAGE_FEDORA or
+# IMAGE_ALPINE to test one fixed release. pkgsmith and its plugins must sit together, as `cargo build --workspace`
+# leaves them. Every key is made fresh in a temporary folder, with a private GNUPGHOME.
 set -euo pipefail
 
 IMAGE_FEDORA="${IMAGE_FEDORA:-registry.fedoraproject.org/fedora:latest}"
@@ -40,12 +40,13 @@ refused() { # refused NAME COMMAND...: the command must fail
     fi
 }
 
-# A tiny package: one script that prints a line. The build makes it, so the script runs sh() and expose() like a real one.
+# A tiny package: a prefix with one program that prints a line, and a script that writes it in three formats.
+umask 022
+mkdir -p prefix/usr/bin
+printf '#!/bin/sh\necho signed-hi\n' > prefix/usr/bin/hi
+chmod 755 prefix/usr/bin/hi
 cat > pkgsmith.star <<'STAR'
-sh(r"""mkdir -p stage/usr/bin
-printf '#!/bin/sh\necho signed-hi\n' > stage/usr/bin/hi
-chmod 755 stage/usr/bin/hi""", name = "Make the program")
-expose(file("stage/usr/bin/hi", "/usr/bin/hi"))
+expose(tree("/", "/"))
 
 common = {"name": "hi", "version": "1.0.0", "description": "A tiny signing test"}
 for fmt in ["tar", "rpm", "apk"]:
@@ -63,7 +64,7 @@ openssl genrsa -out release.rsa 3072 2>/dev/null
 openssl rsa -in release.rsa -pubout -out release.rsa.pub 2>/dev/null
 openssl pkcs8 -topk8 -in release.rsa -out locked.rsa -passout pass:s3cret 2>/dev/null
 
-build() { "$PKGSMITH" build . -F "$1" -o "$2" --progress plain "${@:3}"; }
+build() { "$PKGSMITH" build . --prefix prefix -F "$1" -o "$2" --progress plain "${@:3}"; }
 
 echo "== plugins"
 check "signers are listed" bash -c "'$PKGSMITH' plugins | grep -q 'signer-gpg' && '$PKGSMITH' plugins | grep -q 'signer-openpgp' && '$PKGSMITH' plugins | grep -q 'signer-rsa'"

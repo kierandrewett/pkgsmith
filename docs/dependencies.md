@@ -1,6 +1,7 @@
 # Dependencies
 
 ```python
+expose(tree("/", "/"))
 package(
     "rpm",
     name = "acme-tool",
@@ -15,7 +16,7 @@ package(
 )
 ```
 
-pkgsmith writes the names as you give them. It does not translate a name between distros. That is your job, in the script: use `host()` to pick the names.
+pkgsmith writes the names as you give them. It does not translate a name between distros. That is your job, in the script: keep the names of each format in a dict.
 
 ## Name and version syntax
 
@@ -45,34 +46,40 @@ rpm dependency flags itself. The other formats receive the text as written.
 
 Alpine has no weak dependencies, so `recommends` and `suggests` are left out of an `apk`.
 
-## One name per distro
+## One name per format
 
-The library names differ between distros. Pick the list in the script, from the system that runs it:
+The library names differ between distros. Pick the list for each format in the script:
 
 ```python
 common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
 
 libc = {"rpm": "glibc", "deb": "libc6", "archlinux": "glibc", "apk": "musl"}
-native = host()["format"]
 
-if native in libc:
-    package(native, depends = [libc[native]], **common)
+expose(tree("/", "/"))
+for fmt in libc:
+    package(fmt, depends = [libc[fmt]], **common)
+package("tar", **common)
 ```
 
-Or write one branch for each family:
+When a format covers several distros with different names, write one `package` call for each and name the distro:
 
 ```python
-h = host()
-if h["format"] == "rpm" and h["distro"] == "opensuse-leap":
-    package("rpm", depends = ["glibc", "libopenssl3"], file = "opensuse-{file}", **common)
-elif h["format"] == "rpm":
-    package("rpm", depends = ["glibc", "openssl-libs"], **common)
+common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
+
+expose(tree("/", "/"))
+package("rpm", distro = "fedora", depends = ["glibc", "openssl-libs"], file = "fedora-{file}", **common)
+package("rpm", distro = "opensuse", depends = ["glibc", "libopenssl3"], file = "opensuse-{file}", **common)
 ```
+
+`distro` names the lane for `--where distro=fedora`. The `file` template keeps the two files apart.
 
 A field in one `package` call does not carry over to the next. To share names, keep them in a list:
 
 ```python
+common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
 shared = ["glibc"]
+
+expose(tree("/", "/"))
 package("rpm", depends = shared + ["openssl-libs"], **common)
 package("tar", **common)
 ```
@@ -80,6 +87,6 @@ package("tar", **common)
 ## Libraries the program needs
 
 pkgsmith does not look inside your binaries. It does not add the libraries a program links against. rpm and dpkg
-normally do that for you, so a package built here can miss a dependency that a spec file would have found.
+normally do that for you, so a package written here can miss a dependency that a spec file would have found.
 
-List the libraries yourself. To see what a program needs, run `readelf -d /usr/bin/prog | grep NEEDED` on the built binary and map each library to a package of that distro.
+List the libraries yourself. To see what a program needs, run `readelf -d prefix/usr/bin/prog | grep NEEDED` on the binary in the prefix and map each library to a package of that distro.

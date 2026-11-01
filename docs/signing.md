@@ -67,7 +67,7 @@ pkgsmith build --sign-key gpg:release@example.org --sign-key apk=release.rsa
 PKGSMITH_SIGN_KEY="rpm=$RUNNER_TEMP/key.asc;apk=$RUNNER_TEMP/release.rsa" pkgsmith build
 ```
 
-Before the first build starts, pkgsmith opens every key and asks the signers about it. These stop the run at once,
+Before the first package is written, pkgsmith opens every key and asks the signers about it. These stop the run at once,
 with the reason:
 
 - a missing key file
@@ -114,7 +114,7 @@ and a private `GNUPGHOME`.
 | rpm: `NOKEY` before the key import, `OK` after, `BAD` after a changed byte | `rpm -Kv` in Fedora 43       |
 | rpm signed through `gpg`                                                | `rpm -Kv` in Fedora 43          |
 | apk: `UNTRUSTED` without the key, installed with it, from a plain and an encrypted key | `apk add` in Alpine 3.22 |
-| Wrong key type, unknown gpg key, locked key without or with the wrong passphrase, missing file | pkgsmith stops before building |
+| Wrong key type, unknown gpg key, locked key without or with the wrong passphrase, missing file | pkgsmith stops before writing |
 
 Not tested: signed `deb`, `ipk`, `archlinux` and `slackware` packages with their own package managers, and non-RSA
 OpenPGP keys for rpm (rpm then uses the `DSA` and `GPG` tags).

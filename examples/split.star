@@ -1,12 +1,9 @@
-# One build, several packages. The build runs once. The program package and the documentation package take different
-# files from it and have different names. The documentation is the same on every architecture, so its arch is "all".
+# One prefix, two packages: the program and its documentation. The packages take different files from the same prefix and
+# have different names. The documentation is the same on every architecture, so its arch is "all".
 #
+#   make install PREFIX=/usr DESTDIR=prefix
 #   pkgsmith plan  -f examples/split.star
 #   pkgsmith build -f examples/split.star
-#
-# `plan` shows the same BUILD letter for every package, so the build is shared.
-
-sh("make all docs", name = "Build the program and the manual")
 
 common = {
     "version": "3.0.0",
@@ -14,17 +11,25 @@ common = {
     "license": "MIT",
 }
 
-# Two native formats when the system has one, and a tar everywhere. Each package lists its own files in `contents`.
-formats = ["tar"]
-if host()["format"] in ["deb", "rpm", "archlinux", "apk"]:
-    formats.append(host()["format"])
+# expose() adds files to what every package() call after it packs. Only the program is exposed, so acme holds the
+# program and nothing else.
+expose(
+    file("/usr/bin/acme", "/usr/bin/acme", mode = "0755"),
+    tree("/usr/lib/acme", "/usr/lib/acme"),
+)
 
-for format in formats:
+# `contents` adds files to one package. The documentation package gets the program too, because the program is exposed,
+# so `include` keeps only the documentation paths.
+docs = [
+    tree("/usr/share/doc/acme", "/usr/share/doc/acme"),
+    file("/usr/share/man/man1/*.1", "/usr/share/man/man1/"),
+]
+
+for format in ["rpm", "deb", "archlinux", "apk", "tar"]:
     package(
         format,
         name = "acme",
         description = "The acme program",
-        contents = [file("build/acme", "/usr/bin/acme", mode = "0755")],
         **common
     )
     package(
@@ -33,6 +38,7 @@ for format in formats:
         description = "The manual of acme",
         arch = "all",
         depends = ["acme"],
-        contents = [tree("build/html", "/usr/share/doc/acme")],
+        contents = docs,
+        include = ["/usr/share/doc/**", "/usr/share/man/**"],
         **common
     )

@@ -1,6 +1,6 @@
 # Plugins
 
-Every package format of pkgsmith is a plugin. pkgsmith itself only reads the script, runs the builds and sends the
+Every package format of pkgsmith is a plugin. pkgsmith itself only runs the script, collects the files of the prefix and sends the
 result to a plugin. The formats that come with pkgsmith use the same interface that you can use.
 
 ```console
@@ -62,7 +62,7 @@ not load is skipped with a warning. Without any plugin, `pkgsmith build` stops a
 
 ## What a plugin receives
 
-pkgsmith sends one JSON document, a package, for every package it builds. It holds everything the format needs:
+pkgsmith sends one JSON document, a package, for every package it writes. It holds everything the format needs:
 
 | Field | Meaning |
 | ----- | ------- |
@@ -103,6 +103,7 @@ see a real document.
 The `options` dict of a `package()` call is passed to its format as `options`:
 
 ```python
+expose(tree("/", "/"))
 package(
     "deb",
     name = "hello", version = "1.0.0", description = "A small program",
@@ -201,7 +202,7 @@ Two more methods reach a signer. Both take a JSON signing request, and the data 
 - `accepts` returns `{"ok": true}` when the signer can sign with this key, and `{"ok": false}` when the key is not
   its own. For a key that is its own but unusable, such as a locked key or a wrong passphrase, return an error with the
   reason. The host stops at that error and tries no other signer. Open the key in `accepts`, so that a bad key fails
-  before any build starts.
+  before any package is written.
 - `sign` writes the signature to `output` and returns `{"ok": true}`.
 
 In Rust, implement `accepts` and `sign` of the `Plugin` trait, and leave `file_name` and `build` as they are.

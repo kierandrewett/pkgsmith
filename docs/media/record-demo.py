@@ -1,7 +1,8 @@
 import os, pty, sys, time, random, select, fcntl, termios, struct, re
 
 COLS, ROWS = 100, 34
-# Records the demo in docs/media/demo.cast: vi on the script with syntax highlighting, :q, then the build.
+# Records the demo in docs/media/demo.cast: vi on the script with syntax highlighting, :q, then make install into a
+# prefix and the build. The script works in a copy of the project, so the folder keeps no prefix, binary or dist.
 #   python3 docs/media/record-demo.py OUT.cast [PROJECT_DIR] [PKGSMITH_BINARY]
 # It needs asciinema (uv tool run --from asciinema asciinema) and a vim with +syntax. The vi of vim-minimal
 # has no syntax support, so unpack vim-enhanced and vim-common (dnf download, rpm2cpio | cpio -idm) into a folder and
@@ -10,9 +11,12 @@ COLS, ROWS = 100, 34
 cast = sys.argv[1]
 project = sys.argv[2] if len(sys.argv) > 2 else "examples/demo"
 binary = sys.argv[3] if len(sys.argv) > 3 else "target/release/pkgsmith"
+import shutil
 import tempfile
 
 home = tempfile.mkdtemp(prefix="pkgsmith-demo-")
+shutil.copytree(project, home + "/project")
+project = home + "/project"
 os.makedirs(home + "/bin")
 os.symlink(os.path.abspath(binary), home + "/bin/pkgsmith")
 vim_root = os.environ.get("PKGSMITH_DEMO_VIM", "")
@@ -105,6 +109,9 @@ pump(1.5)
 type_text(":q", 0.12)
 os.write(fd, b"\r")
 pump(1.5)
+type_text("make install DESTDIR=prefix")
+os.write(fd, b"\r")
+pump(3.0)
 type_text("pkgsmith plan")
 os.write(fd, b"\r")
 pump(2.0)

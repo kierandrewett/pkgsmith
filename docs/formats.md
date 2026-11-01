@@ -14,6 +14,9 @@ package("tar", options = {"compression": "zstd", "top_folder": True}, **common)
 A value is a Starlark value: text in quotes, `True` or `False`, numbers, lists and dicts. The tables write the
 options of each format as keys of that dict. A format with no options needs no `options`.
 
+Some formats have an option named `prefix`. It is a path inside the package, such as `/usr`. It is not the prefix folder
+that pkgsmith reads files from. See [the prefix](prefix.md) for that.
+
 | Format      | File                             | For                                  | Verified with                       |
 | ----------- | -------------------------------- | ------------------------------------ | ----------------------------------- |
 | `rpm`       | `.rpm`                           | Fedora, openSUSE, RHEL               | `rpm` in Fedora 43, openSUSE        |
@@ -110,6 +113,7 @@ An app has `command` (required), `daemon` (`simple`, `forking`, `oneshot` or `no
 and `environment` (a map).
 
 ```python
+expose(tree("/", "/"))
 package(
     "snap",
     name = "hello", version = "1.0.0", description = "A small program",
@@ -268,7 +272,7 @@ Not checked:
 
 A Nix package is an archive that unpacks to `NAME-VERSION/`. That folder holds `default.nix`, `flake.nix` and `files/`. The
 derivation builds nothing. It copies `files/` into the store path, so the files must be built already, as for the other
-formats. A Nix package for a distro build links against that distro's libraries, so see `patchelf` below.
+formats. A program linked on another distro uses that distro's libraries, so see `patchelf` below.
 
 Build it with `nix-build`, or use the flake, which works on the archive itself. Replace the address with where you
 host the file:
@@ -366,7 +370,7 @@ Not checked:
 An `.exe` made by NSIS is a self-extracting Windows installer that adds the program to Add/Remove Programs. NSIS has no
 practical writer in Rust, so pkgsmith writes an `.nsi` script and runs `makensis`.
 
-`makensis` must be on `PATH` when you build. Without it the build stops and names the packages that carry it: `nsis` on
+`makensis` must be on `PATH` when you write the package. Without it pkgsmith stops and names the packages that carry it: `nsis` on
 Debian and Arch, and `mingw32-nsis` on Fedora.
 
 NSIS itself can build installers that run on any Windows from 95 to 11, according to its own documentation. The script

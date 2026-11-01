@@ -1,24 +1,21 @@
-# No build. You compile and stage the program yourself, and the script says where each file goes. A script with no sh()
-# before a package() call has no build, so pkgsmith only packs the files you name. Nothing runs, so one machine writes
-# packages of every format.
+# Packages of a program that was built on macOS or Windows. pkgsmith does not build for those systems. Build the program
+# there, put its files in a prefix, and run pkgsmith on any machine that can read the prefix.
 #
-#   make install DESTDIR=/tmp/stage PREFIX=/usr
-#   pkgsmith build -f examples/staged.star --build-arg STAGE=/tmp/stage --build-arg VERSION=0.1.0
+#   cmake --install build --prefix prefix/hello        (on the Mac or on Windows)
+#   pkgsmith build -f examples/staged.star --prefix prefix -F dmg
+#
+# The prefix holds the program in hello/. The dmg and the installers copy it into their own folder. `arch` is the
+# architecture of the files: pass --build-arg ARCH=amd64 for an Intel build.
 
-STAGE = arg("STAGE")
-if not STAGE:
-    fail("pass the staged folder: --build-arg STAGE=/tmp/stage")
+expose(tree("/hello", "/hello"))
 
 common = {
-    "name": "bingux-config",
-    "version": arg("VERSION", "0.1.0"),
-    "description": """Configuration command for the Bingux desktop
-Reads, changes and checks the Bingux configuration file.""",
-    "maintainer": "Kieran Drewett <kieran@drewett.dev>",
-    "license": "GPL-3.0-or-later",
-    "contents": [file(STAGE + "/usr/bin/bingux-config", "/usr/bin/bingux-config", mode = "0755")],
-    "scripts": {"post_install": 'echo "bingux-config installed"'},
+    "name": "hello",
+    "version": arg("VERSION", "1.0.0"),
+    "description": "A small program",
+    "arch": arg("ARCH", host()["arch"]),
 }
 
-for format in ["tar", "deb", "rpm", "archlinux", "apk"]:
-    package(format, **common)
+package("dmg", distro = "macos", options = {"volume_name": "hello"}, **common)
+package("msi", distro = "windows", options = {"prefix": "/hello", "manufacturer": "Example"}, **common)
+package("nsis", distro = "windows", options = {"prefix": "/hello"}, **common)

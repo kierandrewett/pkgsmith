@@ -3,7 +3,7 @@
 use crate::manifest::{Job, Manifest};
 use crate::tree;
 use anyhow::{Context, Result};
-use pkgsmith_plugin::{Entry, Package, Scripts};
+use pkgsmith_plugin::{Package, Scripts};
 use std::path::PathBuf;
 
 /// What the caller decides about a build.
@@ -77,14 +77,8 @@ pub fn outline(manifest: &Manifest, format: &str, options: &Options) -> Package 
     }
 }
 
-/// The whole package. Its files start as what the build installed into `$pkgdir` (see `runner`), then the `contents` of the
-/// manifest apply.
-pub fn assemble(
-    manifest: &Manifest,
-    format: &str,
-    options: &Options,
-    tracked: Vec<Entry>,
-) -> Result<Package> {
+/// The whole package: the files of the `contents`, read from the prefix, and the scripts.
+pub fn assemble(manifest: &Manifest, format: &str, options: &Options) -> Result<Package> {
     let mut package = outline(manifest, format, options);
     let scripts = &manifest.scripts;
     package.scripts = Scripts {
@@ -93,7 +87,7 @@ pub fn assemble(
         pre_remove: script(manifest, &scripts.pre_remove)?,
         post_remove: script(manifest, &scripts.post_remove)?,
     };
-    package.entries = tree::resolve_with(manifest, tracked)
+    package.entries = tree::resolve(manifest)
         .with_context(|| format!("cannot collect the files for {format}"))?;
     Ok(package)
 }

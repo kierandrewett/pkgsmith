@@ -10,7 +10,6 @@ pub mod manifest;
 pub mod package;
 pub mod plan;
 pub mod plugins;
-pub mod runner;
 pub mod script;
 pub mod signing;
 pub mod tree;

@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Builds one small package in every format and checks each with the tool of that format, in Podman. This is the test
+# Packs a small prefix in every format and checks each package with the tool of that format, in Podman. This is the test
 # suite of the format plugins. It saves a log, so a run can be inspected and repeated.
 #
 #   scripts/verify-formats.sh [PATH-TO-pkgsmith] [FORMAT...]
 #
 # Without FORMAT every format is checked. pkgsmith and its plugins must sit together, as `cargo build --workspace` leaves
-# them. pkgsmith builds every package on this machine and never starts a container. Only the checks use podman, to
-# install each package into a clean distro. Every run pulls the NEWEST version of each image it installs into, on
-# purpose: the suite exists to find the bug that a new distro release brings, so it must not test a frozen
-# environment. The image digests of a run are written to the log. To test one fixed release, set a variable such as
-# IMAGE_FEDORA=fedora:43, and set PKGSMITH_NO_PULL=1 to use the images that are already on the machine. The appimage
-# check needs a runtime file in PKGSMITH_APPIMAGE_RUNTIME (from github.com/AppImage/type2-runtime/releases) and is
-# skipped without it. The wheel check needs python3 with venv. The result is written to verify-formats.log in the
-# current folder.
+# them. pkgsmith builds nothing and starts no container: this script makes each prefix (a folder laid out like an
+# installed system) with plain commands, and pkgsmith writes the packages from it. The system formats share one prefix
+# and one script. A language format packs different files, so each one gets a prefix and a script of its own. Podman is
+# only used to compile the static test program and to install each package into a clean distro. Every run pulls the
+# NEWEST version of each image it installs into, on purpose: the suite exists to find the bug that a new distro release
+# brings, so it must not test a frozen environment. The image digests of a run are written to the log. To test one fixed
+# release, set a variable such as IMAGE_FEDORA=fedora:43, and set PKGSMITH_NO_PULL=1 to use the images that are already
+# on the machine. The appimage check needs a runtime file in PKGSMITH_APPIMAGE_RUNTIME (from
+# github.com/AppImage/type2-runtime/releases) and is skipped without it. The wheel check needs python3 with venv. The
+# result is written to verify-formats.log in the current folder.
 set -uo pipefail
 
 PKGSMITH="$(realpath "${1:-target/debug/pkgsmith}")"
@@ -61,14 +63,20 @@ for image in "$IMAGE_FEDORA" "$IMAGE_DEBIAN" "$IMAGE_ARCH" "$IMAGE_ALPINE" "$IMA
     echo "image $image $(podman image inspect --format '{{.Digest}} {{.Created}}' "$image" 2>/dev/null)" | tee -a "$LOG"
 done
 
-# The package. A static program for the oci and appimage formats is compiled here, in an Alpine container, because this
-# machine may have no static C library. The build in the script makes the other files.
-mkdir -p stage/usr/bin
+# The prefix: the files of the package, laid out as `make install DESTDIR=prefix` leaves them. The static program for the
+# oci and appimage formats is compiled in an Alpine container, because this machine may have no static C library.
+umask 022
+mkdir -p prefix/usr/bin prefix/etc prefix/usr/lib/python3/site-packages/hipkg
+printf '#!/bin/sh\necho hi-from-package\n' > prefix/usr/bin/hi
+chmod 755 prefix/usr/bin/hi
+printf 'greeting=hi\n' > prefix/etc/hi.conf
+printf 'VALUE = 1\n' > prefix/usr/lib/python3/site-packages/hipkg/__init__.py
 printf '#include <stdio.h>\nint main(void){puts("hi-from-image");return 0;}\n' > hello.c
-podman run --rm $PULL -v "$PWD:/w:z" -w /w "$IMAGE_ALPINE" sh -c 'apk add --no-cache gcc musl-dev >/dev/null && cc -static -O2 -o stage/usr/bin/hi-static hello.c' >>"$LOG" 2>&1 \
+podman run --rm $PULL -v "$PWD:/w:z" -w /w "$IMAGE_ALPINE" sh -c 'apk add --no-cache gcc musl-dev >/dev/null && cc -static -O2 -o prefix/usr/bin/hi-static hello.c' >>"$LOG" 2>&1 \
     || echo "could not build the static test program; the oci check will fail" >&2
 cat > pkgsmith.star <<'STAR'
-# One build for every format. Only some formats get the symlink, and each format has its own options.
+# One script for every format, written from the one prefix. Only some formats get the symlink, and each format has its
+# own options.
 LINKED = ["rpm", "deb", "ipk", "archlinux", "apk", "slackware", "tar", "zip", "snap", "xbps", "freebsd"]
 FORMATS = LINKED + ["oci", "wheel", "appimage"]
 OPTIONS = {
@@ -76,21 +84,10 @@ OPTIONS = {
     "snap": {"apps": {"hi": {"command": "/usr/bin/hi"}}},
     "freebsd": {"abi_version": 14, "dep_origins": {"libfoo": "devel/libfoo"}},
     "wheel": {"site_packages": "/usr/lib/python3/site-packages", "platform_tag": "manylinux_2_17_x86_64"},
-    "appimage": {"runtime": arg("APPIMAGE_RUNTIME", ""), "icon": "icon.png", "exec": "usr/bin/hi-static"},
+    "appimage": {"runtime": arg("APPIMAGE_RUNTIME", ""), "icon": here() + "/icon.png", "exec": "usr/bin/hi-static"},
 }
 
-sh(r"""mkdir -p stage/usr/bin stage/etc stage/usr/lib/python3/site-packages/hipkg
-printf '#!/bin/sh\necho hi-from-package\n' > stage/usr/bin/hi
-chmod 755 stage/usr/bin/hi
-printf 'greeting=hi\n' > stage/etc/hi.conf
-printf 'VALUE = 1\n' > stage/usr/lib/python3/site-packages/hipkg/__init__.py""", name = "Make the test files")
-
-expose(
-    file("stage/usr/bin/hi", "/usr/bin/hi"),
-    file("stage/usr/bin/hi-static", "/usr/bin/hi-static"),
-    config("stage/etc/hi.conf", "/etc/hi.conf"),
-    file("stage/usr/lib/python3/site-packages/hipkg/__init__.py", "/usr/lib/python3/site-packages/hipkg/__init__.py"),
-)
+expose(tree("/", "/"))
 
 common = {
     "name": "hi",
@@ -101,6 +98,7 @@ A tiny package that every format test installs.
     "maintainer": "Test <test@example.org>",
     "homepage": "https://example.org/hi",
     "license": "MIT",
+    "config_files": ["/etc/hi.conf"],
     "scripts": {"post_install": "echo post-install-ran > /tmp/hi-post\n"},
 }
 
@@ -116,13 +114,14 @@ for fmt in FORMATS:
     package(fmt, **fields)
 STAR
 
-build() { "$PKGSMITH" build . -F "$1" -o "out-$1" --progress plain; }
+build() { "$PKGSMITH" build . --prefix prefix -F "$1" -o "out-$1" --progress plain; }
 
-# The language package formats install into a language's own tree, so each one gets a manifest of its own.
-lang_manifest() { # lang_manifest FORMAT: writes lang-FORMAT.star with a header (FORMAT and the fields in common), then the given lines
+# The language package formats install into a language's own tree, so each one gets a prefix of its own (pre-FORMAT) and
+# a script of its own.
+lang_script() { # lang_script FORMAT: writes lang-FORMAT.star with a header (FORMAT and the fields in common), then the given lines
     { printf 'common = {"name": "hi", "version": "1.0.0", "arch": "all", "description": "Says hi", "maintainer": "Test <test@example.org>", "homepage": "https://example.org/hi", "license": "MIT"}\nFORMAT = "%s"\n' "$1"; cat; } > "lang-$1.star"
 }
-build_lang() { "$PKGSMITH" build . -f "lang-$1.star" -F "$1" -o "out-$1" --progress plain; }
+build_lang() { "$PKGSMITH" build . -f "lang-$1.star" --prefix "pre-$1" -F "$1" -o "out-$1" --progress plain; }
 in_image() { # in_image IMAGE DIR SCRIPT: run a script with the output folder mounted at /p
     podman run --rm $PULL -v "$WORK/$2:/p:ro,z" "$1" sh -ec "$3"
 }
@@ -136,15 +135,14 @@ if selected zip; then
     check "zip: unzip -t and the symlink" sh -c 'unzip -tq out-zip/hi-1.0.0-amd64.zip && unzip -Z out-zip/hi-1.0.0-amd64.zip | grep -q "usr/bin/hello"'
 fi
 if selected epoch; then
+    mkdir -p pre-epoch/usr/bin
+    printf '#!/bin/sh\necho hi\n' > pre-epoch/usr/bin/hi; chmod 755 pre-epoch/usr/bin/hi
     cat > lang-epoch.star <<'STAR'
-sh(r"""mkdir -p lang/epoch
-printf '#!/bin/sh\necho hi\n' > lang/epoch/hi
-chmod 755 lang/epoch/hi""", name = "Make the program")
-expose(file("lang/epoch/hi", "/usr/bin/hi"))
+expose(tree("/", "/"))
 for fmt in ["rpm", "deb", "archlinux"]:
     package(fmt, name = "hi", version = "1.0.0", epoch = 2, description = "Says hi", maintainer = "Test <test@example.org>")
 STAR
-    check "epoch: build rpm, deb and archlinux" "$PKGSMITH" build . -f lang-epoch.star -F rpm,deb,archlinux -o out-epoch --progress plain
+    check "epoch: build rpm, deb and archlinux" "$PKGSMITH" build . -f lang-epoch.star --prefix pre-epoch -F rpm,deb,archlinux -o out-epoch --progress plain
     check "epoch: rpm records Epoch 2 and the provide, installs, rpm -q shows 2: (latest Fedora)" in_image "$IMAGE_FEDORA" out-epoch '
         f=$(ls /p/*.rpm); test "$(rpm -qp --qf "%{EPOCH}" "$f")" = 2
         rpm -qp --provides "$f" | grep -q "^hi = 2:1.0.0-1"
@@ -205,7 +203,7 @@ fi
 if selected appimage; then
     if [ -n "${PKGSMITH_APPIMAGE_RUNTIME:-}" ] && [ -f "$PKGSMITH_APPIMAGE_RUNTIME" ]; then
         printf '\x89PNG\r\n\x1a\n' > icon.png
-        check "appimage: build" "$PKGSMITH" build . -F appimage --build-arg "APPIMAGE_RUNTIME=$PKGSMITH_APPIMAGE_RUNTIME" -o out-appimage --progress plain
+        check "appimage: build" "$PKGSMITH" build . --prefix prefix -F appimage --build-arg "APPIMAGE_RUNTIME=$PKGSMITH_APPIMAGE_RUNTIME" -o out-appimage --progress plain
         check "appimage: runs without FUSE" sh -c './out-appimage/hi-1.0.0-x86_64.AppImage --appimage-extract-and-run | grep -q hi-from-image'
     else
         skip "appimage" "set PKGSMITH_APPIMAGE_RUNTIME to a type 2 runtime file"
@@ -236,15 +234,12 @@ if selected freebsd; then
 fi
 
 if selected gem; then
-    lang_manifest gem <<'STAR'
-sh(r"""mkdir -p lang/gem/lib lang/gem/bin
-printf 'module Hi\n  def self.say = "hi-from-gem"\nend\n' > lang/gem/lib/hi.rb
-printf '#!/usr/bin/env ruby\nrequire "hi"\nputs Hi.say\n' > lang/gem/bin/hi
-chmod 755 lang/gem/bin/hi""", name = "Make the gem files")
-expose(
-    file("lang/gem/lib/hi.rb", "/usr/share/gems/gems/hi-1.0.0/lib/hi.rb"),
-    file("lang/gem/bin/hi", "/usr/bin/hi"),
-)
+    mkdir -p pre-gem/usr/share/gems/gems/hi-1.0.0/lib pre-gem/usr/bin
+    printf 'module Hi\n  def self.say = "hi-from-gem"\nend\n' > pre-gem/usr/share/gems/gems/hi-1.0.0/lib/hi.rb
+    printf '#!/usr/bin/env ruby\nrequire "hi"\nputs Hi.say\n' > pre-gem/usr/bin/hi
+    chmod 755 pre-gem/usr/bin/hi
+    lang_script gem <<'STAR'
+expose(tree("/", "/"))
 package(FORMAT, **common)
 STAR
     check "gem: build" build_lang gem
@@ -253,10 +248,10 @@ STAR
         hi | grep -q hi-from-gem; gem spec /p/hi-1.0.0.gem name | grep -q hi; gem uninstall hi -x >/dev/null'
 fi
 if selected npm; then
-    lang_manifest npm <<'STAR'
-sh(r"""mkdir -p lang/npm
-printf 'module.exports = "hi-from-npm";\n' > lang/npm/index.js""", name = "Make the module")
-expose(file("lang/npm/index.js", "/usr/lib/node_modules/hi/index.js"))
+    mkdir -p pre-npm/usr/lib/node_modules/hi
+    printf 'module.exports = "hi-from-npm";\n' > pre-npm/usr/lib/node_modules/hi/index.js
+    lang_script npm <<'STAR'
+expose(tree("/", "/"))
 package(FORMAT, **common)
 STAR
     check "npm: build" build_lang npm
@@ -265,11 +260,11 @@ STAR
         node -p "require(\"hi\")" | grep -q hi-from-npm; npm publish --dry-run /p/hi-1.0.0.tgz >/dev/null 2>&1'
 fi
 if selected conda; then
-    lang_manifest conda <<'STAR'
-sh(r"""mkdir -p lang/conda/bin
-printf '#!/bin/sh\necho hi-from-conda\n' > lang/conda/bin/hi
-chmod 755 lang/conda/bin/hi""", name = "Make the program")
-expose(file("lang/conda/bin/hi", "/usr/bin/hi"))
+    mkdir -p pre-conda/usr/bin
+    printf '#!/bin/sh\necho hi-from-conda\n' > pre-conda/usr/bin/hi
+    chmod 755 pre-conda/usr/bin/hi
+    lang_script conda <<'STAR'
+expose(tree("/", "/"))
 package(FORMAT, **common)
 STAR
     check "conda: build" build_lang conda
@@ -281,10 +276,10 @@ STAR
         micromamba run -n t hi | grep -q hi-from-conda; micromamba remove -y -q -n t hi >/dev/null'
 fi
 if selected nupkg; then
-    lang_manifest nupkg <<'STAR'
-sh(r"""mkdir -p lang/nupkg
-printf 'hi-from-nupkg\n' > lang/nupkg/hi.txt""", name = "Make the file")
-expose(file("lang/nupkg/hi.txt", "/usr/share/hi/hi.txt"))
+    mkdir -p pre-nupkg/usr/share/hi
+    printf 'hi-from-nupkg\n' > pre-nupkg/usr/share/hi/hi.txt
+    lang_script nupkg <<'STAR'
+expose(tree("/", "/"))
 package(FORMAT, options = {"prefix": "/usr/share/hi"}, **common)
 STAR
     check "nupkg: build" build_lang nupkg
@@ -296,25 +291,19 @@ fi
 
 if selected dmg; then
     # 320 files in one folder make the catalog more than one node. The other files cover sizes, modes and names.
-    rm -rf lang/dmg; mkdir -p lang/dmg/many lang/dmg/bin
-    for i in $(seq -w 0 319); do printf 'file %s\n' "$i" > "lang/dmg/many/f$i.txt"; done
-    head -c 5242880 /dev/urandom > lang/dmg/big.bin
-    : > lang/dmg/empty.txt
-    printf 'hi-from-dmg\n' > lang/dmg/bin/hi; chmod 755 lang/dmg/bin/hi
-    printf 'spaced\n' > "lang/dmg/with space.txt"
-    long="$(printf 'n%.0s' $(seq 1 200)).txt"; printf 'long\n' > "lang/dmg/$long"
-    {
-        echo 'package(FORMAT, distro = "macos", options = {"volume_name": "Hi Tools"}, contents = ['
-        echo '    file("lang/dmg/bin/hi", "/usr/bin/hi"),'
-        echo '    file("lang/dmg/big.bin", "/usr/share/hi/big.bin"),'
-        echo '    file("lang/dmg/empty.txt", "/usr/share/hi/empty.txt"),'
-        echo '    file("lang/dmg/with space.txt", "/usr/share/hi/with space.txt"),'
-        echo "    file(\"lang/dmg/$long\", \"/usr/share/hi/$long\"),"
-        for f in lang/dmg/many/*.txt; do echo "    file(\"$f\", \"/usr/share/hi/many/${f##*/}\"),"; done
-        echo '], **common)'
-    } | lang_manifest dmg
+    rm -rf pre-dmg; mkdir -p pre-dmg/usr/share/hi/many pre-dmg/usr/bin
+    for i in $(seq -w 0 319); do printf 'file %s\n' "$i" > "pre-dmg/usr/share/hi/many/f$i.txt"; done
+    head -c 5242880 /dev/urandom > pre-dmg/usr/share/hi/big.bin
+    : > pre-dmg/usr/share/hi/empty.txt
+    printf 'hi-from-dmg\n' > pre-dmg/usr/bin/hi; chmod 755 pre-dmg/usr/bin/hi
+    printf 'spaced\n' > "pre-dmg/usr/share/hi/with space.txt"
+    long="$(printf 'n%.0s' $(seq 1 200)).txt"; printf 'long\n' > "pre-dmg/usr/share/hi/$long"
+    lang_script dmg <<'STAR'
+expose(tree("/", "/"))
+package(FORMAT, distro = "macos", options = {"volume_name": "Hi Tools"}, **common)
+STAR
     check "dmg: build" build_lang dmg
-    cp -r lang/dmg out-dmg/src
+    cp -r pre-dmg out-dmg/src
     check "dmg: fsck.hfsplus, 7z extract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-dmg '
         dnf -y -q install dmg2img hfsplus-tools p7zip p7zip-plugins diffutils findutils >/dev/null
         cd /tmp && dmg2img /p/*.dmg vol.img >/dev/null
@@ -323,26 +312,23 @@ if selected dmg; then
         fsck.hfsplus -n hfs.img | grep -q "appears to be OK"
         7z x -y -oex hfs.img >/dev/null
         test "$(find ex -name "f*.txt" | wc -l)" -eq 320
-        cmp ex/Hi\ Tools/usr/share/hi/big.bin /p/src/big.bin
-        cmp ex/Hi\ Tools/usr/bin/hi /p/src/bin/hi
-        cmp "ex/Hi Tools/usr/share/hi/with space.txt" "/p/src/with space.txt"
-        cmp ex/Hi\ Tools/usr/share/hi/empty.txt /p/src/empty.txt
-        for f in /p/src/many/*.txt; do cmp "$f" "ex/Hi Tools/usr/share/hi/many/${f##*/}"; done
+        cmp ex/Hi\ Tools/usr/share/hi/big.bin /p/src/usr/share/hi/big.bin
+        cmp ex/Hi\ Tools/usr/bin/hi /p/src/usr/bin/hi
+        cmp "ex/Hi Tools/usr/share/hi/with space.txt" "/p/src/usr/share/hi/with space.txt"
+        cmp ex/Hi\ Tools/usr/share/hi/empty.txt /p/src/usr/share/hi/empty.txt
+        for f in /p/src/usr/share/hi/many/*.txt; do cmp "$f" "ex/Hi Tools/usr/share/hi/many/${f##*/}"; done
         test -x "ex/Hi Tools/usr/bin/hi"
         long="$(printf "n%.0s" $(seq 1 200)).txt"
         find ex -type f -name "$long" | grep -q .'
 fi
 if selected nix; then
+    mkdir -p pre-nix/usr/bin pre-nix/usr/share/doc/hi
+    printf '#!/bin/sh\necho hi-from-nix\n' > pre-nix/usr/bin/hi
+    chmod 755 pre-nix/usr/bin/hi
+    printf 'readme\n' > pre-nix/usr/share/doc/hi/README
+    ln -s hi pre-nix/usr/bin/hello
     cat > lang-nix.star <<'STAR'
-sh(r"""mkdir -p lang/nix/bin lang/nix/doc
-printf '#!/bin/sh\necho hi-from-nix\n' > lang/nix/bin/hi
-chmod 755 lang/nix/bin/hi
-printf 'readme\n' > lang/nix/doc/README""", name = "Make the files")
-expose(
-    file("lang/nix/bin/hi", "/usr/bin/hi"),
-    file("lang/nix/doc/README", "/usr/share/doc/hi/README"),
-    symlink("hi", "/usr/bin/hello"),
-)
+expose(tree("/", "/"))
 package("nix", name = "hi", version = "1.0.0", description = "Says hi", homepage = "https://example.org/hi", license = "MIT", options = {"compression": "gzip"})
 STAR
     check "nix: build" build_lang nix
@@ -362,28 +348,21 @@ STAR
         test ! -e /root/.nix-profile/bin/hi'
 fi
 if selected msi; then
-    rm -rf lang/msi; mkdir -p "lang/msi/share/hi docs" lang/msi/bin lang/msi/empty
-    printf 'MZ-fake\n' > lang/msi/bin/hi.exe; chmod 755 lang/msi/bin/hi.exe
-    head -c 1572864 /dev/urandom > lang/msi/share/big.bin
-    : > lang/msi/share/empty.txt
-    printf 'spaced\n' > "lang/msi/share/hi docs/read me.txt"
-    printf 'long\n' > lang/msi/share/a-rather-long-file-name.configuration
+    rm -rf pre-msi; mkdir -p "pre-msi/usr/share/hi docs" pre-msi/usr/bin pre-msi/usr/lib/empty
+    printf 'MZ-fake\n' > pre-msi/usr/bin/hi.exe; chmod 755 pre-msi/usr/bin/hi.exe
+    head -c 1572864 /dev/urandom > pre-msi/usr/share/big.bin
+    : > pre-msi/usr/share/empty.txt
+    printf 'spaced\n' > "pre-msi/usr/share/hi docs/read me.txt"
+    printf 'long\n' > pre-msi/usr/share/a-rather-long-file-name.configuration
     cat > lang-msi.star <<'STAR'
+expose(tree("/", "/"))
 package(
     "msi", name = "hi", version = "1.2.3", description = "Says hi", maintainer = "Test Person <test@example.org>",
     distro = "windows", options = {"manufacturer": "Example Ltd"},
-    contents = [
-        file("lang/msi/bin/hi.exe", "/usr/bin/hi.exe"),
-        file("lang/msi/share/big.bin", "/usr/share/big.bin"),
-        file("lang/msi/share/empty.txt", "/usr/share/empty.txt"),
-        file("lang/msi/share/hi docs/read me.txt", "/usr/share/hi docs/read me.txt"),
-        file("lang/msi/share/a-rather-long-file-name.configuration", "/usr/share/a-rather-long-file-name.configuration"),
-        directory("/usr/lib/empty"),
-    ],
 )
 STAR
     check "msi: build" build_lang msi
-    cp -r lang/msi out-msi/src
+    cp -r pre-msi out-msi/src
     # msitools reads the database and extracts the cabinet. It cannot install, so this does not prove that Windows accepts it.
     check "msi: msiinfo, msidump with resolving references, msiextract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi '
         dnf -y -q install msitools diffutils findutils >/dev/null
@@ -405,20 +384,20 @@ STAR
         test "$(col Media 2)" -eq "$(wc -l < files)"
         msiextract -C ex "$f" >/dev/null
         test "$(find ex -type f | wc -l)" -eq 5
-        cmp ex/hi/share/big.bin /p/src/share/big.bin
-        cmp ex/hi/bin/hi.exe /p/src/bin/hi.exe
-        cmp "ex/hi/share/hi docs/read me.txt" "/p/src/share/hi docs/read me.txt"
-        cmp ex/hi/share/empty.txt /p/src/share/empty.txt
-        cmp ex/hi/share/a-rather-long-file-name.configuration /p/src/share/a-rather-long-file-name.configuration'
+        cmp ex/hi/share/big.bin /p/src/usr/share/big.bin
+        cmp ex/hi/bin/hi.exe /p/src/usr/bin/hi.exe
+        cmp "ex/hi/share/hi docs/read me.txt" "/p/src/usr/share/hi docs/read me.txt"
+        cmp ex/hi/share/empty.txt /p/src/usr/share/empty.txt
+        cmp ex/hi/share/a-rather-long-file-name.configuration /p/src/usr/share/a-rather-long-file-name.configuration'
 fi
 if selected flatpak; then
     if need flatpak; then
+        mkdir -p pre-flatpak/usr/bin
+        printf '#!/bin/sh\necho hi-from-flatpak\n' > pre-flatpak/usr/bin/hi
+        chmod 755 pre-flatpak/usr/bin/hi
+        # A bundle is for one architecture, so this script does not set arch to all.
         cat > lang-flatpak.star <<'STAR'
-# A bundle is for one architecture, so this script does not set arch to all.
-sh(r"""mkdir -p lang/flatpak/bin
-printf '#!/bin/sh\necho hi-from-flatpak\n' > lang/flatpak/bin/hi
-chmod 755 lang/flatpak/bin/hi""", name = "Make the program")
-expose(file("lang/flatpak/bin/hi", "/usr/bin/hi"))
+expose(tree("/", "/"))
 package(
     "flatpak", name = "hi", version = "1.0.0", description = "Says hi",
     options = {"app_id": "org.example.Hi", "runtime_version": "24.08"},

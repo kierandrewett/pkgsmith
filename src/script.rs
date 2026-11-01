@@ -1,13 +1,17 @@
-//! Run `pkgsmith.star`. A script is a program: pkgsmith runs it from top to bottom.
+//! Run `pkgsmith.star`. A script is a program that describes packages. pkgsmith runs it from top to bottom, and every
+//! `package(...)` call that the run reaches declares one package to write.
 //!
-//! * `sh("make")` adds a command to the build. The commands run on this system, in the folder of the script, like makepkg.
-//! * `expose(file("target/release/hello", "/usr/bin/hello"))` makes a file of the build part of what the script offers.
-//! * `package("rpm", name = ..., version = ...)` starts a job that packs the commands and files so far into an rpm.
+//! pkgsmith builds nothing. The files come from a prefix that already exists: a folder laid out like an installed system
+//! (`usr/bin/hello`, `etc/hello.conf`), for example the result of `make install DESTDIR=prefix`. The script may read it,
+//! with `read_file`, `exists`, `is_dir`, `listdir` and `glob`, but it cannot change anything, and it cannot read outside the
+//! prefix and its own folder. It has no network or processes either.
+//!
+//! * `expose(tree("/", "/"))` makes files of the prefix part of what the script offers.
+//! * `package("rpm", name = ..., version = ...)` writes a package of one format from what was exposed so far.
 //!
 //! Every `package(...)` call that the run reaches writes one package, so `package("rpm")` and `package("deb")` make two
-//! packages from one build, and the branch of an `if` that is false on this system makes none. `host()` tells the script
-//! which system it runs on. The language is Starlark, in the implementation of Meta (`starlark-rust`), so a script has no
-//! files, network or processes of its own.
+//! packages from the same files, and the branch of an `if` that is false on this system makes none. `host()` tells the
+//! script which system it runs on. The language is Starlark, in the implementation of Meta (`starlark-rust`).
 
 use crate::host::Host;
 use crate::manifest::{Manifest, TargetSpec};
@@ -34,8 +38,10 @@ struct Collector {
     host: Host,
     /// `--build-arg NAME=VALUE`. They win over the environment.
     args: BTreeMap<String, String>,
-    /// The commands of the build so far: `{run, name, env}`.
-    steps: RefCell<Vec<Json>>,
+    /// The prefix: the read-only folder that holds the files to package.
+    prefix: PathBuf,
+    /// The folder of the script.
+    here: PathBuf,
     /// The files that the script has exposed so far.
     exposed: RefCell<Vec<Json>>,
     /// The packages, in the order the script declared them.
@@ -61,17 +67,30 @@ fn json_value<'v>(heap: starlark::values::Heap<'v>, value: &Json) -> Value<'v> {
     }
 }
 
-fn is_function(value: Value) -> bool {
-    matches!(value.get_type(), "function" | "native_function")
-}
-
-/// The commands a function records when pkgsmith calls it. They do not join the build.
-fn record<'v>(function: Value<'v>, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Vec<Json>> {
-    let build = collector(eval)?.steps.take();
-    let result = eval.eval_function(function, &[], &[]);
-    let recorded = collector(eval)?.steps.replace(build);
-    result.map_err(|error| anyhow!("{error:#}"))?;
-    Ok(recorded)
+/// A path that a script asks to read. A relative path is inside the prefix. The path must resolve, symbolic links
+/// followed, to a place inside the prefix or the folder of the script.
+fn readable(collector: &Collector, text: &str) -> anyhow::Result<PathBuf> {
+    let path = Path::new(text);
+    let path = if path.is_absolute()
+        && !path.starts_with(&collector.prefix)
+        && !path.starts_with(&collector.here)
+    {
+        // `/usr/bin/x` names a file of the prefix, as it does in a package.
+        collector.prefix.join(text.trim_start_matches('/'))
+    } else if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        collector.prefix.join(path)
+    };
+    let resolved =
+        std::fs::canonicalize(&path).with_context(|| format!("cannot read {}", path.display()))?;
+    let inside =
+        |root: &Path| std::fs::canonicalize(root).is_ok_and(|root| resolved.starts_with(root));
+    if inside(&collector.prefix) || inside(&collector.here) {
+        Ok(resolved)
+    } else {
+        bail!("{text} is outside the prefix and the folder of the script")
+    }
 }
 
 #[starlark_module]
@@ -104,25 +123,80 @@ fn builtins(builder: &mut GlobalsBuilder) {
         )))
     }
 
-    /// Add a command to the build. It runs in a fresh `sh -e` in the folder of the script, after the commands before it.
-    fn sh<'v>(
-        run: &str,
-        name: Option<&str>,
-        env: Option<Value<'v>>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> anyhow::Result<NoneType> {
-        let env = match env {
-            Some(env) => env.to_json_value()?,
-            None => json!({}),
-        };
-        collector(eval)?
-            .steps
-            .borrow_mut()
-            .push(json!({"run": run, "name": name, "env": env}));
-        Ok(NoneType)
+    /// The prefix as a path: the folder that holds the files to package.
+    fn prefix<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        let text = collector(eval)?.prefix.to_string_lossy().into_owned();
+        Ok(eval.heap().alloc_str(&text).to_value())
     }
 
-    /// Make the files that the build produces part of what the script offers. Takes content entries (`file`, `config`,
+    /// The folder of the script as a path. Files next to the script, such as a license, are read from there.
+    fn here<'v>(eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        let text = collector(eval)?.here.to_string_lossy().into_owned();
+        Ok(eval.heap().alloc_str(&text).to_value())
+    }
+
+    /// The text of a file of the prefix (a relative or `/`-rooted path) or of the folder of the script.
+    fn read_file<'v>(path: &str, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        let file = readable(collector(eval)?, path)?;
+        let text = std::fs::read_to_string(&file)
+            .with_context(|| format!("cannot read {}", file.display()))?;
+        Ok(eval.heap().alloc_str(&text).to_value())
+    }
+
+    /// Whether a path exists in the prefix or the folder of the script. A path outside both does not exist.
+    fn exists(path: &str, eval: &mut Evaluator<'_, '_, '_>) -> anyhow::Result<bool> {
+        Ok(readable(collector(eval)?, path).is_ok())
+    }
+
+    /// Whether a path in the prefix or the folder of the script is a folder.
+    fn is_dir(path: &str, eval: &mut Evaluator<'_, '_, '_>) -> anyhow::Result<bool> {
+        Ok(readable(collector(eval)?, path).is_ok_and(|path| path.is_dir()))
+    }
+
+    /// The sorted names in a folder of the prefix or of the script.
+    fn listdir<'v>(path: &str, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        let folder = readable(collector(eval)?, path)?;
+        let mut names: Vec<String> = std::fs::read_dir(&folder)
+            .with_context(|| format!("cannot list {}", folder.display()))?
+            .map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<_, _>>()?;
+        names.sort();
+        let heap = eval.heap();
+        Ok(heap.alloc(
+            names
+                .iter()
+                .map(|n| heap.alloc_str(n).to_value())
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    /// The paths that match a pattern in the prefix, sorted, as paths from the root of the prefix: `glob("usr/bin/*")`
+    /// gives `["/usr/bin/a", "/usr/bin/b"]`.
+    fn glob<'v>(pattern: &str, eval: &mut Evaluator<'v, '_, '_>) -> anyhow::Result<Value<'v>> {
+        let root = std::fs::canonicalize(&collector(eval)?.prefix)?;
+        let full = root.join(pattern.trim_start_matches('/'));
+        let mut found: Vec<String> = ::glob::glob(&full.to_string_lossy())
+            .with_context(|| format!("bad pattern {pattern:?}"))?
+            .filter_map(Result::ok)
+            .filter_map(|path| {
+                let resolved = std::fs::canonicalize(path.parent()?)
+                    .ok()?
+                    .join(path.file_name()?);
+                let relative = resolved.strip_prefix(&root).ok()?;
+                Some(format!("/{}", relative.to_string_lossy()))
+            })
+            .collect();
+        found.sort();
+        let heap = eval.heap();
+        Ok(heap.alloc(
+            found
+                .iter()
+                .map(|n| heap.alloc_str(n).to_value())
+                .collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Make files of the prefix part of what the script offers. Takes content entries (`file`, `config`,
     /// `tree`, `symlink`, `directory`, `ghost`) or lists of them.
     fn expose<'v>(
         #[starlark(args)] entries: &'v starlark::values::tuple::TupleRef<'v>,
@@ -139,57 +213,29 @@ fn builtins(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    /// Pack the commands and the exposed files so far into one package of type `format` (`rpm`, `deb`, see `pkgsmith
-    /// formats`). The fields are name, version and description (required), then release, epoch, arch, maintainer,
-    /// homepage, license, depends, recommends, suggests, conflicts, replaces, provides, contents (more files than the
-    /// exposed ones), options, distro, file, tags, exclude (paths the build installs that the package leaves out) and
-    /// scripts (a dict of pre_install, post_install, pre_remove and post_remove: text, or a function that calls sh()).
+    /// Write one package of type `format` (`rpm`, `deb`, see `pkgsmith formats`) from the files exposed so far. The fields
+    /// are name, version and description (required), then release, epoch, arch, maintainer, homepage, license, depends,
+    /// recommends, suggests, conflicts, replaces, provides, contents (more files than the exposed ones), options, distro,
+    /// file, tags, exclude, include and config_files (path globs of the package) and scripts (a dict of pre_install,
+    /// post_install, pre_remove and post_remove: text, or the name of a file next to the script).
     fn package<'v>(
         format: &str,
         #[starlark(kwargs)] fields: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
-        let (host, steps, exposed) = {
-            let c = collector(eval)?;
-            (
-                c.host.clone(),
-                c.steps.borrow().clone(),
-                c.exposed.borrow().clone(),
-            )
-        };
+        let mut contents = collector(eval)?.exposed.borrow().clone();
         let mut spec = serde_json::Map::new();
-        let mut exclude = json!([]);
-        let mut scripts = Vec::new();
-        let mut contents = exposed;
         for (key, value) in fields {
-            match key.as_str() {
-                "exclude" => exclude = value.to_json_value()?,
-                "contents" => match value
-                    .to_json_value()
-                    .with_context(|| format!("package({format:?})"))?
-                {
+            let value = value
+                .to_json_value()
+                .with_context(|| format!("package({format:?})"))?;
+            if key == "contents" {
+                match value {
                     Json::Array(list) => contents.extend(list),
                     _ => bail!("package({format:?}): contents must be a list"),
-                },
-                "scripts" => {
-                    let Some(dict) = starlark::values::dict::DictRef::from_value(value) else {
-                        bail!("package({format:?}): scripts must be a dict")
-                    };
-                    for (name, script) in dict.iter() {
-                        let Some(name) = name.unpack_str() else {
-                            bail!("package({format:?}): the keys of scripts are text")
-                        };
-                        scripts.push((name.to_string(), script));
-                    }
                 }
-                _ => {
-                    spec.insert(
-                        key,
-                        value
-                            .to_json_value()
-                            .with_context(|| format!("package({format:?})"))?,
-                    );
-                }
+            } else {
+                spec.insert(key, value);
             }
         }
         spec.insert("format".into(), json!(format));
@@ -197,39 +243,9 @@ fn builtins(builder: &mut GlobalsBuilder) {
         let arch = match spec.get("arch") {
             Some(Json::String(arch)) => arch.clone(),
             Some(_) => bail!("package({format:?}): arch must be text"),
-            None => host.arch.clone(),
+            None => collector(eval)?.host.arch.clone(),
         };
         spec.insert("arch".into(), json!(arch));
-        spec.entry("distro").or_insert_with(|| json!(host.distro));
-        let mut texts = serde_json::Map::new();
-        for (name, script) in scripts {
-            let text = if script.is_none() {
-                continue;
-            } else if let Some(text) = script.unpack_str() {
-                text.to_string()
-            } else if is_function(script) {
-                record(script, eval)?
-                    .iter()
-                    .filter_map(|step| step["run"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                bail!(
-                    "package({format:?}): scripts.{name} must be text or a function that calls sh()"
-                );
-            };
-            texts.insert(name, Json::String(text));
-        }
-        spec.insert("scripts".into(), Json::Object(texts));
-        if !steps.is_empty() {
-            if arch != host.arch && arch != "all" {
-                bail!(
-                    "package({format:?}): a build on this system (arch {}) cannot make arch {arch}; build on a system of that arch",
-                    host.arch
-                );
-            }
-            spec.insert("job".into(), json!({"steps": steps, "exclude": exclude}));
-        }
         let package = Manifest::parse_spec(Json::Object(spec))
             .with_context(|| format!("package({format:?})"))?;
         collector(eval)?.packages.borrow_mut().push(package);
@@ -294,8 +310,12 @@ impl FileLoader for Loader<'_> {
 }
 
 /// Run the script and give back the packages it declares. `args` are the `--build-arg`s.
-pub fn evaluate(file: &Path, args: BTreeMap<String, String>) -> Result<Vec<TargetSpec>> {
-    evaluate_on(file, args, Host::detect())
+pub fn evaluate(
+    file: &Path,
+    args: BTreeMap<String, String>,
+    prefix: &Path,
+) -> Result<Vec<TargetSpec>> {
+    evaluate_on(file, args, Host::detect(), prefix)
 }
 
 /// Like `evaluate`, for a given system. Tests use it so that they do not depend on the machine.
@@ -303,12 +323,19 @@ pub fn evaluate_on(
     file: &Path,
     args: BTreeMap<String, String>,
     host: Host,
+    prefix: &Path,
 ) -> Result<Vec<TargetSpec>> {
     let globals = globals();
     let collector = Collector {
         host,
         args,
-        steps: RefCell::new(Vec::new()),
+        prefix: prefix.to_path_buf(),
+        here: std::fs::canonicalize(
+            file.parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new(".")),
+        )
+        .unwrap_or_default(),
         exposed: RefCell::new(Vec::new()),
         packages: RefCell::new(Vec::new()),
     };
@@ -352,16 +379,31 @@ mod tests {
         Host::from_os_release("ID=fedora\nVERSION_ID=43\n", "amd64", "glibc")
     }
 
-    fn run(source: &str, args: &[(&str, &str)]) -> Result<Vec<TargetSpec>> {
+    /// A prefix with a program, a config file and a manual, and a script next to it.
+    fn project(script: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("pkgsmith.star");
-        std::fs::write(&file, source).unwrap();
+        for file in [
+            "prefix/usr/bin/hi",
+            "prefix/etc/hi.conf",
+            "prefix/usr/share/doc/hi/README",
+        ] {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "x").unwrap();
+        }
+        std::fs::write(dir.path().join("pkgsmith.star"), script).unwrap();
+        (dir, PathBuf::new())
+    }
+
+    fn run(source: &str, args: &[(&str, &str)]) -> Result<Vec<TargetSpec>> {
+        let (dir, _) = project(source);
         evaluate_on(
-            &file,
+            &dir.path().join("pkgsmith.star"),
             args.iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             fedora(),
+            &dir.path().join("prefix"),
         )
     }
 
@@ -369,10 +411,10 @@ mod tests {
         "common = {'name': 'hi', 'version': arg('VERSION', '1.0.0'), 'description': 'Says hi'}\n";
 
     #[test]
-    fn package_calls_share_the_build_and_the_exposed_files() {
+    fn package_calls_share_what_was_exposed_before_them() {
         let specs = run(
             &format!(
-                "{COMMON}def post_install():\n    sh('echo hi')\n\nsh('make')\nsh('make install DESTDIR=\"$pkgdir\"')\nexpose(file('hi', '/usr/bin/hi'), config(None, '/etc/hi.conf'))\npackage('deb', depends = ['libc6'], scripts = {{'post_install': post_install}}, **common)\npackage('rpm', distro = 'rocky', **common)\n"
+                "{COMMON}expose(file('usr/bin/hi', '/usr/bin/hi'))\npackage('deb', depends = ['libc6'], **common)\nexpose(config('etc/hi.conf', '/etc/hi.conf'))\npackage('rpm', distro = 'rocky', scripts = {{'post_install': 'echo hi'}}, **common)\n"
             ),
             &[],
         )
@@ -382,70 +424,56 @@ mod tests {
             (specs[0].name.as_str(), specs[0].version.as_str()),
             ("hi", "1.0.0")
         );
-        assert_eq!(specs[0].depends, ["libc6"]);
         assert_eq!(
-            specs[0].distro.as_deref(),
-            Some("fedora"),
-            "the distro of the host by default"
+            (specs[0].depends.clone(), specs[0].distro.clone()),
+            (vec!["libc6".to_string()], None)
         );
+        assert_eq!((specs[0].contents.len(), specs[1].contents.len()), (1, 2));
         assert_eq!(specs[1].distro.as_deref(), Some("rocky"));
-        for spec in &specs {
-            assert_eq!(
-                spec.job.as_ref().unwrap().steps.len(),
-                2,
-                "a script function does not join the build"
-            );
-            assert_eq!(spec.contents.len(), 2);
-        }
-        assert_eq!(specs[0].scripts.post_install.as_deref(), Some("echo hi"));
-        assert_eq!(specs[1].scripts.post_install, None);
+        assert_eq!(specs[1].scripts.post_install.as_deref(), Some("echo hi"));
     }
 
     #[test]
-    fn a_package_sees_only_what_came_before_it_and_only_reached_code_declares_packages() {
+    fn only_the_code_that_runs_declares_packages_and_the_script_can_adapt_to_the_host() {
         let specs = run(
             &format!(
-                "{COMMON}h = host()\nsh('make')\nexpose(file('a', '/a'))\nif h['distro'] == 'fedora':\n    package('rpm', **common)\nelif h['distro'] == 'debian':\n    package('deb', **common)\nsh('make more')\nexpose(file('b', '/b'))\npackage('tar', **common)\n"
+                "{COMMON}h = host()\nexpose(tree('/', '/'))\nif h['distro'] == 'fedora':\n    package('rpm', **common)\nelif h['distro'] == 'debian':\n    package('deb', **common)\nfor f in ['tar', 'zip']:\n    package(f, **common)\n"
             ),
             &[],
         )
         .unwrap();
         let formats: Vec<_> = specs.iter().map(|s| s.format.as_str()).collect();
-        assert_eq!(formats, ["rpm", "tar"]);
-        assert_eq!(
-            (
-                specs[0].job.as_ref().unwrap().steps.len(),
-                specs[0].contents.len()
-            ),
-            (1, 1)
-        );
-        assert_eq!(
-            (
-                specs[1].job.as_ref().unwrap().steps.len(),
-                specs[1].contents.len()
-            ),
-            (2, 2)
-        );
+        assert_eq!(formats, ["rpm", "tar", "zip"]);
     }
 
     #[test]
-    fn a_package_without_a_build_holds_contents_only_and_a_wrong_arch_cannot_be_built() {
+    fn a_script_reads_the_prefix_and_nothing_else() {
         let specs = run(
-            &format!("{COMMON}package('msi', contents = [tree('stage', '/hi')], options = {{'prefix': '/hi'}}, **common)\n"),
+            &format!(
+                "{COMMON}text = read_file('etc/hi.conf')\nnames = listdir('/usr/bin')\nbins = glob('usr/bin/*')\nassert_eq = [exists('usr/bin/hi'), exists('usr/bin/nope'), is_dir('usr'), exists('/etc/passwd'), exists('../outside')]\npackage('tar', description = 'x' + text + ','.join(names + bins) + str(assert_eq), name = 'hi', version = '1')\n"
+            ),
             &[],
         )
         .unwrap();
-        assert!(specs[0].job.is_none());
-        assert_eq!(specs[0].options["prefix"], "/hi");
+        assert_eq!(
+            specs[0].description,
+            "xxhi,/usr/bin/hi[True, False, True, False, False]"
+        );
         let error = run(
-            &format!("{COMMON}sh('x')\npackage('deb', arch = 'arm64', **common)\n"),
+            &format!("{COMMON}read_file('../..')\npackage('tar', **common)\n"),
             &[],
         )
         .unwrap_err();
         assert!(
-            format!("{error:#}").contains("cannot make arch arm64"),
+            format!("{error:#}").contains("outside the prefix"),
             "{error:#}"
         );
+        let error = run(
+            &format!("{COMMON}read_file('/etc/passwd')\npackage('tar', **common)\n"),
+            &[],
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("cannot read"), "{error:#}");
     }
 
     #[test]
@@ -462,35 +490,28 @@ mod tests {
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("dependz"), "{error:#}");
-        let error = run(
-            &format!("{COMMON}package('tar', scripts = {{'post_install': 3}}, **common)\n"),
-            &[],
-        )
-        .unwrap_err();
-        assert!(
-            format!("{error:#}").contains("must be text or a function"),
-            "{error:#}"
-        );
         let error = run("x = 1\n", &[]).unwrap_err();
         assert!(
             format!("{error:#}").contains("declares no package"),
             "{error:#}"
         );
+        let error = run(&format!("{COMMON}sh('make')\n"), &[]).unwrap_err();
+        assert!(format!("{error:#}").contains("sh"), "{error:#}");
     }
 
     #[test]
-    fn a_script_loads_shared_code_and_cannot_read_other_files() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("common.star"), "DEPENDS = ['a']\n").unwrap();
-        std::fs::write(
-            dir.path().join("pkgsmith.star"),
+    fn a_script_loads_shared_code_next_to_it() {
+        let (dir, _) = project(
             "load('common.star', 'DEPENDS')\npackage('tar', name = 'shared', version = '1', description = 'd', depends = DEPENDS)\n",
+        );
+        std::fs::write(dir.path().join("common.star"), "DEPENDS = ['a']\n").unwrap();
+        let specs = evaluate_on(
+            &dir.path().join("pkgsmith.star"),
+            BTreeMap::new(),
+            fedora(),
+            &dir.path().join("prefix"),
         )
         .unwrap();
-        let specs =
-            evaluate_on(&dir.path().join("pkgsmith.star"), BTreeMap::new(), fedora()).unwrap();
         assert_eq!(specs[0].depends, ["a"]);
-        std::fs::write(dir.path().join("bad.star"), "open('/etc/passwd')\n").unwrap();
-        assert!(evaluate_on(&dir.path().join("bad.star"), BTreeMap::new(), fedora()).is_err());
     }
 }

@@ -28,11 +28,11 @@ pub struct Selection {
 }
 
 /// Every package the targets describe. `known` are the formats the loaded plugins write. `base` is the folder of the
-/// script and `context` the folder that a tracked build mounts at `/src`.
+/// script and `prefix` the folder that holds the files.
 pub fn items(
     specs: Vec<TargetSpec>,
     base: &Path,
-    context: &Path,
+    prefix: &Path,
     known: &[String],
     selection: &Selection,
 ) -> Result<Vec<Item>> {
@@ -64,7 +64,7 @@ pub fn items(
             values.insert("file".into(), file.clone());
         }
         let label = format!("target {} ({} as {format})", n + 1, spec.name);
-        let manifest = Manifest::from_spec(spec, base.to_path_buf(), context.to_path_buf())
+        let manifest = Manifest::from_spec(spec, base.to_path_buf(), prefix.to_path_buf())
             .map_err(|error| anyhow::anyhow!("{label}: {error:#}"))?;
         values.insert("arch".into(), manifest.arch.clone());
         let job = Job { values };

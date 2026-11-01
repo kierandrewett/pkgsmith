@@ -3,6 +3,7 @@
 A package can run scripts when it is installed or removed.
 
 ```python
+expose(tree("/", "/"))
 package(
     "rpm",
     name = "app",
@@ -19,9 +20,9 @@ package(
 
 ## Writing a script
 
-- Inline text, the name of a file next to the script, or a function. A value with a line break is the script. A
+- A value is inline text or the name of a file next to the script. A value with a line break is the script. A
   one-line value is read as a file name. End an inline script with a line break, as above, or pkgsmith reads it as a
-  file name. For a function, see below.
+  file name.
 - A script without a `#!` line gets `#!/bin/sh` and `set -e` in front of it. Add your own `#!` line to use another
   interpreter, for example `#!/bin/bash`.
 - Expect an install to be an **upgrade** as well. The same script runs, and it must work when the files are already
@@ -48,22 +49,10 @@ Differences to know about:
 - **rpm** takes the interpreter from the `#!` line.
 - **apk** runs scripts as written. Alpine has no `bash`, so a `#!/bin/bash` script needs the `bash` package.
 
-## A function as a script
+## Per format
 
-A value can be a function. pkgsmith calls it, and the `sh()` calls in it become the script. They do not join the build:
-they run on the system that installs the package.
-
-```python
-def post_install():
-    sh("systemctl daemon-reload || true")
-    sh("systemctl enable app.service || true")
-
-package("rpm", name = "app", version = "1.0.0", description = "An app", scripts = {"post_install": post_install})
-```
-
-## Per format or per distro
-
-Pick the scripts in a function, or with `if`:
+Scripts differ between formats when the init system or the package manager does. Pick the scripts in a function and loop
+over the formats:
 
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app with a service"}
@@ -73,9 +62,18 @@ def scripts_for(fmt):
         return {"post_install": "rc-update add app default || true\n"}
     return {"post_install": "systemctl daemon-reload || true\n"}
 
-native = host()["format"]
-if native in ["rpm", "deb", "apk"]:
-    package(native, scripts = scripts_for(native), **common)
+expose(tree("/", "/"))
+for fmt in ["rpm", "deb", "apk"]:
+    package(fmt, scripts = scripts_for(fmt), **common)
+```
+
+A script that is long lives in a file next to the script, one for each format if you need it:
+
+```python
+common = {"name": "app", "version": "1.0.0", "description": "An app"}
+
+expose(tree("/", "/"))
+package("deb", scripts = {"post_install": "packaging/deb-postinst.sh"}, **common)
 ```
 
 ## Example: a service

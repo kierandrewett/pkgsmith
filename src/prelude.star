@@ -1,4 +1,4 @@
-# Content helpers for expose(...) and package(contents = [...]). Each one returns a plain dict. pkgsmith checks every field when it reads the
+# Content helpers for expose(...) and package(contents = [...]). A relative src is a path in the prefix. Each one returns a plain dict. pkgsmith checks every field when it reads the
 # dict, so a misspelled field is an error that names it.
 
 def file(src, dst, mode = None, owner = None, group = None):
@@ -6,8 +6,7 @@ def file(src, dst, mode = None, owner = None, group = None):
     return {"type": "file", "src": src, "dst": dst, "mode": mode, "owner": owner, "group": group}
 
 def config(src, dst, mode = None, owner = None, group = None):
-    """A configuration file: the package manager keeps the user's changes. Without src, it marks a file that the build
-    installed."""
+    """A configuration file: the package manager keeps the user's changes."""
     return {"type": "config", "src": src, "dst": dst, "mode": mode, "owner": owner, "group": group}
 
 def tree(src, dst, mode = None, owner = None, group = None):

@@ -1,20 +1,14 @@
-# An OpenWrt package. The `arch` option of ipk names the OpenWrt target.
+# An OpenWrt package. Build the program with the OpenWrt SDK or toolchain for your router, install it into a prefix, and
+# name the target in the `arch` option of ipk.
 #
+#   make CROSS_COMPILE=aarch64-openwrt-linux-musl- install DESTDIR=prefix PREFIX=/usr
+#   install -Dm755 packaging/acme-router.init prefix/etc/init.d/acme-router
+#   install -Dm644 packaging/acme-router.config prefix/etc/config/acme-router
 #   pkgsmith build -f examples/openwrt.star
 #
-# A build runs on this system, so this makes an x86_64 package on an x86_64 machine. For another OpenWrt target, build
-# on a machine of that architecture, or build the program elsewhere and pack it with a script that has no sh() (see
-# staged.star).
+# The prefix holds arm64 files, so `arch` says so. The default is the architecture of this machine.
 
-sh("make")
-sh('make install PREFIX=/usr DESTDIR="$pkgdir"')
-
-expose(
-    # The build installs this file. Marking it as config keeps the user's changes on upgrade.
-    config(None, "/etc/config/acme-router"),
-    # The init script is in the source tree. The build does not install it.
-    file("packaging/acme-router.init", "/etc/init.d/acme-router", mode = "0755"),
-)
+expose(tree("/", "/"))
 
 package(
     "ipk",
@@ -23,6 +17,17 @@ package(
     version = "0.2.0",
     description = "A router helper",
     maintainer = "Example Maintainer <maintainer@example.com>",
+    arch = "arm64",
     depends = ["libc"],
-    options = {"arch": "x86_64"},
+    options = {"arch": "aarch64_cortex-a53"},
+    # The files below /etc/config are settings: opkg keeps the changes of the user.
+    config_files = ["/etc/config/*"],
+    # The init script must run, whatever mode the build gave it.
+    contents = [file("/etc/init.d/acme-router", "/etc/init.d/acme-router", mode = "0755")],
+    scripts = {
+        "post_install": """[ -n "$IPKG_INSTROOT" ] || /etc/init.d/acme-router enable
+""",
+        "pre_remove": """[ -n "$IPKG_INSTROOT" ] || /etc/init.d/acme-router disable
+""",
+    },
 )
