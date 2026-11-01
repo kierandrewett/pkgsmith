@@ -327,8 +327,11 @@ YAML
         export NIX_CONFIG="experimental-features = nix-command flakes"; cd /tmp
         flake=$(nix build --no-write-lock-file --no-link --print-out-paths "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz" 2>/dev/null | tail -1)
         test "$flake" = "$out"
-        nix profile install --no-write-lock-file "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz" >/dev/null 2>&1
-        /root/.nix-profile/bin/hi | grep -q hi-from-nix'
+        nix profile install --no-write-lock-file "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz#hi" >/dev/null 2>&1
+        /root/.nix-profile/bin/hi | grep -q hi-from-nix
+        nix profile list 2>/dev/null | grep -q "packages.x86_64-linux.hi"
+        nix profile remove hi >/dev/null 2>&1
+        test ! -e /root/.nix-profile/bin/hi'
 fi
 if selected msi; then
     rm -rf lang/msi; mkdir -p "lang/msi/share/hi docs" lang/msi/bin lang/msi/empty

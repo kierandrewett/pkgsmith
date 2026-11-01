@@ -263,8 +263,10 @@ host the file:
 ```console
 $ nix-build NAME-VERSION
 $ nix build --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz'
-$ nix profile install --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz'
+$ nix profile install --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz#hi'
 ```
+
+Put `#NAME` after the address of `nix profile install`, so that the profile entry is called `NAME`. Then `nix profile remove NAME` removes it.
 
 The flake takes `nixpkgs` as an input and does not pin it, so a remote flake needs `--no-write-lock-file`. The flake
 needs the `nix-command` and `flakes` features. `default.nix` does not need them.
