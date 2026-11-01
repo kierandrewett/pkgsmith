@@ -1,6 +1,8 @@
 # macOS and Windows
 
-pkgsmith does not compile programs for macOS or Windows. This page says what it does instead.
+The `setup` and `build` steps of a manifest run in a Linux container. They do not run on macOS or Windows. So pkgsmith
+cannot compile your program for those systems. pkgsmith itself runs natively on Linux, macOS and Windows. This page says
+how to package a program for macOS or Windows.
 
 ## Why
 
