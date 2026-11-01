@@ -251,7 +251,8 @@ pkgsmith_plugin::export_plugin!(Json);
 
 `export_plugin!` writes `pkgsmith_plugin_entry`, catches panics so they become an error, and frees buffers. For a
 format options in the script, define a struct with `#[serde(deny_unknown_fields)]` and read it with
-`package.options::<MyOptions>()?`.
+`package.options::<MyOptions>()?`. A unit test that calls `build` itself can pass `&Host::silent()`, a host that shows
+nothing and holds no key.
 
 [examples/plugins/rust-json](../examples/plugins/rust-json) is this plugin as a crate. The built-in formats in
 [plugins/](../plugins) are larger examples. Each one is a crate with a `lib.rs` that implements `Plugin`.

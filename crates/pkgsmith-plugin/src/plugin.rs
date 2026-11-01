@@ -84,6 +84,13 @@ pub enum Level {
     Info = 2,
 }
 
+impl Host<'static> {
+    /// A host that shows nothing and holds no key, for tests of a plugin that call `build` themselves.
+    pub fn silent() -> Host<'static> {
+        Host { raw: None }
+    }
+}
+
 impl Host<'_> {
     pub fn log(&self, level: Level, message: &str) {
         if let Some(raw) = self.raw
