@@ -12,15 +12,15 @@ cells of the `matrix`, so a target written once is built for every architecture.
 targets:
   - format: rpm
     distro: fedora
-    needs: linux
+    needs: glibc
   - format:
       - deb
       - tar
     distro: debian
-    needs: linux
+    needs: glibc
   - format: apk
     distro: alpine
-    needs: alpine
+    needs: musl
 matrix:
   arch:
     - amd64

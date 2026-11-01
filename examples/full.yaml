@@ -112,6 +112,15 @@ matrix:
 #
 # Environment inside a step: PKGSMITH_NAME, PKGSMITH_VERSION, PKGSMITH_RELEASE, PKGSMITH_ARCH, and one MATRIX_<KEY>
 # for each key of the job's own matrix cell.
+# Steps that several jobs use. A job step with `uses: NAME` takes the step of that name. It may set its own `name`, `if`
+# and `env`, which replace or merge into those of the shared step. Give `run` or `uses`, not both.
+shared-steps:
+  build:
+    name: Build
+    run: |
+      make
+      make install PREFIX=${PREFIX:-/usr}
+
 jobs:
   fedora:
     runs-on: fedora:43
@@ -123,46 +132,42 @@ jobs:
       - name: Install the build tools
         run: dnf -y install gcc make
     steps:
-      - &build
-        name: Build
-        run: |
-          make
-          make install PREFIX=${PREFIX:-/usr}
+      - uses: build
   opensuse:
     runs-on: registry.opensuse.org/opensuse/tumbleweed
     setup:
       - name: Install the build tools
         run: zypper -n install gcc make
     steps:
-      - *build
+      - uses: build
   debian:
     runs-on: debian:13
     setup:
       - name: Install the build tools
         run: apt-get update -qq && apt-get install -y gcc make
     steps:
-      - *build
+      - uses: build
   ubuntu:
     runs-on: ubuntu:24.04
     setup:
       - name: Install the build tools
         run: apt-get update -qq && apt-get install -y gcc make
     steps:
-      - *build
+      - uses: build
   arch:
     runs-on: archlinux:base
     setup:
       - name: Install the build tools
         run: pacman -Sy --noconfirm gcc make
     steps:
-      - *build
+      - uses: build
   alpine:
     runs-on: alpine:3.22
     setup:
       - name: Install the build tools
         run: apk add --no-cache gcc make musl-dev
     steps:
-      - *build
+      - uses: build
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Contents: add files, or change tracked ones (docs/contents.md)

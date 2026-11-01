@@ -58,32 +58,35 @@ targets:
     distro: alpine
     needs: alpine
 
+shared-steps:
+  build:
+    run: make && make install PREFIX=/usr
+
 jobs:
   fedora:
     runs-on: fedora:43
     setup:
       - run: dnf -y install gcc make
     steps:
-      - &build
-        run: make && make install PREFIX=/usr
+      - uses: build
   debian:
     runs-on: debian:13
     setup:
       - run: apt-get update -qq && apt-get install -y gcc make
     steps:
-      - *build
+      - uses: build
   arch:
     runs-on: archlinux:base
     setup:
       - run: pacman -Sy --noconfirm gcc make
     steps:
-      - *build
+      - uses: build
   alpine:
     runs-on: alpine:3.22
     setup:
       - run: apk add --no-cache gcc make musl-dev
     steps:
-      - *build
+      - uses: build
 ```
 
 Each target is one package. It names the format, the distro, and the job that builds its files. A job names the image to

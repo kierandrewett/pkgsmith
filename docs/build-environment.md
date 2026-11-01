@@ -75,6 +75,32 @@ A step is one script.
 - Variables are written as single-quoted text, so quotes, `$` and backticks in a value stay literal. A step that needs a
   value built from another variable sets it with the next method.
 
+### Shared steps
+
+A step that several jobs use is defined once in `shared-steps` and used by name:
+
+```yaml
+shared-steps:
+  build:
+    name: Build
+    run: make && make install PREFIX=/usr
+jobs:
+  glibc:
+    runs-on: debian:13
+    steps:
+      - uses: build
+  musl:
+    runs-on: alpine:3.22
+    steps:
+      - uses: build
+        env:
+          CFLAGS: -O2
+```
+
+A step with `uses` takes the `run` of the shared step. It also takes the `name`, `if` and `env` of the shared step, unless
+the step sets its own. The `env` of the two are merged, and the step's value wins. A step has `run` or `uses`, not both,
+and a shared step cannot use another one.
+
 ### Changing what later steps see
 
 Two files carry changes from one step to the next, like `GITHUB_ENV` and `GITHUB_PATH` in GitHub Actions.
@@ -163,28 +189,29 @@ The format is not part of that, and neither is the distro. A job that three targ
 
 ```yaml
 jobs:
-  linux:
+  glibc:
     runs-on: debian:13
     steps: [...]
-  alpine:
+  musl:
     runs-on: alpine:3.22
     steps: [...]
 targets:
   - format: rpm
     distro: fedora
-    needs: linux
+    needs: glibc
   - format: deb
     distro: debian
-    needs: linux
+    needs: glibc
   - format: apk
     distro: alpine
-    needs: alpine
+    needs: musl
 ```
 
 `pkgsmith plan` shows one `BUILD` letter for the rpm and deb packages of an architecture.
 
 A program built on one distro runs on distros with the same or a newer glibc. Build on the one with the oldest glibc,
-and test the packages on the others. A distro with another libc, such as Alpine with musl, needs its own job.
+and test the packages on the others. A distro with another libc, such as Alpine with musl, needs its own job. Name a job
+after the reason it is separate, as `glibc` and `musl` do here.
 
 ## Concurrency
 

@@ -103,6 +103,11 @@ targets:
     distro: alpine
     needs: alpine
 
+shared-steps:
+  build:
+    name: Build
+    run: make && make install PREFIX=/usr
+
 jobs:
   fedora:
     runs-on: fedora:43
@@ -110,9 +115,7 @@ jobs:
       - name: Install the build tools
         run: dnf -y install gcc make
     steps:
-      - &build
-        name: Build
-        run: make && make install PREFIX=/usr
+      - uses: build
   debian:
     runs-on: debian:13
     setup:
@@ -121,14 +124,14 @@ jobs:
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y gcc make
     steps:
-      - *build
+      - uses: build
   alpine:
     runs-on: alpine:3.22
     setup:
       - name: Install the build tools
         run: apk add --no-cache gcc make musl-dev
     steps:
-      - *build
+      - uses: build
 ```
 
 Build it:

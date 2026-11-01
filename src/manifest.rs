@@ -236,8 +236,12 @@ pub struct BuildJob {
 pub struct Step {
     /// Shown in the progress output.
     pub name: Option<String>,
-    /// The script. A `#!` line is not special: the text always runs with `sh -e`.
+    /// The script. A `#!` line is not special: the text always runs with `sh -e`. Give `run` or `uses`, not both.
+    #[serde(default)]
     pub run: String,
+    /// The name of a step of `shared-steps`. The step takes its `run`, and its `name`, `if` and `env` unless this step
+    /// sets its own. `env` is merged, and this step's value wins.
+    pub uses: Option<String>,
     /// An expression that decides whether the step runs. It reads `matrix.NAME` of its job, `arch` and `env.NAME`.
     #[serde(rename = "if")]
     pub condition: Option<String>,
@@ -346,6 +350,9 @@ pub struct Manifest {
     /// The package targets, crossed with the `matrix`. Without targets, the `matrix` alone makes the packages.
     #[serde(default)]
     pub targets: Vec<Target>,
+    /// Steps that several jobs use. A job step with `uses: NAME` takes the step of that name.
+    #[serde(default, rename = "shared-steps")]
+    pub shared_steps: BTreeMap<String, Step>,
     /// The jobs that build the files. A target names the one it packs with `needs`.
     #[serde(default)]
     pub jobs: BTreeMap<String, BuildJob>,
@@ -591,8 +598,51 @@ impl Manifest {
             manifest.base = PathBuf::from(".");
         }
         manifest.context = manifest.base.clone();
+        manifest.resolve_shared_steps()?;
         manifest.check_jobs()?;
         Ok(manifest)
+    }
+
+    /// Replace every `uses: NAME` step by the shared step of that name, so the rest of pkgsmith sees plain steps.
+    fn resolve_shared_steps(&mut self) -> Result<()> {
+        for (name, step) in &self.shared_steps {
+            if step.uses.is_some() {
+                bail!("shared step {name}: a shared step cannot use another one");
+            }
+            if step.run.trim().is_empty() {
+                bail!("shared step {name} has no run");
+            }
+        }
+        let shared = self.shared_steps.clone();
+        for (job_name, job) in &mut self.jobs {
+            for step in job.setup.iter_mut().chain(job.steps.iter_mut()) {
+                match (&step.uses, step.run.trim().is_empty()) {
+                    (None, true) => bail!("job {job_name}: a step has neither run nor uses"),
+                    (None, false) => {}
+                    (Some(_), false) => {
+                        bail!("job {job_name}: a step has both run and uses; use one of them")
+                    }
+                    (Some(id), true) => {
+                        let Some(base) = shared.get(id) else {
+                            bail!(
+                                "job {job_name}: uses {id:?}, which is not in shared-steps (shared-steps: {})",
+                                shared.keys().cloned().collect::<Vec<_>>().join(", ")
+                            );
+                        };
+                        let mut env = base.env.clone();
+                        env.extend(std::mem::take(&mut step.env));
+                        *step = Step {
+                            name: step.name.take().or_else(|| base.name.clone()),
+                            run: base.run.clone(),
+                            uses: None,
+                            condition: step.condition.take().or_else(|| base.condition.clone()),
+                            env,
+                        };
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Refuse what cannot work, when the manifest loads: a step that reads something its job does not have, a target that
@@ -1227,7 +1277,7 @@ mod tests {
     }
 
     /// Two jobs, five targets: rpm, deb and Arch on one Debian job, Alpine on its own, and a dmg that packs files only.
-    const JOBS: &str = "jobs:\n  linux:\n    runs-on: debian:13\n    setup:\n      - name: tools\n        run: apt-get update\n    steps:\n      - name: compile\n        run: make\n      - name: arm only\n        if: arch == 'arm64'\n        run: echo arm\n  alpine:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\ntargets:\n  - format: rpm\n    distro: fedora\n    needs: linux\n  - format: [deb, tar]\n    distro: debian\n    needs: linux\n  - format: apk\n    distro: alpine\n    needs: alpine\n  - format: dmg\n    distro: macos\n    needs: []\n";
+    const JOBS: &str = "jobs:\n  glibc:\n    runs-on: debian:13\n    setup:\n      - name: tools\n        run: apt-get update\n    steps:\n      - name: compile\n        run: make\n      - name: arm only\n        if: arch == 'arm64'\n        run: echo arm\n  musl:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\ntargets:\n  - format: rpm\n    distro: fedora\n    needs: glibc\n  - format: [deb, tar]\n    distro: debian\n    needs: glibc\n  - format: apk\n    distro: alpine\n    needs: musl\n  - format: dmg\n    distro: macos\n    needs: []\n";
 
     fn cells(text: &str) -> Vec<String> {
         let mut labels: Vec<String> = parse(text).unwrap().jobs().iter().map(Job::label).collect();
@@ -1261,7 +1311,7 @@ mod tests {
         let text = format!("{BASE}{JOBS}");
         let fedora = bind(
             &text,
-            job(&[("distro", "fedora"), ("needs", "linux"), ("arch", "amd64")]),
+            job(&[("distro", "fedora"), ("needs", "glibc"), ("arch", "amd64")]),
             "rpm",
         )
         .unwrap();
@@ -1269,9 +1319,9 @@ mod tests {
         assert!(fedora.setup.as_deref().unwrap().contains("apt-get update"));
         assert!(fedora.build.as_deref().unwrap().contains("make"));
         assert!(!fedora.build.as_deref().unwrap().contains("echo arm"));
-        let arm = bind(&text, job(&[("needs", "linux"), ("arch", "arm64")]), "rpm").unwrap();
+        let arm = bind(&text, job(&[("needs", "glibc"), ("arch", "arm64")]), "rpm").unwrap();
         assert!(arm.build.as_deref().unwrap().contains("echo arm"));
-        let alpine = bind(&text, job(&[("needs", "alpine")]), "apk").unwrap();
+        let alpine = bind(&text, job(&[("needs", "musl")]), "apk").unwrap();
         assert_eq!(alpine.image.as_deref(), Some("alpine:3.22"));
         assert!(alpine.setup.is_none());
         let dmg = bind(&text, job(&[("needs", "")]), "dmg").unwrap();
@@ -1434,5 +1484,40 @@ mod tests {
         assert!(!output.status.success());
         assert!(!String::from_utf8_lossy(&output.stdout).contains("unreachable"));
         assert!(String::from_utf8_lossy(&output.stderr).contains("not NAME=value"));
+    }
+
+    #[test]
+    fn a_shared_step_is_used_by_name_and_a_job_can_override_its_name_if_and_env() {
+        let text = format!(
+            "{BASE}shared-steps:\n  build:\n    name: Build\n    run: make\n    env:\n      A: one\n      B: two\njobs:\n  x:\n    runs-on: a\n    steps:\n      - uses: build\n  y:\n    runs-on: b\n    steps:\n      - uses: build\n        name: Build for y\n        if: arch == 'arm64'\n        env:\n          B: three\n"
+        );
+        let manifest = parse(&text).unwrap();
+        let x = &manifest.jobs["x"].steps[0];
+        assert_eq!(
+            (x.name.as_deref(), x.run.as_str(), x.env["B"].as_str()),
+            (Some("Build"), "make", "two")
+        );
+        let y = &manifest.jobs["y"].steps[0];
+        assert_eq!(y.name.as_deref(), Some("Build for y"));
+        assert_eq!(y.condition.as_deref(), Some("arch == 'arm64'"));
+        assert_eq!((y.env["A"].as_str(), y.env["B"].as_str()), ("one", "three"));
+        assert!(manifest.jobs["y"].steps.iter().all(|s| s.uses.is_none()));
+    }
+
+    #[test]
+    fn a_step_must_have_exactly_one_of_run_and_uses_and_the_shared_step_must_exist() {
+        for (steps, wanted) in [
+            ("      - name: empty\n", "neither run nor uses"),
+            ("      - run: x\n        uses: build\n", "both run and uses"),
+            ("      - uses: nope\n", "not in shared-steps"),
+        ] {
+            let text = format!(
+                "{BASE}shared-steps:\n  build:\n    run: make\njobs:\n  a:\n    runs-on: a\n    steps:\n{steps}"
+            );
+            let error = parse(&text).unwrap_err();
+            assert!(format!("{error:#}").contains(wanted), "{wanted}: {error:#}");
+        }
+        let nested = format!("{BASE}shared-steps:\n  a:\n    run: x\n  b:\n    uses: a\n");
+        assert!(format!("{:#}", parse(&nested).unwrap_err()).contains("cannot use another"));
     }
 }

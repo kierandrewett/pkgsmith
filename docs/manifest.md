@@ -27,6 +27,7 @@ expressions only, because `${HOME}` in a script belongs to the shell.
 | Key       | Type | Meaning                                                                                  |
 | --------- | ---- | ---------------------------------------------------------------------------------------- |
 | `jobs`    | map  | The jobs that build the files. See [build environment](build-environment.md)             |
+| `shared-steps` | map | Steps that several jobs use by name. See [shared steps](build-environment.md#shared-steps) |
 | `targets` | list | The packages to make: a distro, formats and the job that builds the files                |
 | `matrix`  | map  | What varies for every target, such as `arch`. See [matrix and expressions](matrix-and-expressions.md) |
 | `include` | list | Manifests to merge underneath this one. See [including other files](#including-other-files) |
@@ -161,6 +162,12 @@ matrix:
     - amd64
     - arm64
 
+shared-steps:
+  build:
+    run: |
+      cargo build --release --manifest-path crates/config/Cargo.toml
+      install -Dm755 target/release/bingux-config /usr/bin/bingux-config
+
 jobs:
   fedora:
     runs-on: fedora:43
@@ -169,10 +176,7 @@ jobs:
     setup:
       - run: dnf -y install cargo
     steps:
-      - &build
-        run: |
-          cargo build --release --manifest-path crates/config/Cargo.toml
-          install -Dm755 target/release/bingux-config /usr/bin/bingux-config
+      - uses: build
   debian:
     runs-on: debian:13
     exclude:
@@ -180,7 +184,7 @@ jobs:
     setup:
       - run: apt-get update -qq && apt-get install -y cargo
     steps:
-      - *build
+      - uses: build
 
 depends: [glibc]
 overrides:

@@ -162,12 +162,12 @@ mod tests {
         keys.iter().collect::<std::collections::HashSet<_>>().len()
     }
 
-    const TARGETS: &str = "targets:\n  - {format: rpm, distro: fedora, needs: linux}\n  - {format: deb, distro: debian, needs: linux}\n  - {format: apk, distro: alpine, needs: alpine}\nmatrix:\n  arch: [amd64, arm64]\n";
+    const TARGETS: &str = "targets:\n  - {format: rpm, distro: fedora, needs: glibc}\n  - {format: deb, distro: debian, needs: glibc}\n  - {format: apk, distro: alpine, needs: musl}\nmatrix:\n  arch: [amd64, arm64]\n";
 
     #[test]
     fn targets_that_need_one_job_share_a_run_per_architecture() {
         let keys = keys(&format!(
-            "jobs:\n  linux:\n    runs-on: debian:13\n    steps:\n      - run: make\n  alpine:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\n{TARGETS}"
+            "jobs:\n  glibc:\n    runs-on: debian:13\n    steps:\n      - run: make\n  musl:\n    runs-on: alpine:3.22\n    steps:\n      - run: make\n{TARGETS}"
         ));
         assert_eq!(keys.len(), 6);
         assert_eq!(distinct(&keys), 4, "linux x 2 architectures, alpine x 2");
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn two_jobs_with_the_same_image_and_steps_still_share_nothing_by_name_alone() {
         let keys = keys(&format!(
-            "jobs:\n  linux:\n    runs-on: debian:13\n    steps:\n      - run: make\n  alpine:\n    runs-on: debian:13\n    steps:\n      - run: make\n{TARGETS}"
+            "jobs:\n  glibc:\n    runs-on: debian:13\n    steps:\n      - run: make\n  musl:\n    runs-on: debian:13\n    steps:\n      - run: make\n{TARGETS}"
         ));
         assert_eq!(
             distinct(&keys),
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn a_job_with_its_own_matrix_makes_a_run_per_cell() {
         let keys = keys(
-            "jobs:\n  linux:\n    runs-on: debian:13\n    matrix:\n      libc: [gnu, musl]\n    steps:\n      - run: make $MATRIX_LIBC\ntargets:\n  - {format: rpm, needs: linux, libc: gnu}\n  - {format: apk, needs: linux, libc: musl}\n",
+            "jobs:\n  glibc:\n    runs-on: debian:13\n    matrix:\n      libc: [gnu, musl]\n    steps:\n      - run: make $MATRIX_LIBC\ntargets:\n  - {format: rpm, needs: glibc, libc: gnu}\n  - {format: apk, needs: glibc, libc: musl}\n",
         );
         assert_eq!(distinct(&keys), 2);
     }

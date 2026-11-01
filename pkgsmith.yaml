@@ -31,8 +31,33 @@ license: MIT
 # The build installs the binary and every plugin under the name pkgsmith looks for. The distro Rust is too old for the
 # dependencies, so a setup step installs a pinned one with rustup. -crt-static makes the Alpine binary a dynamic one,
 # which it must be to load plugins.
+# The files are built once for every architecture by a job that shares nothing with the other: glibc, or musl. Fedora,
+# Debian and Arch all use glibc, and a program built against the older glibc of Debian 13 runs on their newer one. Alpine
+# uses musl, so it needs a job of its own. A job runs once for each architecture, however many targets need it, so
+# `pkgsmith plan` shows one BUILD letter for the rpm, deb and Arch packages of an architecture.
+#
+# The build installs the binary and every plugin under the name pkgsmith looks for. The distro Rust is too old for the
+# dependencies, so a setup step installs a pinned one with rustup. -crt-static makes the Alpine binary a dynamic one,
+# which it must be to load plugins.
+shared-steps:
+  rust:
+    name: Install Rust
+    run: |
+      curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+      echo "$HOME/.cargo/bin" >> "$PKGSMITH_PATH"
+  build:
+    name: Build and install
+    run: |
+      cargo build --release --workspace --locked
+      install -Dm755 /tmp/pkgsmith-target/release/pkgsmith /usr/bin/pkgsmith
+      for f in /tmp/pkgsmith-target/release/libpkgsmith_plugin_*.so; do
+        install -Dm755 "$f" "/usr/lib/pkgsmith/plugins/pkgsmith-plugin-${f##*/libpkgsmith_plugin_}"
+      done
+      install -Dm644 LICENSE /usr/share/licenses/pkgsmith/LICENSE
+      install -Dm644 README.md /usr/share/doc/pkgsmith/README.md
+
 jobs:
-  linux:
+  glibc:
     runs-on: debian:13
     env:
       RUSTFLAGS: -C target-feature=-crt-static
@@ -42,22 +67,10 @@ jobs:
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates gcc make
-      - name: Install Rust
-        run: |
-          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
-          echo "$HOME/.cargo/bin" >> "$PKGSMITH_PATH"
+      - uses: rust
     steps:
-      - &build
-        name: Build and install
-        run: |
-          cargo build --release --workspace --locked
-          install -Dm755 /tmp/pkgsmith-target/release/pkgsmith /usr/bin/pkgsmith
-          for f in /tmp/pkgsmith-target/release/libpkgsmith_plugin_*.so; do
-            install -Dm755 "$f" "/usr/lib/pkgsmith/plugins/pkgsmith-plugin-${f##*/libpkgsmith_plugin_}"
-          done
-          install -Dm644 LICENSE /usr/share/licenses/pkgsmith/LICENSE
-          install -Dm644 README.md /usr/share/doc/pkgsmith/README.md
-  alpine:
+      - uses: build
+  musl:
     runs-on: alpine:3.22
     env:
       RUSTFLAGS: -C target-feature=-crt-static
@@ -65,12 +78,9 @@ jobs:
     setup:
       - name: Install the build tools
         run: apk add --no-cache curl gcc make musl-dev
-      - name: Install Rust
-        run: |
-          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
-          echo "$HOME/.cargo/bin" >> "$PKGSMITH_PATH"
+      - uses: rust
     steps:
-      - *build
+      - uses: build
 
 # Every target is crossed with the matrix, so each one is built for both architectures.
 matrix:
@@ -85,16 +95,16 @@ matrix:
 targets:
   - format: rpm
     distro: fedora
-    needs: linux
+    needs: glibc
   - format: deb
     distro: debian
-    needs: linux
+    needs: glibc
   - format: archlinux
     distro: arch
-    needs: linux
+    needs: glibc
   - format: apk
     distro: alpine
-    needs: alpine
+    needs: musl
 
   # The next targets need no job: they pack the files in STAGE, so they exist only when STAGE is set.
   - format: msi
