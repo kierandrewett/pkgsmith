@@ -20,6 +20,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `npm`       | `.tgz`                           | npm                                  | `npm install` in the latest Node    |
 | `conda`     | `.conda`, `.tar.bz2`             | conda, micromamba                    | `micromamba create` from a channel  |
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
+| `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
 | `freebsd`   | `.pkg`                           | FreeBSD                              | Layout only, not the real `pkg`     |
 | `tar`       | `.tar.xz`, `.gz`, `.zst`, `.bz2` | Any system                           | `tar`                               |
 | `zip`       | `.zip`                           | Any system                           | `unzip`                             |
@@ -169,6 +170,31 @@ A pre-release such as `1.2.3-nightly.20261031.142.gabc1234` is not valid PEP 440
 
 pip does not check the hashes in `RECORD` when it installs, so a changed file in a wheel installs without an error.
 `python -m wheel unpack` does check them.
+
+## msix
+
+An `.msix` is a zip with an `AppxManifest.xml`, a block map with a SHA-256 for each 64 KiB block, and the files below
+`VFS/ProgramFilesX64/<name>`. The package is written unsigned. Windows refuses to install an unsigned package, so sign
+it with a certificate whose subject equals `publisher`, for example with `signtool`, before it goes to a user.
+
+- `arch` must be `amd64` or `arm64`. `all` stops the build, because an MSIX is for one architecture.
+- The `name` is the identity name. It uses letters, digits, dots and dashes, 3 to 50 characters.
+- The version has four parts: the three numbers of `version` and the `release`.
+- Dependencies, scripts, symbolic links, ghost entries, modes and owners cannot be expressed. Each one warns.
+
+| Key                      | Values                                        | Default                           | Effect                                   |
+| ------------------------ | --------------------------------------------- | --------------------------------- | ---------------------------------------- |
+| `executable`             | Path of a `.exe` entry. Required              | None                              | The program the package starts           |
+| `logo`                   | Path of a PNG entry. Required                 | None                              | The tile and store logo. Use 150 px or more |
+| `publisher`              | Subject such as `CN=Example Ltd`. Required    | None                              | Must equal the subject of the signing certificate |
+| `root`                   | Folder, or `""` for the package root          | `VFS/ProgramFilesX64/<name>`      | Where `/` of the manifest goes           |
+| `publisher_display_name` | Text                                          | The `CN=` value of `publisher`    | The publisher name Windows shows         |
+| `display_name`           | Text                                          | The package name                  | The app name Windows shows               |
+| `min_windows`            | Version                                       | `10.0.17763.0`                    | The oldest Windows version               |
+| `max_tested`             | Version                                       | `10.0.22621.0`                    | The newest Windows version tested        |
+
+Checked with `makemsix unpack` and `makemsix pack`, which validates the manifest schema, and with a script that hashes
+every block and compares it with the block map. Not checked: installing on Windows, signing, and a real Windows program.
 
 ## freebsd
 

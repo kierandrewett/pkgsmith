@@ -2181,6 +2181,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-msix"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "flate2",
+ "pkgsmith-plugin",
+ "serde",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "pkgsmith-plugin-npm"
 version = "0.1.0"
 dependencies = [
