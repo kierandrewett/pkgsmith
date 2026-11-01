@@ -255,6 +255,36 @@ YAML
         dotnet add package hi --version 1.0.0 --source /feed >/dev/null; grep -q hi-from-nupkg /root/.nuget/packages/hi/1.0.0/tools/hi.txt'
 fi
 
+if selected flatpak; then
+    if need flatpak; then
+        mkdir -p lang/flatpak/bin
+        printf '#!/bin/sh\necho hi-from-flatpak\n' > lang/flatpak/bin/hi
+        chmod 755 lang/flatpak/bin/hi
+        # A bundle is for one architecture, so this manifest does not use the arch: all of lang_manifest.
+        cat > lang-flatpak.yaml <<'YAML'
+name: hi
+version: 1.0.0
+arch: amd64
+description: Says hi
+contents:
+  - { src: lang/flatpak/bin/hi, dst: /usr/bin/hi }
+flatpak:
+  app_id: org.example.Hi
+  runtime_version: "24.08"
+YAML
+        check "flatpak: build" build_lang flatpak
+        # Needs network for the runtime from Flathub, and --privileged because flatpak makes a sandbox.
+        check "flatpak: install the bundle, run it (latest Debian)" podman run --rm $PULL --privileged -v "$WORK/out-flatpak:/p:ro,z" "$IMAGE_DEBIAN" sh -ec '
+            export DEBIAN_FRONTEND=noninteractive HOME=/tmp/home; mkdir -p "$HOME"
+            apt-get update -qq >/dev/null && apt-get install -y -qq flatpak ostree bubblewrap >/dev/null
+            flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+            flatpak --user install -y --bundle /p/*.flatpak >/dev/null
+            flatpak --user run org.example.Hi | grep -q hi-from-flatpak'
+    else
+        skip "flatpak" "the flatpak program is not installed on this machine"
+    fi
+fi
+
 say ""
 say "$passed passed, $failed failed, $skipped skipped. Log: $LOG"
 [ "$failed" -eq 0 ]

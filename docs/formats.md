@@ -202,7 +202,7 @@ The bundle holds only the app. The runtime is fetched from `runtime_repo` when a
 | `runtime_repo`    | A `.flatpakrepo` URL, or `""`                   | The Flathub `.flatpakrepo`              | Where `flatpak install` finds the runtime. `""` leaves it out |
 | `prefix`          | An absolute path                                | `/usr`                                  | The folder that becomes `files/`              |
 
-Checked on `x86_64` in Debian 13 with Flatpak 1.16.6: `flatpak build-import-bundle` accepts the file, and
+Checked on `x86_64` by `scripts/verify-formats.sh flatpak` in the latest Debian, and by hand in Debian 13 with Flatpak 1.16.6: `flatpak build-import-bundle` accepts the file, and
 `flatpak install --bundle` followed by `flatpak run` works.
 
 Not checked:
