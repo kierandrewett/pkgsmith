@@ -35,8 +35,14 @@ build: |
   install -Dm644 README.md /usr/share/doc/pkgsmith/README.md
 
 matrix:
-  arch: [amd64, arm64]
-  distro: [fedora, debian, arch, alpine]
+  arch:
+    - amd64
+    - arm64
+  distro:
+    - fedora
+    - debian
+    - arch
+    - alpine
   include:
     - format: rpm
       distro: fedora
@@ -65,25 +71,43 @@ matrix:
         curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
 
     # macOS and Windows jobs have no image, so they run no build. They package the staged files.
-    - { format: dmg, arch: arm64, distro: macos, if: env.STAGE }
-    - { format: dmg, arch: amd64, distro: macos, if: env.STAGE }
+    - format: dmg
+      arch: arm64
+      distro: macos
+      if: env.STAGE
+    - format: dmg
+      arch: amd64
+      distro: macos
+      if: env.STAGE
 
   # The archlinux image has no arm64 build.
   exclude:
-    - { distro: arch, arch: arm64 }
+    - distro: arch
+      arch: arm64
 
 contents:
-  - { type: tree, src: "${STAGE:-stage}", dst: /pkgsmith, only: [dmg] }
+  - type: tree
+    src: "${STAGE:-stage}"
+    dst: /pkgsmith
+    only:
+      - dmg
 
 dmg:
   volume_name: pkgsmith
 
 # pkgsmith starts containers through Podman, and it does not look inside the binary for libraries.
-depends: [podman]
+depends:
+  - podman
 overrides:
   deb:
-    depends: [podman, libc6]
+    depends:
+      - podman
+      - libc6
   rpm:
-    depends: [podman, glibc]
+    depends:
+      - podman
+      - glibc
   archlinux:
-    depends: [podman, glibc]
+    depends:
+      - podman
+      - glibc
