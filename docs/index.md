@@ -79,3 +79,4 @@ formats. You can write your own in Rust, C or any language that exports a C func
 - [macOS and Windows](macos-and-windows.md): build there, then pack the prefix.
 - [Command line](cli.md): every command and option.
 - [Plugins](plugins.md): where pkgsmith looks for them, and how to write one.
+- [Nix research note](research/nix.md): the options for Nix packages, and why the `nix` formats look as they do.

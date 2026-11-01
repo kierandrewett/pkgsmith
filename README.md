@@ -31,6 +31,8 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `dmg`       | `.dmg`                           | macOS                      |
 | `flatpak`   | `.flatpak`                       | Flatpak                    |
 | `nix`       | `.nix.tar.xz`                    | Nix, NixOS, flakes         |
+| `nix-cache` | `.nixcache.tar`                  | Nix binary cache           |
+| `nix-export` | `.nixexport`                    | `nix-store --import`       |
 | `msi`       | `.msi`                           | Windows                    |
 | `nsis`      | `.exe`                           | Windows                    |
 | `msix`      | `.msix`                          | Windows 10 and 11          |

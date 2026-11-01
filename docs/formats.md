@@ -36,7 +36,9 @@ that pkgsmith reads files from. See [the prefix](prefix.md) for that.
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
 | `dmg`       | `.dmg`                           | macOS                                | `fsck.hfsplus`, `7z`, `dmg2img`, not macOS |
-| `nix`       | `.nix.tar.xz`, `.gz`, `.zst`, `.bz2` | Nix and NixOS, with or without flakes | `nix-build`, and `nix build` and `nix profile install` of the flake, in `nixos/nix` |
+| `nix`       | `.nix.tar.xz`, `.gz`, `.zst`, `.bz2` | Nix and NixOS, with or without flakes | `nix build`, `nix run`, `nix flake check`, `nix-build`, in `nixos/nix` |
+| `nix-cache` | `.nixcache.tar`                  | Nix, as a binary cache               | `nix copy --from file://`, `nix build --substituters`, in `nixos/nix` |
+| `nix-export` | `.nixexport`                    | Nix                                  | `nix-store --import`, in `nixos/nix` |
 | `msi`       | `.msi`                           | Windows                              | `msitools` read and extract, not Windows |
 | `nsis`      | `.exe`                           | Windows                              | `makensis`, run under Wine, not native Windows |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
@@ -269,49 +271,137 @@ Not checked:
 
 ## nix
 
-A Nix package is an archive that unpacks to `NAME-VERSION/`. That folder holds `default.nix`, `flake.nix` and `files/`. The
-derivation builds nothing. It copies `files/` into the store path, so the files must be built already, as for the other
-formats. A program linked on another distro uses that distro's libraries, so see `patchelf` below.
+Three formats write Nix packages. They differ in what Nix does with the files, so pick by how the user installs.
 
-Build it with `nix-build`, or use the flake, which works on the archive itself. Replace the address with where you
-host the file:
+| Format       | File                            | Holds                                              | The user runs                                            |
+| ------------ | ------------------------------- | -------------------------------------------------- | -------------------------------------------------------- |
+| `nix`        | `NAME-VERSION-ARCH.nix.tar.xz`  | A flake, `package.nix`, `default.nix` and `files/` | `nix build`, `nix run`, `nix profile install`, `callPackage` |
+| `nix-cache`  | `NAME-VERSION-ARCH.nixcache.tar` | A binary cache with the files as one store path   | `nix copy --from file://DIR STOREPATH`, or a substituter |
+| `nix-export` | `NAME-VERSION-ARCH.nixexport`   | The same store path as the stream of `nix-store --export` | `nix-store --import < FILE`                      |
+
+pkgsmith builds nothing in any of them. The files are the content of the prefix, with the option `prefix` (default `/usr`)
+removed: `/usr/bin/hi` is `bin/hi` in the store path. An entry outside the prefix, such as `/etc/hi.conf`, keeps its whole
+path below the store path (`etc/hi.conf`), because a Nix package cannot write outside its store path. Nix keeps only the
+executable bit of the owner and no owner or group, so the other mode bits are not carried.
+
+### nix
+
+The archive unpacks to `NAME-VERSION/`:
+
+| File           | What it is                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------- |
+| `package.nix`  | A function in the style of nixpkgs, `{ lib, stdenv, zlib, ... }: stdenv.mkDerivation { ... }`        |
+| `flake.nix`    | `packages.<system>.NAME` and `.default`, and `overlays.default`, over a `nixpkgs` input              |
+| `default.nix`  | `pkgs.callPackage ./package.nix { }`, for `nix-build` without flakes                                |
+| `files/`       | The content of the store path                                                                      |
 
 ```console
-$ nix-build NAME-VERSION
 $ nix build --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz'
+$ nix run --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz'
 $ nix profile install --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz#hi'
+$ nix-build NAME-VERSION                      # from the unpacked folder, without flakes
 ```
 
-Put `#NAME` after the address of `nix profile install`, so that the profile entry is called `NAME`. Then `nix profile remove NAME` removes it.
+The derivation copies `files/` into `$out` and builds nothing. Then the fixup phase of `stdenv` runs, so `patchShebangs` and
+the other hooks do their usual work. The arguments of `package.nix` are the libraries of the package, so
+`pkgs.callPackage ./package.nix { openssl = pkgs.openssl_3; }` and `.override` change them.
 
-The flake takes `nixpkgs` as an input and does not pin it, so a remote flake needs `--no-write-lock-file`. The flake
-needs the `nix-command` and `flakes` features. `default.nix` does not need them.
+- A program that was linked on another distro looks for `/lib64/ld-linux-x86-64.so.2` and its libraries in the usual places.
+  `autoPatchelfHook` points it at the interpreter and libraries of nixpkgs. pkgsmith turns it on when it finds a
+  dynamically linked ELF file in the package, and says so. Name the libraries in `inputs`. The build fails and names the
+  library that it could not find, which is how Nix wants a missing dependency to show.
+- `license` is written with `lib.getLicenseFromSpdxId`, so nixpkgs maps the SPDX id. `A OR B` and `A AND B` give a list.
+  Text that is not an SPDX expression becomes `{ shortName = "..."; }`.
+- `meta.sourceProvenance` is `binaryNativeCode` when the package holds an ELF file. `meta.mainProgram` is the option, or
+  the package name when `bin/NAME` exists. `meta.platforms` and the systems of the flake come from `arch` (`amd64` is
+  `x86_64-linux`) and from `distro` (`macos` gives `-darwin`). `arch = "all"` is every system of
+  `lib.systems.flakeExposed`.
+- A systemd unit, desktop file or D-Bus service names `/usr/bin/hi`, which does not exist in Nix. Files that match
+  `rewrite` and contain `prefix/` get `substituteInPlace ... --replace-fail` in `postInstall`, so the path names `$out`.
+- `depends`, `scripts`, `conflicts` and the other lists of the script have no meaning for Nix and give a warning. A
+  configuration file is an ordinary read-only file. See [the research note](research/nix.md) for what a NixOS module
+  would need.
+- The flake has one input, `nixpkgs`, and no `flake.lock`: pkgsmith cannot look up a revision, so a remote flake needs
+  `--no-write-lock-file`, or `nix flake lock` on the unpacked folder. Pin nixpkgs with the option `nixpkgs`, for example
+  `github:NixOS/nixpkgs/nixos-25.05`, or on the command line with `--override-input nixpkgs ...`.
 
-- Entries below `prefix` lose it: `/usr/bin/hi` is `$out/bin/hi`. An entry outside the prefix goes below `$out` with its
-  whole path and warns, because a Nix package cannot write outside its store path.
-- Nix keeps only the executable bit of a mode and ignores owners. A symbolic link with an absolute target warns.
-- Distro dependency names mean nothing to Nix, so `depends` and the other lists warn. Scripts, ghost entries and the
-  maintainer warn too.
-- `license` is written as a `lib.licenses` attribute when pkgsmith knows the SPDX id, and by its id alone otherwise.
+| Option           | Values                                          | Default                                 | Effect                                                                       |
+| ---------------- | ----------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------- |
+| `prefix`         | An absolute path, or `""`                        | `/usr`                                  | Entry paths are taken relative to it                                         |
+| `compression`    | `xz`, `gzip`, `zstd`, `bzip2`, `none`           | `xz`                                    | The compression of the archive                                               |
+| `inputs`         | List of nixpkgs attributes, such as `openssl`, `xorg.libX11`, `stdenv.cc.cc.lib` | None | `buildInputs`, and an argument of `package.nix` for the first part       |
+| `native_inputs`  | List of nixpkgs attributes                      | None                                    | `nativeBuildInputs`                                                          |
+| `runtime_inputs` | List of nixpkgs attributes                      | None                                    | `runtimeDependencies`: libraries that a program loads with `dlopen`          |
+| `patchelf`       | `true`, `false`                                 | `true` when a dynamic ELF file is found | Adds `autoPatchelfHook`, and uses `stdenv` instead of `stdenvNoCC`           |
+| `ignore_missing` | List of library names, or `["*"]`               | None                                    | `autoPatchelfIgnoreMissingDeps`                                              |
+| `strip`          | `true`, `false`                                 | `false`                                 | Leave the strip step of the fixup phase on. Off keeps the files as built     |
+| `rewrite`        | List of globs relative to the store path        | Units in `lib/systemd/{system,user}`, `share/applications/*.desktop`, `share/dbus-1/**/*.service` | Text files in which `prefix/` becomes `$out/`. `[]` turns it off |
+| `main_program`   | A file name below `bin/`                        | The package name, if `bin/NAME` exists  | `meta.mainProgram`                                                           |
+| `platforms`      | List of Nix systems, such as `x86_64-linux`     | From `arch` and `distro`                | `meta.platforms` and the systems of the flake                                |
+| `unfree`         | `true`, `false`                                 | `false`                                 | `free = false` in the license, and the flake allows this one package         |
+| `nixpkgs`        | A flake reference                               | `github:NixOS/nixpkgs/nixos-unstable`   | The `nixpkgs` input of `flake.nix`                                           |
 
-| Key             | Values                                    | Default                                    | Effect                                            |
-| --------------- | ----------------------------------------- | ------------------------------------------ | ------------------------------------------------- |
-| `prefix`        | An absolute path                          | `/usr`                                     | Entry paths are taken relative to it              |
-| `inputs`        | List of nixpkgs attributes, such as `openssl` | None                                   | `buildInputs`                                     |
-| `native_inputs` | List of nixpkgs attributes                | None                                       | `nativeBuildInputs`                               |
-| `patchelf`      | `true`, `false`                           | `false`                                    | Adds `autoPatchelfHook`, which points compiled programs at the libraries of `inputs` |
-| `platforms`     | List such as `x86_64-linux`               | From `arch`. `all` is every system         | `meta.platforms`, and the systems of the flake    |
-| `nixpkgs`       | A flake reference                         | `github:NixOS/nixpkgs/nixos-unstable`      | The `nixpkgs` input of `flake.nix`                |
-| `compression`   | `xz`, `gzip`, `zstd`, `bzip2`, `none`     | `xz`                                       | The compression of the archive                    |
+A glob has `*` for part of one name, `**` for any folders and `?` for one character.
 
-Checked in `nixos/nix` with `scripts/verify-formats.sh nix`:
+### nix-cache and nix-export
 
-- `nix-build` builds the package. The store path holds the program with its executable bit, the symbolic link and the
-  other files.
-- `nix build` and `nix profile install` of the flake, from a `tarball+file` address, give the same store path and a
-  program that runs.
+These make the files a real store object, which `nix-store --add` would also give. A store path is `/nix/store/DIGEST-NAME`.
+Nix computes the digest of a built path from its derivation. There is none here, so the path is content-addressed: the
+digest is the SHA-256, folded to 160 bits and written in Nix32, of the text
+`source[:REFERENCE...]:sha256:HEX-OF-NAR-HASH:/nix/store:NAME`. `NAME` is `NAME-VERSION` of the package. The same files
+always give the same path, and Nix rejects a path whose digest does not fit its content. A content-addressed path needs no
+signature.
 
-Not checked: `patchelf` with a real compiled program, a package with `inputs`, `aarch64`, macOS, and a binary cache.
+```console
+$ pkgsmith build -F nix-cache,nix-export -o out
+hi/amd64 │ store path /nix/store/qi29kyz3kznscq57z46c076zys884mik-hi-1.0.0
+$ mkdir cache && tar -xf out/hi-1.0.0-amd64.nixcache.tar -C cache
+$ nix copy --from file://$PWD/cache /nix/store/qi29kyz3kznscq57z46c076zys884mik-hi-1.0.0
+$ nix-store --import < out/hi-1.0.0-amd64.nixexport
+```
+
+- `nix-cache` unpacks to `nix-cache-info`, `DIGEST.narinfo` and `nar/FILEHASH.nar.xz`. Several packages unpack into one
+  folder, which is then one cache. Serve the folder over HTTP and name it in `substituters`, or use `file://`. The
+  `.narinfo` has `CA: fixed:r:sha256:...`, so Nix accepts the path without `trusted-public-keys`. pkgsmith writes no
+  `Sig:` line: signing a cache with a key is not done.
+- `nix-export` is one file. `nix-store --import` adds the path without a `CA` field, so a later `nix copy` of that path to
+  a store that checks signatures needs a signature. The import itself needs a user that may add unsigned paths, such as
+  root or a trusted user.
+- The path is printed when the package is written. The user needs it, because it is what the cache and the import
+  provide.
+- Files that spell a store path of another package, such as an RPATH or a shebang, are a reference of the store object.
+  Nix keeps the referenced path with it, so the other path must be in the cache or the store. pkgsmith warns and names
+  them.
+- `compression` is the compression of the NAR inside a cache (`nix-cache`), where the tar around it is plain, and of the
+  whole file for `nix-export`, where the default is `none`. Nix reads `xz`, `gzip`, `zstd`, `bzip2` and `none` in a cache.
+
+| Option            | Values                                    | Default      | Effect                                                                         |
+| ----------------- | ----------------------------------------- | ------------ | ------------------------------------------------------------------------------ |
+| `prefix`          | An absolute path, or `""`                  | `/usr`       | Entry paths are taken relative to it                                           |
+| `compression`     | `xz`, `gzip`, `zstd`, `bzip2`, `none`     | `xz` (`none` for `nix-export`) | See above                                                        |
+| `store_dir`       | An absolute path                          | `/nix/store` | The store directory. It is part of every digest, and a store that uses another one cannot take the path |
+| `references`      | List of store paths                       | None         | Paths that the files may refer to. One is a reference when its digest occurs in the files |
+| `scan_references` | `true`, `false`                           | `true`       | Also take every `STORE_DIR/DIGEST-NAME` that the files spell as a reference    |
+
+The files of a prefix that a distro built have no store paths in them. A program from such a prefix finds its loader in
+`/lib64`, so it runs on a system that has one and Nix, and not on NixOS. Use the `nix` format when the program must run on
+NixOS.
+
+### What was checked
+
+By `scripts/verify-formats.sh nix`, in the latest `nixos/nix` (Nix 2.35.4) as root, with network access for nixpkgs:
+
+- `nix`: the flake builds from a `tarball+file` address and from the unpacked folder, with `nix build`, `nix run`,
+  `nix flake check`, `nix profile install` and `nix-build` of `default.nix`. A program that Debian compiled against glibc and
+  zlib runs after `autoPatchelfHook`, and `patchelf` shows the interpreter below `/nix/store`. A systemd unit names the new
+  path. `meta.mainProgram` and the licenses evaluate.
+- `nix-cache`: `nix copy --from file://` takes the path without `--no-check-sigs`, `nix path-info` shows the `ca` field,
+  `nix store verify` passes, and `nix build --substituters file://` rebuilds a deleted path. A narinfo with another digest
+  is refused. A closure of three paths, in which the third names the other two, copies with its references.
+- `nix-export`: `nix-store --import` adds the path and it runs.
+
+Not checked: a multi-user Nix with a daemon and an untrusted user, macOS, `aarch64`, an HTTP cache, a cache signed with a
+key, a binary linked against libraries that nixpkgs lacks, and a NixOS system that uses the package.
 
 ## msi
 
