@@ -1,8 +1,9 @@
 # macOS and Windows
 
 The `setup` and `build` steps of a manifest run in a Linux container. They do not run on macOS or Windows. pkgsmith
-provides no macOS or Windows toolchain, so a build that uses only the tools in the image makes Linux programs. pkgsmith
-itself runs natively on Linux, macOS and Windows. This page says how to package a program for macOS or Windows.
+provides no macOS or Windows toolchain, so a build that uses only the tools in the image makes Linux programs.
+
+pkgsmith itself runs natively on Linux, macOS and Windows. This page says how to package a program for macOS or Windows.
 
 ## Why
 
