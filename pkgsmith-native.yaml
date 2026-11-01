@@ -1,0 +1,19 @@
+# pkgsmith packages itself for macOS and Windows. The release workflow compiles the program first, copies the program
+# and its plugins into one folder, and then runs, for example on a Mac:
+#
+#   pkgsmith build -f pkgsmith-native.yaml -F dmg --build-arg VERSION=0.1.0 --build-arg ARCH=arm64 --build-arg STAGE=stage
+#
+# There is no `image`, so nothing runs in a container and no Podman is needed. The packages go to ./dist.
+name: pkgsmith
+version: ${VERSION:-0.1.0}
+arch: ${ARCH:-arm64}
+description: Build distribution packages from one manifest
+maintainer: Kieran Drewett <kieran@drewett.dev>
+homepage: https://github.com/kierandrewett/pkgsmith
+license: MIT
+
+contents:
+  - { type: tree, src: "${STAGE:-stage}", dst: /pkgsmith }
+
+dmg:
+  volume_name: pkgsmith

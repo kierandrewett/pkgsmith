@@ -150,6 +150,7 @@ Run `pkgsmith plan` after you change a matrix. Jobs with the same `BUILD` letter
 | [Manifest](docs/manifest.md)                      | Every key                                       |
 | [Contents](docs/contents.md)                      | Files, trees, links and config files            |
 | [Build environment](docs/build-environment.md)    | Images, setup, the tracked build, caching       |
+| [macOS and Windows](docs/macos-and-windows.md)    | Compile on the target system, then package      |
 | [Matrix and expressions](docs/matrix-and-expressions.md) | One manifest for many distros and architectures |
 | [Versions](docs/versions.md)                      | How one version becomes each format's spelling  |
 | [Install scripts](docs/scripts.md)                | What runs when, per format                      |
@@ -166,6 +167,8 @@ comments each one.
 
 - pkgsmith does not find the shared libraries a program needs. List them in `depends`.
 - Builds run for `linux/amd64` and `linux/arm64`, and only with Podman. Docker is not supported.
+- pkgsmith does not compile for macOS or Windows. Compile there, or compile with your own tools, and package the files
+  with a manifest that has no `image`. See [macOS and Windows](docs/macos-and-windows.md).
 - Packages are signed only when you give `--sign-key`. See [signing](docs/signing.md).
 - There is no built-in support for a language. Install the toolchain in `setup` and run its build in `build`.
   [examples/rust-cli.yaml](examples/rust-cli.yaml) does this for Cargo.

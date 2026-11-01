@@ -3,6 +3,9 @@
 A manifest with an `image` builds in a container. pkgsmith watches what the build installs and packages that.
 This page explains each step and its limits.
 
+A container is Linux, so this build makes Linux programs only. For macOS and Windows, see
+[macOS and Windows](macos-and-windows.md).
+
 ```yaml
 image: fedora:43                      # which container
 setup: dnf -y install gcc make        # runs once, cached
