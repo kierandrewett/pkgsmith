@@ -33,6 +33,7 @@ IMAGE_RUBY="${IMAGE_RUBY:-docker.io/library/ruby:latest}"
 IMAGE_NODE="${IMAGE_NODE:-docker.io/library/node:latest}"
 IMAGE_MAMBA="${IMAGE_MAMBA:-docker.io/mambaorg/micromamba:latest}"
 IMAGE_DOTNET="${IMAGE_DOTNET:-mcr.microsoft.com/dotnet/sdk:latest}"
+IMAGE_NIX="${IMAGE_NIX:-docker.io/nixos/nix:latest}"
 PULL="--pull=always"
 [ -n "${PKGSMITH_NO_PULL:-}" ] && PULL="--pull=missing"
 
@@ -293,6 +294,41 @@ if selected dmg; then
         test -x "ex/Hi Tools/usr/bin/hi"
         long="$(printf "n%.0s" $(seq 1 200)).txt"
         find ex -type f -name "$long" | grep -q .'
+fi
+if selected nix; then
+    rm -rf lang/nix; mkdir -p lang/nix/bin lang/nix/doc
+    printf '#!/bin/sh\necho hi-from-nix\n' > lang/nix/bin/hi; chmod 755 lang/nix/bin/hi
+    printf 'readme\n' > lang/nix/doc/README
+    cat > lang-nix.yaml <<'YAML'
+name: hi
+version: 1.0.0
+arch: amd64
+description: Says hi
+homepage: https://example.org/hi
+license: MIT
+contents:
+  - src: lang/nix/bin/hi
+    dst: /usr/bin/hi
+  - src: lang/nix/doc/README
+    dst: /usr/share/doc/hi/README
+  - type: symlink
+    src: hi
+    dst: /usr/bin/hello
+nix:
+  compression: gzip
+YAML
+    check "nix: build" build_lang nix
+    # The nixos/nix image has no xz, so the archive is gzip. Needs network for nixpkgs.
+    check "nix: nix-build, and the flake from the archive address (latest nixos/nix)" in_image "$IMAGE_NIX" out-nix '
+        cd /tmp && tar -xzf /p/hi-1.0.0-amd64.nix.tar.gz && cd hi-1.0.0
+        nix-channel --update >/dev/null 2>&1
+        out=$(nix-build --no-out-link 2>/dev/null | tail -1)
+        "$out/bin/hi" | grep -q hi-from-nix; "$out/bin/hello" | grep -q hi-from-nix; test -x "$out/bin/hi"; grep -q readme "$out/share/doc/hi/README"
+        export NIX_CONFIG="experimental-features = nix-command flakes"; cd /tmp
+        flake=$(nix build --no-write-lock-file --no-link --print-out-paths "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz" 2>/dev/null | tail -1)
+        test "$flake" = "$out"
+        nix profile install --no-write-lock-file "tarball+file:///p/hi-1.0.0-amd64.nix.tar.gz" >/dev/null 2>&1
+        /root/.nix-profile/bin/hi | grep -q hi-from-nix'
 fi
 if selected msi; then
     rm -rf lang/msi; mkdir -p "lang/msi/share/hi docs" lang/msi/bin lang/msi/empty

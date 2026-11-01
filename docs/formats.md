@@ -22,6 +22,7 @@ manifest with the name of the format, for example `deb:`. A key that the format 
 | `nupkg`     | `.nupkg`                         | NuGet                                | `dotnet add package`, local feed    |
 | `flatpak`   | `.flatpak`                       | Flatpak                              | `flatpak install` and `run` in Debian 13 |
 | `dmg`       | `.dmg`                           | macOS                                | `fsck.hfsplus`, `7z`, `dmg2img`, not macOS |
+| `nix`       | `.nix.tar.xz`, `.gz`, `.zst`, `.bz2` | Nix and NixOS, with or without flakes | `nix-build`, and `nix build` and `nix profile install` of the flake, in `nixos/nix` |
 | `msi`       | `.msi`                           | Windows                              | `msitools` read and extract, not Windows |
 | `nsis`      | `.exe`                           | Windows                              | `makensis`, run under Wine, not native Windows |
 | `msix`      | `.msix`                          | Windows 10 and 11                    | `makemsix` unpack and pack only     |
@@ -249,6 +250,50 @@ Not checked:
 - Installing without adding the Flathub remote first.
 - A graphical app.
 - `finish_args` beyond the keys written to the metadata.
+
+## nix
+
+A Nix package is an archive that unpacks to `NAME-VERSION/`. That folder holds `default.nix`, `flake.nix` and `files/`. The
+derivation builds nothing. It copies `files/` into the store path, so the files must be built already, as for the other
+formats. A Nix package for a distro build links against that distro's libraries, so see `patchelf` below.
+
+Build it with `nix-build`, or use the flake, which works on the archive itself. Replace the address with where you
+host the file:
+
+```console
+$ nix-build NAME-VERSION
+$ nix build --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz'
+$ nix profile install --no-write-lock-file 'https://example.org/hi-1.0.0-amd64.nix.tar.xz'
+```
+
+The flake takes `nixpkgs` as an input and does not pin it, so a remote flake needs `--no-write-lock-file`. The flake
+needs the `nix-command` and `flakes` features. `default.nix` does not need them.
+
+- Entries below `prefix` lose it: `/usr/bin/hi` is `$out/bin/hi`. An entry outside the prefix goes below `$out` with its
+  whole path and warns, because a Nix package cannot write outside its store path.
+- Nix keeps only the executable bit of a mode and ignores owners. A symbolic link with an absolute target warns.
+- Distro dependency names mean nothing to Nix, so `depends` and the other lists warn. Scripts, ghost entries and the
+  maintainer warn too.
+- `license` is written as a `lib.licenses` attribute when pkgsmith knows the SPDX id, and by its id alone otherwise.
+
+| Key             | Values                                    | Default                                    | Effect                                            |
+| --------------- | ----------------------------------------- | ------------------------------------------ | ------------------------------------------------- |
+| `prefix`        | An absolute path                          | `/usr`                                     | Entry paths are taken relative to it              |
+| `inputs`        | List of nixpkgs attributes, such as `openssl` | None                                   | `buildInputs`                                     |
+| `native_inputs` | List of nixpkgs attributes                | None                                       | `nativeBuildInputs`                               |
+| `patchelf`      | `true`, `false`                           | `false`                                    | Adds `autoPatchelfHook`, which points compiled programs at the libraries of `inputs` |
+| `platforms`     | List such as `x86_64-linux`               | From `arch`. `all` is every system         | `meta.platforms`, and the systems of the flake    |
+| `nixpkgs`       | A flake reference                         | `github:NixOS/nixpkgs/nixos-unstable`      | The `nixpkgs` input of `flake.nix`                |
+| `compression`   | `xz`, `gzip`, `zstd`, `bzip2`, `none`     | `xz`                                       | The compression of the archive                    |
+
+Checked in `nixos/nix` with `scripts/verify-formats.sh nix`:
+
+- `nix-build` builds the package. The store path holds the program with its executable bit, the symbolic link and the
+  other files.
+- `nix build` and `nix profile install` of the flake, from a `tarball+file` address, give the same store path and a
+  program that runs.
+
+Not checked: `patchelf` with a real compiled program, a package with `inputs`, `aarch64`, macOS, and a binary cache.
 
 ## msi
 

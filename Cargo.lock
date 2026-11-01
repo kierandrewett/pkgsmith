@@ -2308,6 +2308,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgsmith-plugin-nix"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pkgsmith-plugin",
+ "serde",
+]
+
+[[package]]
 name = "pkgsmith-plugin-npm"
 version = "0.1.0"
 dependencies = [
