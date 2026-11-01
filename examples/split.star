@@ -11,19 +11,9 @@ common = {
     "license": "MIT",
 }
 
-# expose() adds files to what every package() call after it packs. Only the program is exposed, so acme holds the
-# program and nothing else.
-expose(
-    file("/usr/bin/acme", "/usr/bin/acme", mode = "0755"),
-    tree("/usr/lib/acme", "/usr/lib/acme"),
-)
-
-# `contents` adds files to one package. The documentation package gets the program too, because the program is exposed,
-# so `include` keeps only the documentation paths.
-docs = [
-    tree("/usr/share/doc/acme", "/usr/share/doc/acme"),
-    file("/usr/share/man/man1/*.1", "/usr/share/man/man1/"),
-]
+# A package holds the whole prefix unless the script narrows it. exclude() and include() apply to every package declared
+# after them, and reset() forgets them. acme is the prefix without the documentation.
+exclude("/usr/share/doc", "/usr/share/man")
 
 for format in ["rpm", "deb", "archlinux", "apk", "tar"]:
     package(
@@ -32,13 +22,17 @@ for format in ["rpm", "deb", "archlinux", "apk", "tar"]:
         description = "The acme program",
         **common
     )
+
+# acme-doc starts from the whole prefix again and keeps only the documentation.
+reset()
+include("/usr/share/doc/**", "/usr/share/man/**")
+
+for format in ["rpm", "deb", "archlinux", "apk", "tar"]:
     package(
         format,
         name = "acme-doc",
         description = "The manual of acme",
         arch = "all",
         depends = ["acme"],
-        contents = docs,
-        include = ["/usr/share/doc/**", "/usr/share/man/**"],
         **common
     )

@@ -4,10 +4,11 @@
 #   cmake --install build --prefix prefix/hello        (on the Mac or on Windows)
 #   pkgsmith build -f examples/staged.star --prefix prefix -F dmg
 #
-# The prefix holds the program in hello/. The dmg and the installers copy it into their own folder. `arch` is the
+# The prefix holds the program in hello/, and include() keeps only that folder. The dmg and the installers copy it into
+# their own folder. `arch` is the
 # architecture of the files: pass --build-arg ARCH=amd64 for an Intel build.
 
-expose(tree("/hello", "/hello"))
+include("/hello/**")
 
 common = {
     "name": "hello",

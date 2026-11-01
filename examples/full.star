@@ -66,8 +66,10 @@ A blank line becomes a paragraph break in the package.
 # Files
 # ---------------------------------------------------------------------------------------------------------------------
 
-# expose(*entries) makes files of the prefix part of what the script offers. Every package() call after it packs them. A
-# source path is a path in the prefix. A source that starts with here() is a file next to this script.
+# Without expose(), a package holds the whole prefix, and include() and exclude() narrow it (see Packages below).
+# expose(*entries) is for a prefix of an odd layout, or when only the files that you list are offered. Every package()
+# call after it packs them. A source path is a path in the prefix. A source that starts with here() is a file next to
+# this script.
 expose(
     # file: one file. mode is octal text. owner and group default to root.
     file(
@@ -123,6 +125,12 @@ scripts = {
 # Packages
 # ---------------------------------------------------------------------------------------------------------------------
 
+# include(*globs) and exclude(*globs) narrow the packages declared after the call. A glob matches the paths of the
+# package, such as /usr/bin/** or /etc/acme-tool.conf. include keeps only the matches and exclude removes them. reset()
+# clears what expose, include and exclude collected, so the next package starts again from the whole prefix. This script
+# leaves out the debug files of every package:
+exclude("/usr/lib/debug/**")
+
 # package(format, **fields) writes one package from the files exposed so far and `contents`. `pkgsmith formats` lists the
 # formats. The fields:
 #   name, version, description   required
@@ -139,8 +147,8 @@ scripts = {
 #   file       the output file name. {file} {name} {version} {release} {arch} {format} {distro}. Two packages with the
 #              same format and distro need different names.
 #   tags       extra values for `--where KEY=VALUE`
-#   exclude    paths or globs of the package that it leaves out
-#   include    paths or globs of the package that it keeps. Everything else is left out.
+#   exclude    paths or globs of the package that it leaves out. They add to the exclude() calls.
+#   include    paths or globs of the package that it keeps. Everything else is left out. They add to the include() calls.
 #   config_files   paths or globs of files that the package manager keeps when the user changed them
 #   scripts    a dict of pre_install, post_install, pre_remove and post_remove
 package(
@@ -155,7 +163,7 @@ package(
     replaces = ["acme-tool-legacy"],
     provides = ["acme"],
     contents = [file("/usr/share/acme-tool/acme-tool.init", "/etc/init.d/acme-tool", mode = "0755")],
-    exclude = ["/usr/share/doc/**", "/usr/lib/debug", "/usr/share/man/man3"],
+    exclude = ["/usr/share/doc/**", "/usr/share/man/man3"],
     config_files = ["/etc/acme-tool.d/*.conf"],
     scripts = scripts,
     options = {"group": "Unspecified", "compression": "zstd"},  # zstd (default) | xz | gzip | bzip2

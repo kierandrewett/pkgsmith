@@ -1,9 +1,12 @@
 //! The example scripts are documentation. They must keep evaluating and planning, on every kind of system.
 
 use pkgsmith::host::Host;
+#[cfg(unix)]
 use pkgsmith::manifest::Content;
 use pkgsmith::plan::{self, Selection};
-use pkgsmith::{script, tree};
+use pkgsmith::script;
+#[cfg(unix)]
+use pkgsmith::tree;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -124,7 +127,6 @@ fn a_script_packs_the_files_of_a_real_prefix() {
     std::fs::write(
         &script_file,
         r#"
-expose(tree("/", "/"))
 package(
     "deb",
     name = "hi",
@@ -162,4 +164,66 @@ package(
     // The content entry that the script exposed is the whole prefix.
     let Content { src, dst, .. } = &items[0].manifest.contents[0];
     assert_eq!((src.as_deref(), dst.as_str()), (Some("/"), "/"));
+}
+
+/// The paths of the files (not folders) that a package holds.
+#[cfg(unix)]
+fn file_paths(item: &plan::Item) -> Vec<String> {
+    tree::resolve(&item.manifest)
+        .unwrap()
+        .into_iter()
+        .filter(|e| !matches!(e.data, pkgsmith_plugin::Data::Dir))
+        .map(|e| e.path)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn the_split_example_gives_two_packages_with_different_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let prefix = dir.path().join("prefix");
+    let files = [
+        "usr/bin/acme",
+        "usr/lib/acme/plugin.so",
+        "usr/share/doc/acme/README",
+        "usr/share/man/man1/acme.1",
+        "etc/acme.conf",
+    ];
+    for path in files {
+        let file = prefix.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x\n").unwrap();
+    }
+    let script_file = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/split.star");
+    let host = Host::from_os_release("ID=fedora\nVERSION_ID=43\n", "amd64", "glibc");
+    let specs = script::evaluate_on(&script_file, BTreeMap::new(), host, &prefix).unwrap();
+    let selection = Selection {
+        formats: vec!["tar".into()],
+        filters: Vec::new(),
+    };
+    let items = plan::items(
+        specs,
+        script_file.parent().unwrap(),
+        &prefix,
+        &known(),
+        &selection,
+    )
+    .unwrap();
+    assert_eq!(items.len(), 2);
+    let program = file_paths(items.iter().find(|i| i.manifest.name == "acme").unwrap());
+    let docs = file_paths(
+        items
+            .iter()
+            .find(|i| i.manifest.name == "acme-doc")
+            .unwrap(),
+    );
+    assert_eq!(
+        program,
+        ["/etc/acme.conf", "/usr/bin/acme", "/usr/lib/acme/plugin.so"]
+    );
+    assert_eq!(
+        docs,
+        ["/usr/share/doc/acme/README", "/usr/share/man/man1/acme.1"]
+    );
+    assert!(program.iter().all(|p| !docs.contains(p)));
 }

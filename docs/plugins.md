@@ -103,7 +103,6 @@ see a real document.
 The `options` dict of a `package()` call is passed to its format as `options`:
 
 ```python
-expose(tree("/", "/"))
 package(
     "deb",
     name = "hello", version = "1.0.0", description = "A small program",

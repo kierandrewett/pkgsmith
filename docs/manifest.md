@@ -23,8 +23,6 @@ Prints a greeting.""",
     "license": "MIT",
 }
 
-expose(tree("/", "/"))
-
 for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(fmt, config_files = ["/etc/**"], **common)
 ```
@@ -41,7 +39,10 @@ prefix. See [getting started](getting-started.md).
 | `prefix()`, `here()`      | The prefix path and the script folder path        | [prefix and here](#prefix-and-here) |
 | `read_file`, `exists`, `is_dir`, `listdir`, `glob` | Read-only access to the prefix | [reading files](#reading-files) |
 | `load(file, *names)`      | Names from another script                         | [load](#load)             |
-| `expose(*entries)`        | Nothing. Adds files to what the script offers     | [expose](#expose)         |
+| `include(*globs)`         | Nothing. Keeps only matching files in the packages that follow | [include, exclude and reset](#include-exclude-and-reset) |
+| `exclude(*globs)`         | Nothing. Leaves matching files out of the packages that follow | [include, exclude and reset](#include-exclude-and-reset) |
+| `reset()`                 | Nothing. Clears exposed files, include and exclude globs | [include, exclude and reset](#include-exclude-and-reset) |
+| `expose(*entries)`        | Nothing. Offers only the listed files             | [expose](#expose)         |
 | `package(format, **fields)` | Nothing. Writes one package                     | [package](#package)       |
 | `file`, `config`, `tree`, `symlink`, `directory`, `ghost` | One content entry | [content helpers](#content-helpers) |
 
@@ -119,7 +120,8 @@ tools = [name for name in listdir("/usr/bin") if name.startswith("hello-")]
 ## load
 
 `load("file.star", "name", ...)` brings names from another `.star` file. The path is relative to the file that holds the
-`load`. A loaded file can call every function on this page, and each `expose` and `package` call that it makes counts.
+`load`. A loaded file can call every function on this page. Every call that it makes counts, including the ones that
+choose files.
 
 ```python
 load("common.star", "base")
@@ -127,24 +129,63 @@ load("common.star", "base")
 
 See [scripting](scripting.md#sharing-code-with-load).
 
+## include, exclude and reset
+
+`include(*globs)` and `exclude(*globs)` narrow the packages that the script declares after the call. `reset()` clears
+what they collected.
+
+| Function           | Effect                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `include(*globs)`  | Keeps only the files of the package that match. Without any `include`, everything stays |
+| `exclude(*globs)`  | Leaves out the files of the package that match                                       |
+| `reset()`          | Forgets the exposed files and the collected `include` and `exclude` globs            |
+
+Each argument is text, or a list of text. A glob is a path of the package, as it reads on the installed system:
+`/usr/bin/**`, `/etc/hello.conf`, `/usr/share/doc/**`. A plain path such as `/usr/lib/debug` matches itself and
+everything below it.
+
+- Calls add up. After `exclude("/a/**")` and `exclude("/b/**")`, both are left out, until `reset()`.
+- Each rule applies to the packages declared after the call, and not to earlier ones.
+- `include` keeps a folder when a file below it stays. A path must match `include` and must not match `exclude`.
+- `reset()` also clears the files that `expose` offered. The next package starts from the whole prefix again, so use it
+  between split packages.
+
+```python
+common = {"version": "1.0.0", "description": "A small program"}
+
+exclude("/usr/share/doc/**")
+package("deb", name = "hello", **common)
+
+reset()
+include("/usr/share/doc/**")
+package("tar", name = "hello-docs", **common)
+```
+
+The deb holds the prefix without the docs. The tar holds only the docs. See
+[scripting](scripting.md#leave-files-out-or-keep-only-some).
+
 ## expose
 
-`expose(*entries)` adds files of the prefix to what the script offers. Every `package` call after it carries them.
-Each argument is one entry from a [content helper](#content-helpers), or a list of entries.
+`expose(*entries)` offers only the files that you list, for a layout that `include` and `exclude` do not fit. Every
+`package` call after it carries them, and they add up until `reset()`. Once something is exposed, a package holds the
+exposed files and not the whole prefix. Each argument is one entry from a [content helper](#content-helpers), or a list
+of entries.
 
 ```python
 expose(
-    tree("/", "/"),
+    tree("/etc", "/etc"),
     config("etc/app.conf", "/etc/app.conf"),
 )
 ```
 
-The first entry puts the whole prefix in. The second replaces the one file `/etc/app.conf` with the same file marked as
+The first entry offers the folder `/etc`. The second replaces the one file `/etc/app.conf` with the same file marked as
 configuration. An entry with the same `dst` as an earlier one replaces it.
 
 ## package
 
-`package(format, **fields)` writes one package from the files exposed so far, plus its own `contents`.
+`package(format, **fields)` writes one package. It holds the files exposed so far, or the whole prefix when nothing is
+exposed, plus its own `contents`. The collected `include` and `exclude` rules and the fields of the call then cut the
+list down. See [contents](contents.md).
 
 `format` is a name from `pkgsmith formats`, for example `rpm`, `deb`, `archlinux`, `apk`, `tar` or `zip`. A format that
 no plugin writes is an error that lists the formats installed. These are the fields.
@@ -180,14 +221,16 @@ Each field is a list of text. See [dependencies](dependencies.md) for the syntax
 
 | Field          | Type | Default | Meaning                                                                         |
 | -------------- | ---- | ------- | ------------------------------------------------------------------------------- |
-| `contents`     | list | `[]`    | Entries added to the exposed ones, for this package only                        |
+| `contents`     | list | `[]`    | Entries added to the exposed files, or to the whole prefix when nothing is exposed |
 | `exclude`      | list | `[]`    | Path globs of the package to leave out, such as `"/usr/share/doc/**"`           |
 | `include`      | list | `[]`    | Path globs of the package to keep. Everything else goes. Empty keeps everything |
 | `config_files` | list | `[]`    | Path globs of files that are configuration files, kept on upgrade               |
 
-The paths in these three lists are paths in the package, as they read on the installed system. A glob such as `/etc/**`
-matches a whole folder, and a plain path such as `/usr/lib/debug` matches that path and everything below it. See
-[contents](contents.md).
+The paths in these lists are paths in the package, as they read on the installed system. A glob such as `/etc/**`
+matches a whole folder. A plain path such as `/usr/lib/debug` matches that path and everything below it.
+
+The fields `include` and `exclude` add to the rules that earlier `include(...)` and `exclude(...)` calls collected. They
+do not replace them. All three fields apply to this package only. See [contents](contents.md).
 
 ### Scripts
 
@@ -215,7 +258,6 @@ pkgsmith reads. See [scripts](scripts.md).
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
 package(
     "deb",
     depends = ["libc6"],
@@ -244,7 +286,6 @@ error. Give each format its own dict:
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
 package("deb", options = {"section": "utils"}, **common)
 package("tar", options = {"compression": "zstd", "top_folder": True}, **common)
 ```
@@ -266,7 +307,6 @@ template replaces it.
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
 package("tar", file = "{name}_{version}.tar.bz2", options = {"compression": "bzip2"}, **common)
 ```
 
@@ -281,7 +321,6 @@ build before it starts, so give one of them a `file` template.
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
 package("deb", tags = {"channel": "nightly"}, **common)
 ```
 
@@ -319,12 +358,10 @@ For `symlink`, the first argument is the link target as it reads on the installe
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
 
-expose(
-    tree("/", "/"),
+package("tar", contents = [
     file(here() + "/packaging/app.desktop", "/usr/share/applications/app.desktop", mode = "0644"),
     symlink("/usr/lib/app/bin/app", "/usr/bin/app"),
-)
-package("tar", **common)
+], **common)
 ```
 
 ## Command line

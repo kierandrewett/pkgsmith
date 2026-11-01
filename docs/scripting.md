@@ -11,12 +11,11 @@ that a script packs come from a [prefix](prefix.md) that you made with your own 
 
 ```python
 # pkgsmith.star
-expose(tree("/", "/"))
 package("tar", name = "hello", version = "1.0.0", description = "A small program")
 ```
 
-- `expose` adds the whole prefix to what the script offers. `tree("/", "/")` means the prefix root, installed at `/`.
-- `package` writes a tar package from what was exposed so far.
+- A `package` call with nothing exposed packs the whole prefix. There is no file list to write.
+- `package` writes a tar package.
 
 Run `pkgsmith plan` to see what the script writes. A script that makes no `package` call is an error.
 
@@ -29,10 +28,66 @@ Run `pkgsmith plan` to see what the script writes. A script that makes no `packa
 - A call with a name that does not exist, or a field that a function does not accept, is an error that names it.
 - The functions of pkgsmith need no `load`. There are no global variables with special meaning.
 
-## expose and package
+## What a package holds
 
-`expose` adds files to what the script offers. `package` writes a package from what was exposed so far. A package sees
-the exposures that came before it and none that come after:
+A `package` call that has nothing exposed packs the whole prefix. Write no file list for it. The `contents` of the call
+add files to the prefix, for example a licence that is not in it:
+
+```python
+package(
+    "tar",
+    name = "hello",
+    version = "1.0.0",
+    description = "A small program",
+    contents = [file(here() + "/LICENSE", "/usr/share/licenses/hello/LICENSE")],
+)
+```
+
+System folders such as `/usr`, `/usr/bin` and `/etc` are not owned by a package made from the prefix. Ask for one with
+`directory(...)` if you need it.
+
+## Leave files out or keep only some
+
+`exclude` removes the files that match its globs. `include` keeps only the files that match. Each takes path globs of
+the package, as they read on the installed system, as text or as lists of text: `/usr/bin/**`, `/etc/hello.conf`,
+`/usr/share/doc/**`. The rules apply to every package that the script declares after the call, and later calls add to
+them:
+
+```python
+common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
+
+package("tar", **common)
+
+exclude("/usr/share/doc/**")
+package("deb", **common)
+
+exclude("/usr/include/**")
+package("rpm", **common)
+```
+
+The tar holds the whole prefix. The deb has no docs. The rpm has no docs and no headers, because the rules of the
+earlier call still stand. Use `reset()` to start over: see [split packages](#split-packages).
+
+- `include` keeps a folder when a file below it stays. A path must match `include` and must not match `exclude`.
+- A plain path, such as `/usr/lib/debug`, matches itself and everything below it.
+- The fields `include`, `exclude` and `config_files` of `package` add to the rules that the calls collected, for that
+  package only:
+
+```python
+common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
+
+exclude("/usr/share/doc/**")
+package("deb", exclude = ["/usr/include/**"], config_files = ["/etc/**"], **common)
+package("tar", **common)
+```
+
+The deb leaves out docs and headers, and marks `/etc` as configuration. The tar leaves out the docs only.
+
+## Offer only listed files
+
+`expose` lists files by hand, for a layout that globs do not fit or when only some files should be offered. A `package`
+call writes what was exposed so far. Once something is exposed, the package holds those files and not the whole prefix.
+A package sees the exposures that came before it and none that come after:
 
 ```python
 common = {"version": "1.0.0", "description": "A small program"}
@@ -44,8 +99,12 @@ expose(tree("/usr/share/doc", "/usr/share/doc"))
 package("zip", name = "hello-docs", **common)
 ```
 
-The tar holds `/usr/bin`. The zip holds `/usr/bin` and the docs, because exposures add up. To give each package only its
-own files, use [split packages](#split-packages).
+The tar holds `/usr/bin`. The zip holds `/usr/bin` and the docs, because exposures add up. `reset()` clears them. To
+give each package only its own files, use [split packages](#split-packages).
+
+`include`, `exclude` and the `package` fields cut down the exposed files too. The `contents` of a call add to them, as
+they add to the whole prefix. To add a file to the whole prefix, use `contents` and leave `expose` out: exposing one file
+would leave out the rest of the prefix.
 
 ## Write every format from one script
 
@@ -60,8 +119,6 @@ common = {
     "maintainer": "Your Name <you@example.com>",
     "license": "MIT",
 }
-
-expose(tree("/", "/"))
 
 for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(fmt, **common)
@@ -81,7 +138,6 @@ common = {
     "description": "A small program",
 }
 
-expose(tree("/", "/"))
 package("deb", depends = ["libc6"], **common)
 package("rpm", depends = ["glibc"], **common)
 package("tar", **common)
@@ -98,7 +154,6 @@ common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
 libc = {"rpm": "glibc", "deb": "libc6", "archlinux": "glibc", "apk": "musl"}
 
-expose(tree("/", "/"))
 for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(fmt, depends = [libc[fmt]] if fmt in libc else [], **common)
 ```
@@ -137,8 +192,6 @@ common = {
     "arch": host()["arch"],
 }
 
-expose(tree("/", "/"))
-package("deb", **common)
 ```
 
 `arch` already defaults to the host architecture, so write it only to name it, or to override it with `"arm64"` or
@@ -151,7 +204,6 @@ An `if` writes a package only when its condition holds. Use it for facts about y
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
 package("tar", **common)
 
 if exists("/usr/lib/systemd/system/hello.service"):
@@ -171,7 +223,6 @@ The prefix is a folder, so the script can look at it and let it decide. Read a v
 ```python
 version = read_file("/usr/share/hello/VERSION").strip()
 
-expose(tree("/", "/"))
 package("tar", name = "hello", version = version, description = "A small program")
 ```
 
@@ -181,7 +232,6 @@ Find files by pattern, and list what a folder holds:
 programs = glob("/usr/bin/*")
 plugins = listdir("/usr/lib/hello") if is_dir("/usr/lib/hello") else []
 
-expose(tree("/", "/"))
 package(
     "tar",
     name = "hello",
@@ -195,27 +245,52 @@ the folder of the script is an error. See [what a script may read](prefix.md#wha
 
 ## Split packages
 
-One prefix can feed several packages. List the files of each package in its own `contents`, and expose nothing:
+One prefix can feed several packages. Collect the rules of the first package with `include` or `exclude`, call `reset()`,
+and collect the rules of the next. `reset` forgets the rules and the exposed files so far, so the next package starts
+from the whole prefix again:
 
 ```python
 common = {"version": "1.0.0", "description": "Part of the hello suite"}
 
-package("tar", name = "hello", contents = [tree("/usr/bin", "/usr/bin")], **common)
-package("tar", name = "hello-docs", contents = [tree("/usr/share/doc", "/usr/share/doc")], **common)
+include("/usr/bin/**", "/etc/**")
+package("tar", name = "hello", **common)
+
+reset()
+include("/usr/share/doc/**")
+package("tar", name = "hello-docs", **common)
 ```
 
-Or expose the whole prefix once, and cut each package down with `include` or `exclude`:
+Without the `reset()`, the second package would keep the first `include` and hold the programs too.
+
+The same works with `exclude`. Here the rest of the prefix goes to a third package:
 
 ```python
 common = {"version": "1.0.0", "description": "Part of the hello suite"}
 
-expose(tree("/", "/"))
-package("tar", name = "hello", exclude = ["/usr/share/doc/**"], **common)
-package("tar", name = "hello-docs", include = ["/usr/share/doc/**"], **common)
+exclude("/usr/share/doc/**")
+package("tar", name = "hello", **common)
+
+reset()
+include("/usr/share/doc/**")
+package("tar", name = "hello-docs", **common)
+
+reset()
+package("zip", name = "hello-all", **common)
 ```
 
-`include` keeps only the paths that match, with the folders that lead to them. `exclude` removes paths. When both are
-set, a path must match `include` and must not match `exclude`.
+To list the files of each package yourself, use `expose` and `reset` instead. Once something is exposed, the package
+holds only the exposed files:
+
+```python
+common = {"version": "1.0.0", "description": "Part of the hello suite"}
+
+expose(tree("/usr/bin", "/usr/bin"))
+package("tar", name = "hello", **common)
+
+reset()
+expose(tree("/usr/share/doc", "/usr/share/doc"))
+package("tar", name = "hello-docs", **common)
+```
 
 ## Functions
 
@@ -225,7 +300,6 @@ Put what packages share in a function:
 def make_package(fmt, **fields):
     package(fmt, name = "tool", version = arg("VERSION", "1.0.0"), description = "A command line tool", **fields)
 
-expose(tree("/", "/"))
 make_package("tar")
 make_package("zip", file = "{name}-{version}-source.zip")
 ```
@@ -237,7 +311,6 @@ An f-string puts values in text. It works in every text field:
 ```python
 VERSION = arg("VERSION", "1.0.0")
 
-expose(tree("/", "/"))
 package("tar", name = "hello", version = VERSION, description = f"Hello {VERSION}, a small program")
 ```
 
@@ -246,7 +319,7 @@ Write `{{` and `}}` for a literal brace in an f-string.
 ## Sharing code with load
 
 `load("file.star", "name")` brings names from another `.star` file. The path is relative to the file that holds the
-`load`. A loaded file can call the same functions, and every `expose` and `package` call that it makes counts.
+`load`. A loaded file can call the same functions, and every call that it makes counts, `package` among them.
 
 ```python
 # common.star
@@ -265,7 +338,6 @@ def base(fmt, **fields):
 # pkgsmith.star
 load("common.star", "base")
 
-expose(tree("/", "/"))
 base("tar")
 base("zip")
 ```

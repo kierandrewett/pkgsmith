@@ -13,8 +13,6 @@ $ pkgsmith build                                    # reads ./prefix, writes ./d
 # pkgsmith.star
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
-
 for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(fmt, **common)
 ```
@@ -49,15 +47,15 @@ information in one place.
 | You write                                               | pkgsmith does                                       |
 | ------------------------------------------------------- | --------------------------------------------------- |
 | A build that installs into a prefix                     | Nothing. The build is yours                         |
-| `expose(...)` for the files of the prefix               | Offers them to every package that follows           |
+| `include(...)` and `exclude(...)`, to narrow it         | Packs the whole prefix by default, then cuts it down |
 | `package(format, ...)` with `name`, `version`, `depends`, `scripts` | Writes them the way each format wants them |
 | `if` and `for`, with `arg()` and the prefix             | Writes only the packages that you describe          |
 
 ## How it works
 
 1. **Read.** pkgsmith runs the script, top to bottom. Each `package` call that runs adds one package to the list.
-2. **Collect.** The files that you `expose`, and the `contents` of the call, are the files of the package. pkgsmith
-   reads them from the prefix.
+2. **Collect.** A package holds the whole prefix. `include` and `exclude` narrow it, `expose` offers only the files you
+   list, and the `contents` of the call add files. pkgsmith reads the files from the prefix.
 3. **Package.** pkgsmith sends the file list and the metadata to the plugin that writes the format.
 
 A package is a file, so every system can write every format. What depends on a system is the content of the prefix:

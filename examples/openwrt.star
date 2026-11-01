@@ -8,8 +8,6 @@
 #
 # The prefix holds arm64 files, so `arch` says so. The default is the architecture of this machine.
 
-expose(tree("/", "/"))
-
 package(
     "ipk",
     distro = "openwrt",
@@ -22,7 +20,8 @@ package(
     options = {"arch": "aarch64_cortex-a53"},
     # The files below /etc/config are settings: opkg keeps the changes of the user.
     config_files = ["/etc/config/*"],
-    # The init script must run, whatever mode the build gave it.
+    # The init script must run, whatever mode the build gave it. `contents` adds to the whole prefix and replaces the file
+    # of the prefix with the same path.
     contents = [file("/etc/init.d/acme-router", "/etc/init.d/acme-router", mode = "0755")],
     scripts = {
         "post_install": """[ -n "$IPKG_INSTROOT" ] || /etc/init.d/acme-router enable

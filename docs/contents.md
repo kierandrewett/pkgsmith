@@ -1,18 +1,23 @@
 # Contents
 
-The files of a package come from two places, in this order.
+A package starts from the whole prefix. Nothing is listed: the files of the [prefix](prefix.md) are the package. Then
+three things change the list, in this order.
 
-1. **`expose`.** Each entry offers files of the [prefix](prefix.md). Every `package` call after it carries the entry.
-2. **`contents`.** Each entry of one `package` call adds files for that package only.
+1. **`expose`.** If the script exposes files, a package holds only the exposed files, and not the whole prefix. Every
+   `package` call after it carries them. Use it for an odd layout, or when only some files should be offered.
+2. **`contents`.** Each entry of one `package` call adds files, to the whole prefix or to the exposed files, for that
+   package only.
+3. **`include` and `exclude`.** The rules collected by the functions `include(...)` and `exclude(...)`, and the fields
+   of the same names on the package, cut the result down. `config_files` marks configuration files.
 
-An entry that names the same `dst` as an earlier one replaces it. Then the `exclude` and `include` lists of the package
-cut the result down, and `config_files` marks configuration files.
+An entry that names the same `dst` as an earlier one replaces it. `reset()` clears the exposed files and the collected
+rules, so the next package starts from the whole prefix again.
 
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
-package("deb", exclude = ["/usr/share/doc/**"], config_files = ["/etc/**"], **common)
+exclude("/usr/share/doc/**")
+package("deb", config_files = ["/etc/**"], **common)
 ```
 
 ## Entries
@@ -65,11 +70,11 @@ Mark a configuration file in one of two ways. Both give the same result in the p
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
 
-expose(tree("/", "/"))
 package("rpm", config_files = ["/etc/app.conf", "/etc/app.d/**"], **common)
 ```
 
-Use `config_files` when a `tree` brought the files in. How a format records a configuration file:
+Use `config_files` when the whole prefix brought the files in. The field applies to that package only. How a format
+records a configuration file:
 
 | Format       | Record                                |
 | ------------ | ------------------------------------- |
@@ -81,23 +86,35 @@ Use `config_files` when a `tree` brought the files in. How a format records a co
 
 ## Leaving files out and keeping files
 
-`exclude` lists paths of the package to leave out. `include` lists the paths to keep, and everything else goes. Both take
-path globs of the package: `/usr/share/doc/**`. A plain path, such as `/usr/lib/debug`, matches itself and everything
-below it. With both set, a path must match `include` and must not match `exclude`.
+`exclude` lists paths of the package to leave out. `include` lists the paths to keep, and everything else goes. Both
+take path globs of the package: `/usr/share/doc/**`. A plain path, such as `/usr/lib/debug`, matches itself and
+everything below it. With both set, a path must match `include` and must not match `exclude`.
+
+There are two ways to give the rules.
+
+- The functions `include(...)` and `exclude(...)` collect rules for every package that the script declares after the
+  call. Calls add up, and `reset()` clears them.
+- The fields `include` and `exclude` of `package` add rules for that package only.
 
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
 
-expose(tree("/", "/"))
-package("deb", exclude = ["/usr/share/doc/**", "/usr/lib/debug", "/usr/share/man"], **common)
-package("tar", include = ["/usr/bin/**"], **common)
+exclude("/usr/share/doc/**", "/usr/lib/debug")
+package("deb", exclude = ["/usr/share/man"], **common)
+
+reset()
+include("/usr/bin/**")
+package("tar", **common)
 ```
 
-`include` keeps the folders that lead to a kept file. The same prefix feeds both packages above.
+The deb leaves out the docs, the debug files and the man pages. The tar keeps only the programs. `include` keeps the
+folders that lead to a kept file. The same prefix feeds both packages above.
 
 ## Parent folders
 
-A package must not own `/usr` or `/usr/bin`. The `rpm` carries only the folders that some entry names.
+A package must not own `/usr` or `/usr/bin`. System folders such as `/usr`, `/usr/bin` and `/etc` are never owned by a
+package made from a prefix, unless a `directory(...)` entry asks for them. The `rpm` carries only the folders that some
+entry names.
 
 The formats that need folder entries to unpack files (`deb`, `ipk`, `apk`, `archlinux`) add the parents of every file
 as folders owned by root with mode `0755`. The package manager does not change the mode of a folder that already
@@ -110,21 +127,22 @@ Add a file from the folder of the script, and a link, to the whole prefix:
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
 
-expose(
-    tree("/", "/"),
-    file(here() + "/LICENSE", "/usr/share/licenses/app/LICENSE"),
-    symlink("/usr/lib/app/bin/app", "/usr/bin/app"),
+package(
+    "tar",
+    contents = [
+        file(here() + "/LICENSE", "/usr/share/licenses/app/LICENSE"),
+        symlink("/usr/lib/app/bin/app", "/usr/bin/app"),
+    ],
+    **common
 )
-package("tar", **common)
 ```
 
-Pick files for one format only. Build the list in the script:
+Add a file for some formats only. Build the list in the script:
 
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
-unit = file("/usr/lib/systemd/system/app.service", "/usr/lib/systemd/system/app.service")
+unit = file(here() + "/packaging/app.service", "/usr/lib/systemd/system/app.service")
 
-expose(tree("/usr/bin", "/usr/bin"))
 package("deb", contents = [unit], **common)
 package("rpm", contents = [unit], **common)
 package("tar", **common)
@@ -135,10 +153,21 @@ An empty log folder and a ghost log file:
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
 
-expose(tree("/usr/bin", "/usr/bin"))
 package(
     "rpm",
     contents = [directory("/var/log/app", mode = "0750"), ghost("/var/log/app/app.log")],
     **common
 )
 ```
+
+Offer only some files of the prefix, for a layout that `include` does not fit:
+
+```python
+common = {"name": "app", "version": "1.0.0", "description": "An app"}
+
+expose(tree("/usr/bin", "/usr/bin"), tree("/usr/lib/app", "/opt/app"))
+package("tar", **common)
+```
+
+The folder `/usr/lib/app` of the prefix is installed at `/opt/app`. A path that `include` and `exclude` match is a path
+in the package, so they see `/opt/app`.

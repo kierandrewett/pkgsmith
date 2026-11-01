@@ -36,15 +36,11 @@ pkgsmith writes the rpm, deb, Arch, Alpine, OpenWrt, tar, zip and other packages
 os = host()["os"]
 
 if os == "linux":
-    expose(tree("/", "/"))
-
     # The binary links to the C library of the system that built it, so each package names the library of its own distro.
     libc = {"rpm": "glibc", "deb": "libc6", "archlinux": "glibc"}
     for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
         package(fmt, depends = [libc[fmt]] if fmt in libc else [], **common)
 else:
-    expose(tree("/pkgsmith", "/pkgsmith"))
-
     if os == "macos":
         package("dmg", distro = "macos", options = {"volume_name": "pkgsmith"}, **common)
     elif os == "windows":

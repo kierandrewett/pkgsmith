@@ -87,8 +87,6 @@ OPTIONS = {
     "appimage": {"runtime": arg("APPIMAGE_RUNTIME", ""), "icon": here() + "/icon.png", "exec": "usr/bin/hi-static"},
 }
 
-expose(tree("/", "/"))
-
 common = {
     "name": "hi",
     "version": "1.0.0",
@@ -138,7 +136,6 @@ if selected epoch; then
     mkdir -p pre-epoch/usr/bin
     printf '#!/bin/sh\necho hi\n' > pre-epoch/usr/bin/hi; chmod 755 pre-epoch/usr/bin/hi
     cat > lang-epoch.star <<'STAR'
-expose(tree("/", "/"))
 for fmt in ["rpm", "deb", "archlinux"]:
     package(fmt, name = "hi", version = "1.0.0", epoch = 2, description = "Says hi", maintainer = "Test <test@example.org>")
 STAR
@@ -239,7 +236,6 @@ if selected gem; then
     printf '#!/usr/bin/env ruby\nrequire "hi"\nputs Hi.say\n' > pre-gem/usr/bin/hi
     chmod 755 pre-gem/usr/bin/hi
     lang_script gem <<'STAR'
-expose(tree("/", "/"))
 package(FORMAT, **common)
 STAR
     check "gem: build" build_lang gem
@@ -251,7 +247,6 @@ if selected npm; then
     mkdir -p pre-npm/usr/lib/node_modules/hi
     printf 'module.exports = "hi-from-npm";\n' > pre-npm/usr/lib/node_modules/hi/index.js
     lang_script npm <<'STAR'
-expose(tree("/", "/"))
 package(FORMAT, **common)
 STAR
     check "npm: build" build_lang npm
@@ -264,7 +259,6 @@ if selected conda; then
     printf '#!/bin/sh\necho hi-from-conda\n' > pre-conda/usr/bin/hi
     chmod 755 pre-conda/usr/bin/hi
     lang_script conda <<'STAR'
-expose(tree("/", "/"))
 package(FORMAT, **common)
 STAR
     check "conda: build" build_lang conda
@@ -279,7 +273,6 @@ if selected nupkg; then
     mkdir -p pre-nupkg/usr/share/hi
     printf 'hi-from-nupkg\n' > pre-nupkg/usr/share/hi/hi.txt
     lang_script nupkg <<'STAR'
-expose(tree("/", "/"))
 package(FORMAT, options = {"prefix": "/usr/share/hi"}, **common)
 STAR
     check "nupkg: build" build_lang nupkg
@@ -299,7 +292,6 @@ if selected dmg; then
     printf 'spaced\n' > "pre-dmg/usr/share/hi/with space.txt"
     long="$(printf 'n%.0s' $(seq 1 200)).txt"; printf 'long\n' > "pre-dmg/usr/share/hi/$long"
     lang_script dmg <<'STAR'
-expose(tree("/", "/"))
 package(FORMAT, distro = "macos", options = {"volume_name": "Hi Tools"}, **common)
 STAR
     check "dmg: build" build_lang dmg
@@ -328,7 +320,6 @@ if selected nix; then
     printf 'readme\n' > pre-nix/usr/share/doc/hi/README
     ln -s hi pre-nix/usr/bin/hello
     cat > lang-nix.star <<'STAR'
-expose(tree("/", "/"))
 package("nix", name = "hi", version = "1.0.0", description = "Says hi", homepage = "https://example.org/hi", license = "MIT", options = {"compression": "gzip"})
 STAR
     check "nix: build" build_lang nix
@@ -355,7 +346,6 @@ if selected msi; then
     printf 'spaced\n' > "pre-msi/usr/share/hi docs/read me.txt"
     printf 'long\n' > pre-msi/usr/share/a-rather-long-file-name.configuration
     cat > lang-msi.star <<'STAR'
-expose(tree("/", "/"))
 package(
     "msi", name = "hi", version = "1.2.3", description = "Says hi", maintainer = "Test Person <test@example.org>",
     distro = "windows", options = {"manufacturer": "Example Ltd"},
@@ -397,7 +387,6 @@ if selected flatpak; then
         chmod 755 pre-flatpak/usr/bin/hi
         # A bundle is for one architecture, so this script does not set arch to all.
         cat > lang-flatpak.star <<'STAR'
-expose(tree("/", "/"))
 package(
     "flatpak", name = "hi", version = "1.0.0", description = "Says hi",
     options = {"app_id": "org.example.Hi", "runtime_version": "24.08"},

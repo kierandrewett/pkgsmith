@@ -3,7 +3,6 @@
 A package can run scripts when it is installed or removed.
 
 ```python
-expose(tree("/", "/"))
 package(
     "rpm",
     name = "app",
@@ -62,7 +61,6 @@ def scripts_for(fmt):
         return {"post_install": "rc-update add app default || true\n"}
     return {"post_install": "systemctl daemon-reload || true\n"}
 
-expose(tree("/", "/"))
 for fmt in ["rpm", "deb", "apk"]:
     package(fmt, scripts = scripts_for(fmt), **common)
 ```
@@ -72,7 +70,6 @@ A script that is long lives in a file next to the script, one for each format if
 ```python
 common = {"name": "app", "version": "1.0.0", "description": "An app"}
 
-expose(tree("/", "/"))
 package("deb", scripts = {"post_install": "packaging/deb-postinst.sh"}, **common)
 ```
 

@@ -76,15 +76,14 @@ common = {
     "license": "MIT",
 }
 
-expose(tree("/", "/"))
-
 for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(fmt, config_files = ["/etc/hello.conf"], **common)
 ```
 
 pkgsmith runs this script from top to bottom.
 
-- `expose(tree("/", "/"))` offers the whole prefix to the packages that follow.
+- A package packs the whole prefix by default, so there is nothing to list. To leave files out, call
+  `exclude("/usr/share/doc/**")` before the packages. See [scripting](scripting.md#leave-files-out-or-keep-only-some).
 - Each `package` call that runs writes one package. The loop writes six, from the same prefix, on any system: the
   plugins write the files of every format.
 - `config_files` marks `/etc/hello.conf` as a configuration file, which the package manager keeps on upgrade.

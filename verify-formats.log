@@ -1,0 +1,418 @@
+image registry.fedoraproject.org/fedora:latest sha256:a4907bddfcb3629deee4ecb7e364f5023943c7a1b8da716a4ea91f0163a8bb84 2026-10-30 06:47:58.239653391 +0000 UTC
+image docker.io/library/debian:latest sha256:e2914ec98e08b24b4cee3cefcb9f90dfb5519f8d215a2ccf0c9a49b10b6e43de 2026-10-27 00:00:00 +0000 UTC
+image docker.io/library/archlinux:base sha256:dfc5be7be44cf1acf3d9b3b902e3e9c8a29f97ed41e35631823cdc9c97e5d4f0 2026-10-27 16:31:08.610254112 +0000 UTC
+image docker.io/library/alpine:latest sha256:c26612752c78b18faacd63c7d50f4592c2e7b0f25e0e20e82bd74e465c57ab0d 2026-10-21 22:37:22.870489069 +0000 UTC
+image docker.io/vbatts/slackware:current sha256:9dcaa22275e6a6cb25b9f6690885a321b44c326535ddf752b798dc206b82fd26 2023-07-27 11:32:51.784416302 +0000 UTC
+image ghcr.io/void-linux/void-glibc:latest sha256:4883ed6b8d7dad1e56f0f8a308effcef21ac31c9096a2eb88b4ba1d6e74c1918 2026-10-21 23:30:49.14470676 +0000 UTC
+image docker.io/library/ruby:latest sha256:b3960beab0be58abe7af71f17cb5062a40ee34a8d73c7018f902b53e89e8cd5a 2026-10-28 04:38:33.359276674 +0000 UTC
+image docker.io/library/node:latest sha256:6c6f2679f5b655c7c6091a34b81372b5962ca9f25d897a501d613742f922567b 2026-10-28 20:56:06.406996222 +0000 UTC
+image docker.io/mambaorg/micromamba:latest sha256:fd932cb5baacb572f3c41e9230c5b0cef4a7b26c211f1e247197adda3898fd00 2026-10-27 00:14:12.422980044 +0000 UTC
+image mcr.microsoft.com/dotnet/sdk:latest sha256:9c7b6b263d9d4c2e4718e16dae6d75cd8f4b5ccf206f1e7d48a98eb429981b03 2026-10-26 00:29:58.951834394 +0000 UTC
+--- tar: build
+[36mhi/amd64[0m │ [1m▶ package tar[0m
+[36mhi/amd64[0m │ [2mout-tar/hi-1.0.0-amd64.tar.xz[0m
+[36mhi/amd64[0m │ [32m✔ package tar (0.1s)[0m
+
+Packages in out-tar:
+  tar        hi-1.0.0-amd64.tar.xz  (26.0 KiB)
+ok    tar: build
+--- tar: lists the files
+ok    tar: lists the files
+--- zip: build
+[36mhi/amd64[0m │ [1m▶ package zip[0m
+[36mhi/amd64[0m │ [2mout-zip/hi-1.0.0-amd64.zip[0m
+[36mhi/amd64[0m │ [32m✔ package zip (0.0s)[0m
+
+Packages in out-zip:
+  zip        hi-1.0.0-amd64.zip  (31.9 KiB)
+ok    zip: build
+--- zip: unzip -t and the symlink
+No errors detected in compressed data of out-zip/hi-1.0.0-amd64.zip.
+ok    zip: unzip -t and the symlink
+--- epoch: build rpm, deb and archlinux
+[36mhi/amd64[0m │ [1m▶ package rpm[0m
+[36mhi/amd64[0m │ [1m▶ package deb[0m
+[36mhi/amd64[0m │ [1m▶ package archlinux[0m
+[36mhi/amd64[0m │ [2mout-epoch/hi_1.0.0-1_amd64.deb[0m
+[36mhi/amd64[0m │ [32m✔ package deb (0.0s)[0m
+[36mhi/amd64[0m │ [2mout-epoch/hi-1.0.0-1.x86_64.rpm[0m
+[36mhi/amd64[0m │ [32m✔ package rpm (0.1s)[0m
+[36mhi/amd64[0m │ [2mout-epoch/hi-2:1.0.0-1-x86_64.pkg.tar.zst[0m
+[36mhi/amd64[0m │ [32m✔ package archlinux (0.1s)[0m
+
+Packages in out-epoch:
+  rpm        hi-1.0.0-1.x86_64.rpm  (1.7 KiB)
+  deb        hi_1.0.0-1_amd64.deb  (712 B)
+  archlinux  hi-2:1.0.0-1-x86_64.pkg.tar.zst  (609 B)
+ok    epoch: build rpm, deb and archlinux
+--- epoch: rpm records Epoch 2 and the provide, installs, rpm -q shows 2: (latest Fedora)
+ok    epoch: rpm records Epoch 2 and the provide, installs, rpm -q shows 2: (latest Fedora)
+--- epoch: deb Version has 2: and dpkg orders it above a higher number (latest Debian)
+ok    epoch: deb Version has 2: and dpkg orders it above a higher number (latest Debian)
+--- epoch: archlinux file name and pkgver have 2: (latest Arch)
+warning: database file for 'core' does not exist (use '-Sy' to download)
+warning: database file for 'extra' does not exist (use '-Sy' to download)
+ok    epoch: archlinux file name and pkgver have 2: (latest Arch)
+--- rpm: build
+[36mhi/amd64[0m │ [1m▶ package rpm[0m
+[36mhi/amd64[0m │ [2mout-rpm/hi-1.0.0-1.x86_64.rpm[0m
+[36mhi/amd64[0m │ [32m✔ package rpm (0.2s)[0m
+
+Packages in out-rpm:
+  rpm        hi-1.0.0-1.x86_64.rpm  (30.2 KiB)
+ok    rpm: build
+--- rpm: install, run, verify, remove (latest Fedora)
+ok    rpm: install, run, verify, remove (latest Fedora)
+--- deb: build
+[36mhi/amd64[0m │ [1m▶ package deb[0m
+[36mhi/amd64[0m │ [2mout-deb/hi_1.0.0-1_amd64.deb[0m
+[36mhi/amd64[0m │ [32m✔ package deb (0.1s)[0m
+
+Packages in out-deb:
+  deb        hi_1.0.0-1_amd64.deb  (26.8 KiB)
+ok    deb: build
+--- deb: install, run, verify, remove (latest Debian)
+ok    deb: install, run, verify, remove (latest Debian)
+--- ipk: build
+[36mhi/amd64[0m │ [1m▶ package ipk[0m
+[36mhi/amd64[0m │ [2mout-ipk/hi_1.0.0-1_x86_64.ipk[0m
+[36mhi/amd64[0m │ [32m✔ package ipk (0.1s)[0m
+
+Packages in out-ipk:
+  ipk        hi_1.0.0-1_x86_64.ipk  (31.3 KiB)
+ok    ipk: build
+--- ipk: three members in order
+ok    ipk: three members in order
+--- archlinux: build
+[36mhi/amd64[0m │ [1m▶ package archlinux[0m
+[36mhi/amd64[0m │ [2mout-archlinux/hi-1.0.0-1-x86_64.pkg.tar.zst[0m
+[36mhi/amd64[0m │ [32m✔ package archlinux (0.2s)[0m
+
+Packages in out-archlinux:
+  archlinux  hi-1.0.0-1-x86_64.pkg.tar.zst  (28.6 KiB)
+ok    archlinux: build
+--- archlinux: install, run, check (current Arch)
+warning: database file for 'core' does not exist (use '-Sy' to download)
+warning: database file for 'extra' does not exist (use '-Sy' to download)
+ok    archlinux: install, run, check (current Arch)
+--- apk: build
+[36mhi/amd64[0m │ [1m▶ package apk[0m
+[36mhi/amd64[0m │ [2mout-apk/hi-1.0.0-r1.apk[0m
+[36mhi/amd64[0m │ [32m✔ package apk (0.0s)[0m
+
+Packages in out-apk:
+  apk        hi-1.0.0-r1.apk  (31.3 KiB)
+ok    apk: build
+--- apk: install and run (latest Alpine)
+ok    apk: install and run (latest Alpine)
+--- slackware: build
+[36mhi/amd64[0m │ [1m▶ package slackware[0m
+[36mhi/amd64[0m │ [2mout-slackware/hi-1.0.0-x86_64-1.txz[0m
+[36mhi/amd64[0m │ [32m✔ package slackware (0.1s)[0m
+
+Packages in out-slackware:
+  slackware  hi-1.0.0-x86_64-1.txz  (26.5 KiB)
+ok    slackware: build
+--- slackware: installpkg, upgradepkg, removepkg (Slackware current)
+ok    slackware: installpkg, upgradepkg, removepkg (Slackware current)
+--- snap: build
+[36mhi/amd64[0m │ [1m▶ package snap[0m
+[36mhi/amd64[0m │ [2mout-snap/hi_1.0.0_amd64.snap[0m
+[36mhi/amd64[0m │ [32m✔ package snap (0.0s)[0m
+
+Packages in out-snap:
+  snap       hi_1.0.0_amd64.snap  (28.0 KiB)
+ok    snap: build
+--- snap: unsquashfs lists the tree and snap.yaml parses
+ok    snap: unsquashfs lists the tree and snap.yaml parses
+skip  snap: snapd accepts it (snapd is not available here)
+--- oci: build
+[36mhi/amd64[0m │ [1m▶ package oci[0m
+[36mhi/amd64[0m │ [2man image is not installed, so the install scripts are ignored[0m
+[36mhi/amd64[0m │ [2mout-oci/hi-1.0.0-amd64.oci.tar[0m
+[36mhi/amd64[0m │ [32m✔ package oci (0.0s)[0m
+
+Packages in out-oci:
+  oci        hi-1.0.0-amd64.oci.tar  (37.0 KiB)
+ok    oci: build
+--- oci: podman load and run
+Getting image source signatures
+Copying blob sha256:43e5024706563762b27e4c6b538e1c7edc743c6fa2881e44ec0b765eb206da12
+Copying config sha256:d4a1918c57743b1800f88b5aa5c94230f0f7ac386871772cf13c3d8850655eb2
+Writing manifest to image destination
+ok    oci: podman load and run
+skip  appimage (set PKGSMITH_APPIMAGE_RUNTIME to a type 2 runtime file)
+--- wheel: build
+[36mhi/amd64[0m │ [1m▶ package wheel[0m
+[36mhi/amd64[0m │ [2mwheel cannot run install or remove scripts (post_install): they are not in the wheel[0m
+[36mhi/amd64[0m │ [2m1 file(s) are outside site-packages and the bin folders: they go to hi-1.0.0.data/data/, which pip installs under the Python prefix, not at /. First: /etc/hi.conf[0m
+[36mhi/amd64[0m │ [2mwheels have no configuration files: /etc/hi.conf is installed as a plain file, and an upgrade overwrites changes to it[0m
+[36mhi/amd64[0m │ [2mout-wheel/hi-1.0.0-1-py3-none-manylinux_2_17_x86_64.whl[0m
+[36mhi/amd64[0m │ [32m✔ package wheel (0.0s)[0m
+
+Packages in out-wheel:
+  wheel      hi-1.0.0-1-py3-none-manylinux_2_17_x86_64.whl  (32.5 KiB)
+ok    wheel: build
+--- wheel: pip install, import, scripts, uninstall
+ok    wheel: pip install, import, scripts, uninstall
+--- xbps: build
+[36mhi/amd64[0m │ [1m▶ package xbps[0m
+[36mhi/amd64[0m │ [2mout-xbps/hi-1.0.0_1.x86_64.xbps[0m
+[36mhi/amd64[0m │ [32m✔ package xbps (0.2s)[0m
+
+Packages in out-xbps:
+  xbps       hi-1.0.0_1.x86_64.xbps  (28.6 KiB)
+ok    xbps: build
+--- xbps: rindex, install, query, remove (latest Void)
+ok    xbps: rindex, install, query, remove (latest Void)
+--- freebsd: build
+[36mhi/amd64[0m │ [1m▶ package freebsd[0m
+[36mhi/amd64[0m │ [2mwrote out-freebsd/.pkgsmith-831537-0/hi-1.0.0_1.pkg[0m
+[36mhi/amd64[0m │ [2mout-freebsd/hi-1.0.0_1.pkg[0m
+[36mhi/amd64[0m │ [32m✔ package freebsd (0.2s)[0m
+
+Packages in out-freebsd:
+  freebsd    hi-1.0.0_1.pkg  (28.4 KiB)
+ok    freebsd: build
+--- freebsd: manifest order, JSON and checksums
+ok    freebsd: manifest order, JSON and checksums
+skip  freebsd: the real pkg tool accepts it (FreeBSD is not available here)
+--- gem: build
+[36mhi/all[0m │ [1m▶ package gem[0m
+[36mhi/all[0m │ [2mout-gem/hi-1.0.0.gem[0m
+[36mhi/all[0m │ [32m✔ package gem (0.0s)[0m
+
+Packages in out-gem:
+  gem        hi-1.0.0.gem  (4.0 KiB)
+ok    gem: build
+--- gem: install, require, run, uninstall (latest Ruby)
+ok    gem: install, require, run, uninstall (latest Ruby)
+--- npm: build
+[36mhi/all[0m │ [1m▶ package npm[0m
+[36mhi/all[0m │ [2mout-npm/hi-1.0.0.tgz[0m
+[36mhi/all[0m │ [32m✔ package npm (0.0s)[0m
+
+Packages in out-npm:
+  npm        hi-1.0.0.tgz  (271 B)
+ok    npm: build
+--- npm: install and require (latest Node)
+ok    npm: install and require (latest Node)
+--- conda: build
+[36mhi/all[0m │ [1m▶ package conda[0m
+[36mhi/all[0m │ [2mconda has no maintainer field, so the maintainer is not recorded[0m
+[36mhi/all[0m │ [2mout-conda/hi-1.0.0-1.conda[0m
+[36mhi/all[0m │ [32m✔ package conda (0.1s)[0m
+
+Packages in out-conda:
+  conda      hi-1.0.0-1.conda  (964 B)
+ok    conda: build
+--- conda: index, create an environment, run, remove (latest micromamba)
+2026-11-01T04:24:30 Migrate database
+2026-11-01T04:24:30 CONVERT .cache
+2026-11-01T04:24:30 Migrate database
+2026-11-01T04:24:31 linux-64 cached 964 B from 1 packages at 8 KB/second
+2026-11-01T04:24:31 Migrate database
+2026-11-01T04:24:31 CONVERT .cache
+2026-11-01T04:24:31 Migrate database
+2026-11-01T04:24:31 noarch cached 0 B from 0 packages at 0 B/second
+2026-11-01T04:24:31 Subdir: linux-64 Gathering repodata
+2026-11-01T04:24:31 linux-64 Writing pre-patch repodata
+2026-11-01T04:24:31 Subdir: noarch Gathering repodata
+2026-11-01T04:24:31 linux-64 Applying patch instructions
+2026-11-01T04:24:31 linux-64 Writing patched repodata
+2026-11-01T04:24:31 linux-64 Writing index HTML
+2026-11-01T04:24:31 noarch Writing pre-patch repodata
+2026-11-01T04:24:31 noarch Applying patch instructions
+2026-11-01T04:24:31 noarch Writing patched repodata
+2026-11-01T04:24:31 noarch Writing index HTML
+2026-11-01T04:24:31 Completed linux-64
+2026-11-01T04:24:31 Completed noarch
+ok    conda: index, create an environment, run, remove (latest micromamba)
+--- nupkg: build
+[36mhi/all[0m │ [1m▶ package nupkg[0m
+[36mhi/all[0m │ [2mout-nupkg/hi.1.0.0.nupkg[0m
+[36mhi/all[0m │ [32m✔ package nupkg (0.0s)[0m
+
+Packages in out-nupkg:
+  nupkg      hi.1.0.0.nupkg  (1.6 KiB)
+ok    nupkg: build
+--- nupkg: dotnet add package from a local feed (latest .NET SDK)
+ok    nupkg: dotnet add package from a local feed (latest .NET SDK)
+--- dmg: build
+[36mhi/all[0m │ [1m▶ package dmg[0m
+[36mhi/all[0m │ [2ma DMG has no description field, so description is not written[0m
+[36mhi/all[0m │ [2ma DMG has no maintainer field, so maintainer is not written[0m
+[36mhi/all[0m │ [2ma DMG has no homepage field, so homepage is not written[0m
+[36mhi/all[0m │ [2ma DMG has no license field, so license is not written[0m
+[36mhi/all[0m │ [2mout-dmg/hi-1.0.0-1-all.dmg[0m
+[36mhi/all[0m │ [32m✔ package dmg (1.4s)[0m
+
+Packages in out-dmg:
+  dmg        hi-1.0.0-1-all.dmg  (5.0 MiB)
+ok    dmg: build
+--- dmg: fsck.hfsplus, 7z extract, every file identical (latest Fedora)
+Package "findutils-1:4.10.0-7.fc44.x86_64" is already installed.
+
+[1/8] Verify package files              100% | 750.0   B/s |   6.0   B |  00m00s
+[2/8] Prepare transaction               100% | 230.0   B/s |   6.0   B |  00m00s
+[3/8] Installing lzfse-libs-0:1.0-9.fc4 100% |  10.2 MiB/s |  41.9 KiB |  00m00s
+[4/8] Installing dmg2img-0:1.6.7-32.202 100% |   4.9 MiB/s |  74.8 KiB |  00m00s
+[5/8] Installing 7zip-0:26.04-1.fc44.x8 100% | 139.7 MiB/s |   3.4 MiB |  00m00s
+[6/8] Installing 7zip-standalone-0:26.0 100% |  89.6 MiB/s |   1.7 MiB |  00m00s
+[7/8] Installing diffutils-0:3.12-5.fc4 100% |  82.8 MiB/s |   1.6 MiB |  00m00s
+[8/8] Installing hfsplus-tools-0:540.1. 100% |  12.6 MiB/s | 360.2 KiB |  00m00s
+
+dmg2img v1.6.5 (c) vu1tur (to@vu1tur.eu.org)
+
+/p/hi-1.0.0-1-all.dmg --> vol.img
+
+
+decompressing:
+opening partition 0 ...                     50.00%100.00%  ok
+opening partition 1 ...                     50.00%100.00%  ok
+opening partition 2 ...                      4.35%  8.70% 13.04% 17.39% 21.74% 26.09% 30.43% 34.78% 39.13% 43.48% 47.83% 52.17% 56.52% 60.87% 65.22% 69.57% 73.91% 78.26% 82.61% 86.96% 91.30% 95.65%100.00%  ok
+
+Archive successfully decompressed as vol.img
+ok    dmg: fsck.hfsplus, 7z extract, every file identical (latest Fedora)
+--- nix: build
+[36mhi/amd64[0m │ [1m▶ package nix[0m
+[36mhi/amd64[0m │ [2mout-nix/hi-1.0.0-amd64.nix.tar.gz[0m
+[36mhi/amd64[0m │ [32m✔ package nix (0.0s)[0m
+
+Packages in out-nix:
+  nix        hi-1.0.0-amd64.nix.tar.gz  (731 B)
+ok    nix: build
+--- nix: nix-build, and the flake from the archive address (latest nixos/nix)
+ok    nix: nix-build, and the flake from the archive address (latest nixos/nix)
+--- msi: build
+[36mhi/amd64[0m │ [1m▶ package msi[0m
+[36mhi/amd64[0m │ [2mout-msi/hi-1.2.3-amd64.msi[0m
+[36mhi/amd64[0m │ [32m✔ package msi (0.3s)[0m
+
+Packages in out-msi:
+  msi        hi-1.2.3-amd64.msi  (1.5 MiB)
+ok    msi: build
+--- msi: msiinfo, msidump with resolving references, msiextract, every file identical (latest Fedora)
+Package "findutils-1:4.10.0-7.fc44.x86_64" is already installed.
+
+[  1/108] Verify package files          100% | 330.0   B/s | 106.0   B |  00m00s
+[  2/108] Prepare transaction           100% |   2.0 KiB/s | 106.0   B |  00m00s
+[  3/108] Installing libpng-2:1.6.58-1. 100% |  49.0 MiB/s | 250.9 KiB |  00m00s
+[  4/108] Installing expat-0:2.9.0-1.fc 100% |  22.9 MiB/s | 351.7 KiB |  00m00s
+[  5/108] Installing libX11-xcb-0:1.8.1 100% |  11.4 MiB/s |  11.6 KiB |  00m00s
+[  6/108] Installing libvpl-1:2.17.0-1. 100% | 107.3 MiB/s | 439.6 KiB |  00m00s
+[  7/108] Installing libdav1d-0:1.5.4-1 100% | 293.3 MiB/s |   1.8 MiB |  00m00s
+[  8/108] Installing fonts-filesystem-1 100% | 769.5 KiB/s | 788.0   B |  00m00s
+[  9/108] Installing mesa-filesystem-0: 100% |   4.2 MiB/s |   4.3 KiB |  00m00s
+[ 10/108] Installing libogg-2:1.3.6-2.f 100% |  46.0 MiB/s |  47.1 KiB |  00m00s
+[ 11/108] Installing openh264-0:2.6.0-3 100% | 223.2 MiB/s |   1.1 MiB |  00m00s
+[ 12/108] Installing svt-av1-libs-0:3.1 100% | 350.7 MiB/s |   5.6 MiB |  00m00s
+[ 13/108] Installing rav1e-libs-0:0.8.1 100% | 308.3 MiB/s |   3.1 MiB |  00m00s
+[ 14/108] Installing openjpeg-0:2.5.4-3 100% | 113.8 MiB/s | 466.1 KiB |  00m00s
+[ 15/108] Installing libwebp-0:1.6.0-3. 100% | 135.6 MiB/s | 972.1 KiB |  00m00s
+[ 16/108] Installing lcms2-0:2.16-7.fc4 100% | 109.2 MiB/s | 447.3 KiB |  00m00s
+[ 17/108] Installing shared-mime-info-0 100% |  61.8 MiB/s |   2.6 MiB |  00m00s
+[ 18/108] Installing libtheora-1:1.1.1- 100% | 118.0 MiB/s | 483.3 KiB |  00m00s
+[ 19/108] Installing libvorbis-1:1.3.7- 100% | 164.0 MiB/s | 839.6 KiB |  00m00s
+[ 20/108] Installing abattis-cantarell- 100% |  63.3 MiB/s | 194.4 KiB |  00m00s
+[ 21/108] Installing aribb24-0:1.0.3^20 100% |  41.2 MiB/s |  84.4 KiB |  00m00s
+[ 22/108] Installing zvbi-0:0.2.44-3.fc 100% |  29.5 MiB/s |   1.2 MiB |  00m00s
+[ 23/108] Installing libedit-0:3.1-59.2 100% |  61.0 MiB/s | 250.0 KiB |  00m00s
+[ 24/108] Installing llvm-filesystem-0: 100% | 531.2 KiB/s |   1.1 KiB |  00m00s
+[ 25/108] Installing llvm-libs-0:22.1.8 100% | 327.4 MiB/s | 140.5 MiB |  00m00s
+[ 26/108] Installing hwdata-0:0.412-1.f 100% | 420.7 MiB/s |  10.1 MiB |  00m00s
+[ 27/108] Installing libpciaccess-0:0.1 100% |  16.2 MiB/s |  49.8 KiB |  00m00s
+[ 28/108] Installing libdrm-0:2.4.134-1 100% |  50.0 MiB/s | 409.7 KiB |  00m00s
+[ 29/108] Installing spirv-tools-libs-0 100% | 265.1 MiB/s |   6.1 MiB |  00m00s
+[ 30/108] Installing lm_sensors-libs-0: 100% |  21.2 MiB/s |  86.8 KiB |  00m00s
+[ 31/108] Installing libxshmfence-0:1.3 100% |   6.6 MiB/s |  13.4 KiB |  00m00s
+[ 32/108] Installing libwayland-client- 100% |  16.4 MiB/s |  67.2 KiB |  00m00s
+[ 33/108] Installing libglvnd-1:1.7.0-9 100% | 171.8 MiB/s | 527.8 KiB |  00m00s
+[ 34/108] Installing lpcnetfreedv-0:0.5 100% | 478.1 MiB/s |  14.8 MiB |  00m00s
+[ 35/108] Installing codec2-0:1.2.0-9.f 100% | 227.5 MiB/s |   1.4 MiB |  00m00s
+[ 36/108] Installing soxr-0:0.1.3-21.fc 100% |  47.2 MiB/s | 193.3 KiB |  00m00s
+[ 37/108] Installing xvidcore-0:1.3.7-1 100% | 214.8 MiB/s | 879.9 KiB |  00m00s
+[ 38/108] Installing xeve-libs-0:0.5.1- 100% | 176.9 MiB/s | 905.9 KiB |  00m00s
+[ 39/108] Installing xevd-libs-0:0.5.0- 100% |  93.0 MiB/s | 381.1 KiB |  00m00s
+[ 40/108] Installing vo-amrwbenc-0:0.1. 100% |  51.9 MiB/s | 159.3 KiB |  00m00s
+[ 41/108] Installing twolame-libs-0:0.4 100% |  79.3 MiB/s | 162.5 KiB |  00m00s
+[ 42/108] Installing speex-0:1.2.0-21.f 100% |  63.6 MiB/s | 130.3 KiB |  00m00s
+[ 43/108] Installing snappy-0:1.2.2-4.f 100% |  39.8 MiB/s |  81.6 KiB |  00m00s
+[ 44/108] Installing opus-0:1.6-2.fc44. 100% | 152.6 MiB/s | 468.8 KiB |  00m00s
+[ 45/108] Installing opencore-amr-0:0.1 100% |  86.7 MiB/s | 355.1 KiB |  00m00s
+[ 46/108] Installing openapv-libs-0:0.2 100% |  61.8 MiB/s | 126.5 KiB |  00m00s
+[ 47/108] Installing libvpx-0:1.15.0-5. 100% | 329.1 MiB/s |   3.3 MiB |  00m00s
+[ 48/108] Installing liblc3-0:1.1.3-7.f 100% |  57.2 MiB/s | 175.7 KiB |  00m00s
+[ 49/108] Installing lame-libs-0:3.100- 100% | 300.6 MiB/s |   1.2 MiB |  00m00s
+[ 50/108] Installing ilbc-0:3.0.4-19.fc 100% |  30.2 MiB/s |  92.8 KiB |  00m00s
+[ 51/108] Installing gsm-0:1.0.24-2.fc4 100% |  32.9 MiB/s |  67.3 KiB |  00m00s
+[ 52/108] Installing fdk-aac-free-0:2.0 100% | 153.8 MiB/s | 629.8 KiB |  00m00s
+[ 53/108] Installing libvmaf-0:3.0.0-5. 100% | 207.1 MiB/s | 848.2 KiB |  00m00s
+[ 54/108] Installing libaom-0:3.15.2-1. 100% | 315.2 MiB/s |   5.4 MiB |  00m00s
+[ 55/108] Installing libX11-common-0:1. 100% |  27.6 MiB/s |   1.2 MiB |  00m00s
+[ 56/108] Installing graphite2-0:1.3.14 100% |  12.6 MiB/s | 193.6 KiB |  00m00s
+[ 57/108] Installing freetype-0:2.14.3- 100% | 149.7 MiB/s | 920.0 KiB |  00m00s
+[ 58/108] Installing harfbuzz-0:14.1.0- 100% | 255.7 MiB/s |   2.8 MiB |  00m00s
+[ 59/108] Installing libseccomp-0:2.6.1 100% |  72.9 MiB/s | 224.0 KiB |  00m00s
+[ 60/108] Installing libdatrie-0:0.2.14 100% |  30.7 MiB/s |  62.8 KiB |  00m00s
+[ 61/108] Installing libthai-0:0.1.30-2 100% | 196.0 MiB/s | 802.7 KiB |  00m00s
+[ 62/108] Installing fribidi-0:1.0.16-4 100% |  12.5 MiB/s | 192.5 KiB |  00m00s
+[ 63/108] Installing highway-0:1.3.0-2. 100% | 425.7 MiB/s |   5.5 MiB |  00m00s
+[ 64/108] Installing libjxl-1:0.11.2-1. 100% | 316.8 MiB/s |   4.1 MiB |  00m00s
+[ 65/108] Installing libopenjph-0:0.25. 100% | 118.0 MiB/s | 483.3 KiB |  00m00s
+[ 66/108] Installing libjpeg-turbo-0:3. 100% | 200.2 MiB/s | 819.9 KiB |  00m00s
+[ 67/108] Installing libheif-0:1.23.7-1 100% | 170.5 MiB/s |   2.4 MiB |  00m00s
+[ 68/108] Installing libXau-0:1.0.12-4. 100% |  72.6 MiB/s |  74.3 KiB |  00m00s
+[ 69/108] Installing libxcb-0:1.17.0-7. 100% |  56.7 MiB/s |   1.1 MiB |  00m00s
+[ 70/108] Installing libX11-0:1.8.13-3. 100% | 224.0 MiB/s |   1.3 MiB |  00m00s
+[ 71/108] Installing libXext-0:1.3.6-5. 100% |  44.5 MiB/s |  91.1 KiB |  00m00s
+[ 72/108] Installing libXrender-0:0.9.1 100% |  25.0 MiB/s |  51.2 KiB |  00m00s
+[ 73/108] Installing mesa-dri-drivers-0 100% | 372.2 MiB/s |  53.2 MiB |  00m00s
+[ 74/108] Installing mesa-libgbm-0:26.2 100% |   9.9 MiB/s |  20.4 KiB |  00m00s
+[ 75/108] Installing libvdpau-0:1.5-11. 100% |  10.9 MiB/s |  22.3 KiB |  00m00s
+[ 76/108] Installing libXxf86vm-0:1.1.6 100% |  12.9 MiB/s |  26.4 KiB |  00m00s
+[ 77/108] Installing mesa-libGL-0:26.2. 100% |  91.6 MiB/s | 375.1 KiB |  00m00s
+[ 78/108] Installing libglvnd-glx-1:1.7 100% | 147.1 MiB/s | 602.4 KiB |  00m00s
+[ 79/108] Installing libXfixes-0:6.0.1- 100% |  17.3 MiB/s |  35.4 KiB |  00m00s
+[ 80/108] Installing libva-0:2.23.0-3.f 100% |  56.9 MiB/s | 349.6 KiB |  00m00s
+[ 81/108] Installing libavutil-free-0:8 100% | 190.7 MiB/s | 976.5 KiB |  00m00s
+[ 82/108] Installing libswresample-free 100% |  50.9 MiB/s | 156.5 KiB |  00m00s
+[ 83/108] Installing pixman-0:0.46.2-3. 100% | 140.5 MiB/s | 719.3 KiB |  00m00s
+[ 84/108] Installing lzo-0:2.10-16.fc44 100% |  57.4 MiB/s | 176.4 KiB |  00m00s
+[ 85/108] Installing bubblewrap-0:0.12. 100% |   7.3 MiB/s | 142.1 KiB |  00m00s
+[ 86/108] Installing google-noto-fonts- 100% |  18.1 MiB/s |  18.5 KiB |  00m00s
+[ 87/108] Installing google-noto-sans-v 100% | 231.9 MiB/s |   1.4 MiB |  00m00s
+[ 88/108] Installing default-fonts-core 100% | 909.6 KiB/s |  18.2 KiB |  00m00s
+[ 89/108] Installing xml-common-0:0.6.3 100% |  19.8 MiB/s |  81.1 KiB |  00m00s
+[ 90/108] Installing fontconfig-0:2.17. 100% | 746.5 KiB/s | 795.8 KiB |  00m01s
+[ 91/108] Installing cairo-0:1.18.6-1.f 100% |   8.2 MiB/s |   1.8 MiB |  00m00s
+[ 92/108] Installing cairo-gobject-0:1. 100% |  15.5 MiB/s |  31.8 KiB |  00m00s
+[ 93/108] Installing libXft-0:2.3.8-10. 100% |  82.9 MiB/s | 169.8 KiB |  00m00s
+[ 94/108] Installing pango-0:1.57.1-1.f 100% |  42.3 MiB/s |   1.0 MiB |  00m00s
+[ 95/108] Installing gdk-pixbuf2-0:2.44 100% | 110.1 MiB/s |   2.5 MiB |  00m00s
+[ 96/108] Installing librsvg2-0:2.62.4- 100% | 293.2 MiB/s |   5.0 MiB |  00m00s
+[ 97/108] Installing glycin-loaders-0:2 100% | 364.5 MiB/s |  13.8 MiB |  00m00s
+[ 98/108] Installing glycin-libs-0:2.1. 100% | 355.5 MiB/s |   4.3 MiB |  00m00s
+[ 99/108] Installing libgsf-0:1.14.60-1 100% |  44.6 MiB/s |   1.0 MiB |  00m00s
+[100/108] Installing libmsi1-0:0.106.58 100% |  54.1 MiB/s | 276.9 KiB |  00m00s
+[101/108] Installing libaribcaption-0:1 100% |  51.1 MiB/s | 261.5 KiB |  00m00s
+[102/108] Installing libavcodec-free-0: 100% | 313.0 MiB/s |  10.3 MiB |  00m00s
+[103/108] Installing libgcab1-0:1.6-10. 100% |  54.4 MiB/s | 222.7 KiB |  00m00s
+[104/108] Installing msitools-0:0.106.5 100% |  53.1 MiB/s |   2.0 MiB |  00m00s
+[105/108] Installing libheif-ffmpeg-0:1 100% |  10.6 MiB/s |  32.7 KiB |  00m00s
+[106/108] Installing intel-mediasdk-0:2 100% | 520.7 MiB/s |  24.5 MiB |  00m00s
+[107/108] Installing intel-vpl-gpu-rt-0 100% | 364.1 MiB/s |  11.7 MiB |  00m00s
+[108/108] Installing diffutils-0:3.12-5 100% |   3.3 MiB/s |   1.6 MiB |  00m00s
+ok    msi: msiinfo, msidump with resolving references, msiextract, every file identical (latest Fedora)
+--- flatpak: build
+[36mhi/amd64[0m │ [1m▶ package flatpak[0m
+[36mhi/amd64[0m │ [2mout-flatpak/org.example.Hi-1.0.0-1.x86_64.flatpak[0m
+[36mhi/amd64[0m │ [32m✔ package flatpak (0.1s)[0m
+
+Packages in out-flatpak:
+  flatpak    org.example.Hi-1.0.0-1.x86_64.flatpak  (1.8 KiB)
+ok    flatpak: build
+--- flatpak: install the bundle, run it (latest Debian)
+ok    flatpak: install the bundle, run it (latest Debian)
+
+46 passed, 0 failed, 3 skipped. Log: /var/tmp/wt-yaml/verify-formats.log

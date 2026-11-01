@@ -113,7 +113,6 @@ An app has `command` (required), `daemon` (`simple`, `forking`, `oneshot` or `no
 and `environment` (a map).
 
 ```python
-expose(tree("/", "/"))
 package(
     "snap",
     name = "hello", version = "1.0.0", description = "A small program",

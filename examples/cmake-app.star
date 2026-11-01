@@ -1,5 +1,5 @@
 # A C++ application built with CMake and Ninja. `cmake --install --prefix` puts the installed files in the prefix, and
-# `exclude` leaves out the headers and static libraries that only a developer needs.
+# exclude() leaves out the headers and static libraries that only a developer needs.
 #
 #   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build
@@ -8,7 +8,8 @@
 #
 # The libpng package has a different name on each system, so each format names its own.
 
-expose(tree("/", "/"))
+# The packages hold the whole prefix except what exclude() names. It applies to every package declared after it.
+exclude("/usr/include", "/usr/lib/*.a", "/usr/lib/cmake")
 
 libpng = {
     "rpm": ["libpng"],
@@ -24,5 +25,4 @@ for format in ["rpm", "deb", "archlinux", "apk"]:
         version = "2.1.0",
         description = "An image viewer",
         depends = libpng[format],
-        exclude = ["/usr/include", "/usr/lib/*.a", "/usr/lib/cmake"],
     )

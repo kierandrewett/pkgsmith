@@ -209,6 +209,23 @@ fn locate(manifest: &Manifest, text: &str) -> Result<PathBuf> {
     }
 }
 
+/// A file that a package reads must resolve, symbolic links followed, to a place inside the prefix or the script folder. A
+/// link in the prefix that points outside it is an error, so a prefix cannot pull in files of the system.
+fn confine(manifest: &Manifest, path: &Path) -> Result<()> {
+    let resolved =
+        fs::canonicalize(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let inside = |root: &Path| fs::canonicalize(root).is_ok_and(|root| resolved.starts_with(root));
+    if inside(&manifest.prefix) || inside(&manifest.base) {
+        Ok(())
+    } else {
+        bail!(
+            "{} points to {}, outside the prefix and the script folder",
+            path.display(),
+            resolved.display()
+        )
+    }
+}
+
 /// Resolve the `contents` of a target into one sorted list of entries. Later entries replace earlier ones with the same
 /// path. Then `include`, `exclude` and `config_files` apply to the paths of the package.
 pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
@@ -272,6 +289,7 @@ pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
                         bail!("{src:?} matches no files");
                     }
                     for path in matches {
+                        confine(manifest, &path)?;
                         let name = path.file_name().unwrap().to_string_lossy().into_owned();
                         entries.push(file_entry(
                             join(&content.dst, &name),
@@ -282,6 +300,7 @@ pub fn resolve(manifest: &Manifest) -> Result<Vec<Entry>> {
                     }
                 } else {
                     let path = locate(manifest, src)?;
+                    confine(manifest, &path)?;
                     let destination = if content.dst.ends_with('/') {
                         join(&content.dst, &path.file_name().unwrap().to_string_lossy())
                     } else {
@@ -458,6 +477,43 @@ mod tests {
             .map(|e| e.path)
             .collect();
         assert_eq!(configs, ["/etc/a.conf"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_prefix_that_points_outside_is_refused_for_a_file_but_kept_in_a_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret"), "x").unwrap();
+        fs::create_dir_all(dir.path().join("prefix/etc")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret"),
+            dir.path().join("prefix/etc/passwd"),
+        )
+        .unwrap();
+        let make = |contents: serde_json::Value| {
+            let spec = Manifest::parse_spec(
+                json!({"name": "demo", "version": "1", "description": "d", "format": "deb",
+                "contents": contents}),
+            )
+            .unwrap();
+            Manifest::from_spec(spec, dir.path().to_path_buf(), dir.path().join("prefix")).unwrap()
+        };
+        let error = resolve(&make(json!([{"src": "etc/passwd", "dst": "/etc/passwd"}])))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside the prefix"), "{error}");
+        let error = resolve(&make(json!([{"src": "etc/*", "dst": "/etc/"}])))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside the prefix"), "{error}");
+        // A tree keeps the link as a link and does not read what it points to.
+        let entries = resolve(&make(json!([{"src": "/", "dst": "/", "type": "tree"}]))).unwrap();
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.path == "/etc/passwd" && matches!(e.data, Data::Symlink { .. }))
+        );
     }
 
     #[test]

@@ -3,8 +3,6 @@
 #   make install PREFIX=/opt/acme-tool DESTDIR=prefix
 #   pkgsmith build -f examples/release-tarball.star
 
-expose(tree("/", "/"))
-
 common = {
     "name": "acme-tool",
     "version": "1.0.0",

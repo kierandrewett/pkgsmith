@@ -46,7 +46,6 @@ mkdir -p prefix/usr/bin
 printf '#!/bin/sh\necho signed-hi\n' > prefix/usr/bin/hi
 chmod 755 prefix/usr/bin/hi
 cat > pkgsmith.star <<'STAR'
-expose(tree("/", "/"))
 
 common = {"name": "hi", "version": "1.0.0", "description": "A tiny signing test"}
 for fmt in ["tar", "rpm", "apk"]:

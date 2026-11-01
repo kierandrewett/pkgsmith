@@ -6,8 +6,6 @@
 # pkgsmith does not build the program. The Makefile does, and `make install` puts hello and its files in ./prefix. This
 # script describes the packages made from that folder, in every format, and pkgsmith writes them to ./dist.
 
-expose(tree("/", "/"))
-
 common = {
     "name": "hello",
     "version": "1.0.0",

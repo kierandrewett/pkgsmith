@@ -6,8 +6,8 @@
 //! with `read_file`, `exists`, `is_dir`, `listdir` and `glob`, but it cannot change anything, and it cannot read outside the
 //! prefix and its own folder. It has no network or processes either.
 //!
-//! * `expose(tree("/", "/"))` makes files of the prefix part of what the script offers.
-//! * `package("rpm", name = ..., version = ...)` writes a package of one format from what was exposed so far.
+//! * `package("rpm", name = ..., version = ...)` writes a package of one format. It holds the whole prefix, narrowed by
+//!   `include()` and `exclude()`, or only the files that `expose()` offered.
 //!
 //! Every `package(...)` call that the run reaches writes one package, so `package("rpm")` and `package("deb")` make two
 //! packages from the same files, and the branch of an `if` that is false on this system makes none. `host()` tells the
@@ -42,10 +42,33 @@ struct Collector {
     prefix: PathBuf,
     /// The folder of the script.
     here: PathBuf,
-    /// The files that the script has exposed so far.
+    /// The files that the script has exposed so far. Empty means the whole prefix.
     exposed: RefCell<Vec<Json>>,
+    /// Path globs that `include()` and `exclude()` have collected so far. They apply to the packages that come after.
+    include: RefCell<Vec<String>>,
+    exclude: RefCell<Vec<String>>,
     /// The packages, in the order the script declared them.
     packages: RefCell<Vec<TargetSpec>>,
+}
+
+/// The globs of `include(...)` and `exclude(...)`: text, or lists of text.
+fn patterns_of(args: &starlark::values::tuple::TupleRef) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::new();
+    for arg in args.iter() {
+        match arg.to_json_value()? {
+            Json::String(text) => out.push(text),
+            Json::Array(list) => {
+                for item in list {
+                    match item {
+                        Json::String(text) => out.push(text),
+                        _ => bail!("a pattern must be text"),
+                    }
+                }
+            }
+            _ => bail!("a pattern must be text or a list of text"),
+        }
+    }
+    Ok(out)
 }
 
 fn collector<'x>(eval: &'x Evaluator<'_, '_, '_>) -> anyhow::Result<&'x Collector> {
@@ -213,18 +236,61 @@ fn builtins(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
+    /// Keep only the paths of the package that match these globs (`/usr/bin/**`, `/etc/hello.conf`), for the packages
+    /// declared after this call. Without any `include`, a package keeps everything in the prefix.
+    fn include<'v>(
+        #[starlark(args)] patterns: &'v starlark::values::tuple::TupleRef<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let list = patterns_of(patterns)?;
+        collector(eval)?.include.borrow_mut().extend(list);
+        Ok(NoneType)
+    }
+
+    /// Leave out the paths of the package that match these globs, for the packages declared after this call.
+    fn exclude<'v>(
+        #[starlark(args)] patterns: &'v starlark::values::tuple::TupleRef<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<NoneType> {
+        let list = patterns_of(patterns)?;
+        collector(eval)?.exclude.borrow_mut().extend(list);
+        Ok(NoneType)
+    }
+
+    /// Forget the files exposed, and the `include` and `exclude` globs collected, so far. The next package starts from the
+    /// whole prefix again. Use it between split packages.
+    fn reset(eval: &mut Evaluator<'_, '_, '_>) -> anyhow::Result<NoneType> {
+        let c = collector(eval)?;
+        c.exposed.borrow_mut().clear();
+        c.include.borrow_mut().clear();
+        c.exclude.borrow_mut().clear();
+        Ok(NoneType)
+    }
+
     /// Write one package of type `format` (`rpm`, `deb`, see `pkgsmith formats`) from the files exposed so far. The fields
     /// are name, version and description (required), then release, epoch, arch, maintainer, homepage, license, depends,
-    /// recommends, suggests, conflicts, replaces, provides, contents (more files than the exposed ones), options, distro,
-    /// file, tags, exclude, include and config_files (path globs of the package) and scripts (a dict of pre_install,
+    /// recommends, suggests, conflicts, replaces, provides, contents (more files, added to the exposed ones or to the whole prefix), options, distro,
+    /// file, tags, include, exclude and config_files (path globs of the package; `include()` and `exclude()` calls add to them) and scripts (a dict of pre_install,
     /// post_install, pre_remove and post_remove: text, or the name of a file next to the script).
     fn package<'v>(
         format: &str,
         #[starlark(kwargs)] fields: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<NoneType> {
+        // The files the script exposed, or the whole prefix when it exposed none. `contents` adds to them.
         let mut contents = collector(eval)?.exposed.borrow().clone();
+        if contents.is_empty() {
+            contents.push(json!({"type": "tree", "src": "/", "dst": "/"}));
+        }
         let mut spec = serde_json::Map::new();
+        spec.insert(
+            "include".into(),
+            json!(collector(eval)?.include.borrow().clone()),
+        );
+        spec.insert(
+            "exclude".into(),
+            json!(collector(eval)?.exclude.borrow().clone()),
+        );
         for (key, value) in fields {
             let value = value
                 .to_json_value()
@@ -234,6 +300,13 @@ fn builtins(builder: &mut GlobalsBuilder) {
                     Json::Array(list) => contents.extend(list),
                     _ => bail!("package({format:?}): contents must be a list"),
                 }
+            } else if (key == "include" || key == "exclude") && spec.contains_key(&key) {
+                // The globs of the package add to the ones that include() and exclude() collected.
+                let (Some(Json::Array(list)), Json::Array(more)) = (spec.get_mut(&key), value)
+                else {
+                    bail!("package({format:?}): {key} must be a list")
+                };
+                list.extend(more);
             } else {
                 spec.insert(key, value);
             }
@@ -326,17 +399,20 @@ pub fn evaluate_on(
     prefix: &Path,
 ) -> Result<Vec<TargetSpec>> {
     let globals = globals();
+    let folder = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let here = std::fs::canonicalize(folder)
+        .with_context(|| format!("cannot read the folder of the script, {}", folder.display()))?;
     let collector = Collector {
         host,
         args,
         prefix: prefix.to_path_buf(),
-        here: std::fs::canonicalize(
-            file.parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new(".")),
-        )
-        .unwrap_or_default(),
+        here,
         exposed: RefCell::new(Vec::new()),
+        include: RefCell::new(Vec::new()),
+        exclude: RefCell::new(Vec::new()),
         packages: RefCell::new(Vec::new()),
     };
     // The prelude is a module of its own, so the script sees its functions without a `load`.
@@ -431,6 +507,32 @@ mod tests {
         assert_eq!((specs[0].contents.len(), specs[1].contents.len()), (1, 2));
         assert_eq!(specs[1].distro.as_deref(), Some("rocky"));
         assert_eq!(specs[1].scripts.post_install.as_deref(), Some("echo hi"));
+    }
+
+    #[test]
+    fn a_package_holds_the_whole_prefix_unless_the_script_narrows_it() {
+        let specs = run(
+            &format!(
+                "{COMMON}package('tar', **common)\nexclude('/usr/share/doc/**')\nconfig_files = ['/etc/**']\npackage('deb', config_files = config_files, **common)\nreset()\ninclude('/usr/share/doc/**')\npackage('zip', **common)\n"
+            ),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                specs[0].contents.len(),
+                specs[0].exclude.len(),
+                specs[0].include.len()
+            ),
+            (1, 0, 0),
+            "the whole prefix"
+        );
+        assert_eq!(specs[1].exclude, ["/usr/share/doc/**"]);
+        assert_eq!(specs[1].config_files, ["/etc/**"]);
+        assert_eq!(
+            (specs[2].exclude.len(), specs[2].include.clone()),
+            (0, vec!["/usr/share/doc/**".to_string()])
+        );
     }
 
     #[test]

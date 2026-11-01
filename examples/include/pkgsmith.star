@@ -5,8 +5,6 @@
 #   pkgsmith build examples/include
 load("common.star", "common", "depends_for")
 
-expose(tree("/", "/"))
-
 fields = dict(common, description = "A small program, as a release archive")
 
 package(

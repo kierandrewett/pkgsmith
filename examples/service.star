@@ -5,12 +5,6 @@
 #   install -Dm640 packaging/agent.yaml prefix/etc/acme-agent/agent.yaml
 #   pkgsmith build -f examples/service.star
 
-expose(
-    tree("/", "/"),
-    # The service user owns its state folder. The prefix has no such folder, so the package makes it.
-    directory("/var/lib/acme-agent", mode = "0750", owner = "acme", group = "acme"),
-)
-
 # A script of more than one line is the script itself. A one-line value names a file next to this script.
 scripts = {
     "pre_install": """getent group acme >/dev/null || groupadd --system acme
@@ -35,7 +29,11 @@ for format in ["rpm", "deb", "archlinux", "apk"]:
         license = "Apache-2.0",
         # The package manager keeps the changes of the user in these files.
         config_files = ["/etc/acme-agent/*"],
-        # A log file the package owns but does not carry. Only rpm records it.
-        contents = [ghost("/var/log/acme-agent.log")] if format == "rpm" else [],
+        # `contents` adds to the whole prefix. The service user owns the state folder. The prefix has no such folder, so
+        # the package makes it.
+        contents = [directory("/var/lib/acme-agent", mode = "0750", owner = "acme", group = "acme")] + (
+            # A log file the package owns but does not carry. Only rpm records it.
+            [ghost("/var/log/acme-agent.log")] if format == "rpm" else []
+        ),
         scripts = scripts,
     )

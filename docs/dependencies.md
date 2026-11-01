@@ -1,7 +1,6 @@
 # Dependencies
 
 ```python
-expose(tree("/", "/"))
 package(
     "rpm",
     name = "acme-tool",
@@ -55,7 +54,6 @@ common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
 
 libc = {"rpm": "glibc", "deb": "libc6", "archlinux": "glibc", "apk": "musl"}
 
-expose(tree("/", "/"))
 for fmt in libc:
     package(fmt, depends = [libc[fmt]], **common)
 package("tar", **common)
@@ -66,7 +64,6 @@ When a format covers several distros with different names, write one `package` c
 ```python
 common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
 
-expose(tree("/", "/"))
 package("rpm", distro = "fedora", depends = ["glibc", "openssl-libs"], file = "fedora-{file}", **common)
 package("rpm", distro = "opensuse", depends = ["glibc", "libopenssl3"], file = "opensuse-{file}", **common)
 ```
@@ -79,7 +76,6 @@ A field in one `package` call does not carry over to the next. To share names, k
 common = {"name": "acme-tool", "version": "1.0.0", "description": "A tool"}
 shared = ["glibc"]
 
-expose(tree("/", "/"))
 package("rpm", depends = shared + ["openssl-libs"], **common)
 package("tar", **common)
 ```

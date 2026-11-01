@@ -4,9 +4,9 @@
 #   install -Dm644 docs/ripfind.1 prefix/usr/share/man/man1/ripfind.1
 #   pkgsmith build -f examples/rust-cli.star
 #
-# cargo also writes its list of installed crates in prefix/usr. A package does not need it, so `exclude` drops it.
+# cargo also writes its list of installed crates in prefix/usr. A package does not need it, so exclude() drops it.
 
-expose(tree("/", "/"))
+exclude("/usr/.crates.toml", "/usr/.crates2.json")
 
 # glibc is on every Fedora, Debian and Arch system, but the dependency tells the package manager. The binary links to
 # the C library of the system that built it, so a build on Alpine would name musl instead.
@@ -22,5 +22,4 @@ ripfind searches a folder tree for names and contents.""",
         maintainer = "Example Maintainer <maintainer@example.com>",
         license = "MIT",
         depends = [libc[format]] if format in libc else [],
-        exclude = ["/usr/.crates.toml", "/usr/.crates2.json"],
     )

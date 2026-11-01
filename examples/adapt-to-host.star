@@ -40,8 +40,6 @@ depends = {
 if h["distro"] == "ubuntu" and h["version"] >= "24.04":
     depends["deb"] = ["libc6", "libssl3t64"]
 
-expose(tree("/", "/"))
-
 for format in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(
         format,

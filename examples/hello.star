@@ -6,8 +6,6 @@
 #
 # Every package() call writes one package of the files in the prefix. The loop writes the same files in four formats.
 
-expose(tree("/", "/"))
-
 for format in ["rpm", "deb", "archlinux", "tar"]:
     package(
         format,

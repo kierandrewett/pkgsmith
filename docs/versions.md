@@ -47,7 +47,6 @@ runs of letters and digits and the commit text would break the order that the da
 ## In the script
 
 ```python
-expose(tree("/", "/"))
 package(
     "tar",
     name = "hello",
@@ -72,7 +71,6 @@ An epoch makes a version sort above every version with a lower epoch, whatever t
 a version that went the wrong way, for example after a project changed its numbering.
 
 ```python
-expose(tree("/", "/"))
 package("rpm", name = "hello", version = "0.1.12", epoch = 1, description = "A small program")
 ```
 

@@ -1,21 +1,10 @@
 # pkgsmith
 
-pkgsmith writes distribution packages from files you already built. You install your program into a folder, the
-**prefix**, and write a short script that describes the packages made from it. pkgsmith writes the rpm, deb, Arch,
-Alpine, OpenWrt, tar, zip and other packages from that one prefix. It builds nothing and runs no command.
+pkgsmith writes distribution packages from one script. You build your program and install it into a prefix. A short
+`pkgsmith.star` script describes the package. pkgsmith writes the rpm, deb, Arch, Alpine, OpenWrt, tar or zip package.
+It builds nothing itself, and it runs no container.
 
-## How it compares
-
-pkgsmith is in the same space as [nfpm](https://nfpm.goreleaser.com) and [fpm](https://fpm.readthedocs.io): tools that
-turn files into packages without building anything.
-
-- **A script, not YAML.** The package description is a Starlark script, so a list of formats is a loop and a dependency
-  name that differs by format is a dict. The script cannot run commands or reach the network.
-- **More formats.** Twenty-four formats today, listed below. nfpm writes six (deb, rpm, apk, ipk, Arch Linux and msix).
-- **Signing.** Packages are signed with gpg, an OpenPGP key file or an RSA key. See [signing](docs/signing.md).
-- **Newer.** nfpm and fpm are older and widely used. pkgsmith has been checked against the package managers listed in
-  [formats](docs/formats.md), and some formats only by layout. fpm also converts between package types. pkgsmith does
-  not.
+![pkgsmith writes an rpm, a deb and a tar from one prefix in a single run](docs/media/demo.gif)
 
 ## Formats
 
@@ -32,7 +21,7 @@ Every format is a plugin: a shared library that pkgsmith loads. You can add your
 | `xbps`      | `.xbps`                          | Void Linux                 |
 | `freebsd`   | `.pkg`                           | FreeBSD                    |
 | `snap`      | `.snap`                          | snapd                      |
-| `oci`       | `.oci.tar`                       | OCI runtimes               |
+| `oci`       | `.oci.tar`                       | podman, docker             |
 | `appimage`  | `.AppImage`                      | Linux desktops             |
 | `wheel`     | `.whl`                           | pip                        |
 | `gem`       | `.gem`                           | RubyGems                   |
@@ -54,7 +43,8 @@ pkgsmith writes these files itself and does not call `rpmbuild`, `dpkg-deb`, `ma
 
 ## Install
 
-pkgsmith runs on Linux, macOS and Windows. It needs no daemon and no build tools: it reads a prefix.
+pkgsmith runs on Linux, macOS and Windows. It needs nothing but its own program and plugins. It does not need a container
+engine, and it does not build your program.
 
 There is no published release yet, so build from source:
 
@@ -90,90 +80,83 @@ you on every system.
 
 ## Quick start
 
-Build your program with your own tools, and install it into a prefix. For a project with a Makefile:
-
-```sh
-make install PREFIX=/usr DESTDIR="$PWD/prefix"
-```
-
-Describe the packages in `pkgsmith.star` next to it:
+`examples/demo` holds a C program, a Makefile and this script:
 
 ```python
 common = {
     "name": "hello",
     "version": "1.0.0",
-    "description": "A small C program",
-    "maintainer": "Your Name <you@example.com>",
+    "description": "A demo that packages a small C program",
+    "maintainer": "Kieran Drewett <kieran@drewett.dev>",
     "license": "MIT",
 }
 
-expose(tree("/", "/"))
-
-for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
-    package(fmt, **common)
+for format in ["rpm", "deb", "apk", "tar"]:
+    package(format, **common)
 ```
 
-Write the packages:
+Build the program into a prefix, then write the packages:
 
 ```sh
-pkgsmith plan         # what would be written
-pkgsmith build        # the packages go to ./dist
+cd examples/demo
+make install PREFIX=/usr DESTDIR="$PWD/prefix"    # your own build, into ./prefix
+pkgsmith build                                    # the packages go to ./dist
 ```
 
-- `expose(tree("/", "/"))` offers the whole prefix to the packages that follow.
-- Each `package` call writes one package. The loop writes six from the same prefix, on any system: the plugins write
-  the files of every format. Use `-F` to write only some.
-- pkgsmith reads `./prefix` by default. `--prefix DIR` names another folder.
+How it works:
 
-To get arm64 packages, make an arm64 prefix and write `arch = "arm64"`. See
-[the prefix](docs/prefix.md#other-architectures-and-c-libraries).
+- The script runs from top to bottom. Each `package()` call that runs writes one package.
+- A package holds the whole prefix. `include()` and `exclude()` narrow it, and `reset()` starts again from the whole
+  prefix, so one prefix can make several packages.
+- One script writes every format. A format is a file that a plugin writes, so no format needs its own system.
+- The script can read the prefix and ask about the system with `host()`, but it cannot change anything or run a command.
 
-To choose the files yourself, use `expose` and the content helpers. See [contents](docs/contents.md). The script is
-code, so use `if`, loops and functions for what differs between packages. See [scripting](docs/scripting.md). pkgsmith
-packages itself with [pkgsmith.star](pkgsmith.star).
+To choose the files yourself, see [contents](docs/contents.md). pkgsmith packages itself with
+[pkgsmith.star](pkgsmith.star).
 
 ## Commands
 
-| Command   | What it does                                                 |
-| --------- | ------------------------------------------------------------ |
-| `build`   | Runs the script and writes every package to `dist`           |
-| `plan`    | Shows each package and its file name. Writes nothing         |
-| `files`   | Lists the files each package would carry                     |
-| `formats` | Lists the formats the installed plugins write                |
-| `plugins` | Lists the loaded plugins and the folders searched for them   |
+| Command           | What it does                                                  |
+| ----------------- | ------------------------------------------------------------- |
+| `build`           | Builds every package and writes it to `dist`                  |
+| `plan`            | Shows each package and its file name                          |
+| `files`           | Lists the files each package would carry                      |
+| `formats`         | Lists the formats the installed plugins write                 |
+| `plugins`         | Lists the loaded plugins and the folders searched for them    |
 
-Run `pkgsmith plan` after you change the script. Every option is in [command line](docs/cli.md).
+Run `pkgsmith plan` after you change a script to see which packages it writes. Every option is in
+[command line](docs/cli.md).
 
 ## Documentation
 
-| Page                                           | Covers                                              |
-| ---------------------------------------------- | --------------------------------------------------- |
-| [Getting started](docs/getting-started.md)     | A package from scratch, step by step                |
-| [The prefix](docs/prefix.md)                   | Make a prefix with make, CMake, Meson, Cargo, Python |
-| [Scripting](docs/scripting.md)                 | Write a script: `expose`, loops, `arg()`, `load()`  |
-| [Script reference](docs/manifest.md)           | Every function, field and value                     |
-| [Contents](docs/contents.md)                   | Files, trees, links and config files                |
-| [Versions](docs/versions.md)                   | How one version becomes each format's spelling      |
-| [Install scripts](docs/scripts.md)             | What runs when, per format                          |
-| [Dependencies](docs/dependencies.md)           | Names, version constraints, per-format names        |
-| [Signing](docs/signing.md)                     | Keys, `--sign-key`, and checking a signature        |
-| [Formats](docs/formats.md)                     | The options of every format                         |
-| [macOS and Windows](docs/macos-and-windows.md) | Build on that system, then pack the prefix          |
-| [Plugins](docs/plugins.md)                     | Where plugins live, and how to write one            |
-| [Command line](docs/cli.md)                    | Every command and option                            |
+| Page                                              | Covers                                          |
+| ------------------------------------------------- | ----------------------------------------------- |
+| [Getting started](docs/getting-started.md)        | A package from scratch, step by step            |
+| [Script reference](docs/manifest.md)              | Every function and package field                |
+| [Contents](docs/contents.md)                      | Files, trees, links and config files            |
+| [Scripting](docs/scripting.md)                    | Loops, `host()`, `arg()`, include and exclude   |
+| [Prefix](docs/prefix.md)                          | Making the prefix, and what a script may read   |
+| [macOS and Windows](docs/macos-and-windows.md)    | Compile on the target system, then package      |
+| [Versions](docs/versions.md)                      | How one version becomes each format's spelling  |
+| [Install scripts](docs/scripts.md)                | What runs when, per format                      |
+| [Dependencies](docs/dependencies.md)              | Names, version constraints, per-distro names    |
+| [Signing](docs/signing.md)                        | Keys, `--sign-key`, and checking a signature    |
+| [Formats](docs/formats.md)                        | The options of every format                     |
+| [Plugins](docs/plugins.md)                        | Where plugins live, and how to write one        |
+| [Command line](docs/cli.md)                       | Every command and option                        |
 
-Every file in [examples](examples) is a complete script.
+Every file in [examples](examples) is a complete script. [examples/full.star](examples/full.star) uses every function and
+comments each one.
 
 ## Limits
 
-- pkgsmith builds nothing. It does not compile, run `make` or fetch sources. You make the prefix.
+- pkgsmith does not build your program. Make the prefix with your own build, for example `make install DESTDIR=prefix`.
 - pkgsmith does not find the shared libraries a program needs. List them in `depends`.
-- pkgsmith does not look inside the files. You say which architecture they are for with `arch`, and which C library they
-  use by the prefix you pack. A glibc prefix is not a musl prefix, so an Alpine package needs a prefix built on musl.
-  See [the prefix](docs/prefix.md#other-architectures-and-c-libraries).
-- macOS and Windows programs are built on those systems, then packed from a prefix. See
-  [macOS and Windows](docs/macos-and-windows.md).
+- A prefix holds one architecture and one C library. For arm64, or for Alpine (musl), build there and run pkgsmith on
+  that prefix. See [prefix](docs/prefix.md).
 - Packages are signed only when you give `--sign-key`. See [signing](docs/signing.md).
+- pkgsmith is in the same space as [nfpm](https://nfpm.goreleaser.com), which writes deb, rpm, apk, ipk, Arch Linux and
+  msix packages from a YAML file. pkgsmith uses a script instead of YAML and writes more formats, but it is newer.
 
 ## Build and test
 

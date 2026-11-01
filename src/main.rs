@@ -231,7 +231,7 @@ fn load(source: &Source, registry: &Registry) -> Result<Vec<plan::Item>> {
     )?;
     let prefix = std::fs::canonicalize(&source.prefix).with_context(|| {
         format!(
-            "cannot read the prefix {}; make it with your build, or name it with --prefix",
+            "cannot read the prefix {}; create it, or name an existing prefix with --prefix",
             source.prefix.display()
         )
     })?;

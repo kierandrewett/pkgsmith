@@ -29,7 +29,6 @@ The script describes the image:
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(tree("/", "/"))
 package("dmg", options = {"volume_name": "hello"}, **common)
 ```
 
@@ -53,7 +52,6 @@ common = {
     "maintainer": "Your Name <you@example.com>",
 }
 
-expose(tree("/", "/"))
 package("msi", options = {"prefix": "/"}, **common)
 package("nsis", options = {"prefix": "/"}, **common)
 package("zip", **common)

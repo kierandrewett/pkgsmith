@@ -37,13 +37,14 @@ they install.
 Notes on the table:
 
 - `cargo install --root prefix/usr` also works. It writes `.crates.toml` and `.crates2.json` into `prefix/usr`, so leave
-  them out with `exclude = ["/usr/.crates*"]`.
+  them out with `exclude("/usr/.crates*")` before the packages.
 - A Python prefix holds the interpreter version in its path, such as `usr/lib/python3.13/site-packages`. A package of it
   is for that version only, so name the Python package it needs in `depends`.
 - Start from an empty folder each time: `rm -rf prefix` before the build. pkgsmith packs what is there, including files
   that an earlier build left behind.
 
-Then write the script. This one packs the whole prefix into six formats:
+Then write the script. This one packs the whole prefix into six formats. A package holds the whole prefix unless the
+script narrows it with `include(...)` and `exclude(...)`:
 
 ```python
 common = {
@@ -51,8 +52,6 @@ common = {
     "version": "1.0.0",
     "description": "A small program",
 }
-
-expose(tree("/", "/"))
 
 for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
     package(fmt, **common)
@@ -67,10 +66,11 @@ for fmt in ["rpm", "deb", "archlinux", "apk", "tar", "zip"]:
   overrides it for one entry.
 - **The owner is root.** Every file is owned by `root:root` in the package, whoever owns it in the prefix. Set `owner`
   and `group` on an entry to change that.
-- **Symbolic links stay links.** A `tree` keeps each link as it reads. Make links relative, such as `hello -> hello-1.0`.
-  An absolute link into the staging folder would point nowhere on the installed system.
-- **Folders come with their files.** A `tree` includes the folders below it. The root `/` and system folders such as
-  `/usr` are not owned by the package.
+- **Symbolic links stay links.** A link in the prefix is packed as it reads. Make links relative, such as
+  `hello -> hello-1.0`. An absolute link into the staging folder would point nowhere on the installed system.
+  A `file` or `config` entry that reads through a link must stay inside the prefix or the script folder.
+- **Folders come with their files.** The package holds the folders below the root with their files. The root `/` and
+  system folders such as `/usr`, `/usr/bin` and `/etc` are not owned by the package, unless `directory(...)` asks.
 - **Name files by their final place.** Put configuration under `/etc`, units under `/usr/lib/systemd/system`, and so on.
   Mark configuration files with `config_files`. See [contents](contents.md).
 
@@ -95,12 +95,10 @@ to the script. Name it with `here()`:
 ```python
 common = {"name": "hello", "version": "1.0.0", "description": "A small program"}
 
-expose(
-    tree("/", "/"),
-    file(here() + "/LICENSE", "/usr/share/licenses/hello/LICENSE"),
-)
-package("tar", **common)
+package("tar", contents = [file(here() + "/LICENSE", "/usr/share/licenses/hello/LICENSE")], **common)
 ```
+
+The `contents` of a call add to the whole prefix.
 
 ## Other architectures and C libraries
 
@@ -152,7 +150,7 @@ the prefix the same each time, build in the same path, and use the settings of y
 | --------------------------------------------- | -------------------------------------------------------------------------- |
 | `cannot read the prefix prefix`               | The folder does not exist. Make it with your build, or name it with `--prefix` |
 | `declares no package`                         | No `package` call ran. Check your `if` conditions with `pkgsmith plan`     |
-| `outside the prefix`                          | A path leaves the prefix and the script folder. Name a path inside one of them |
+| `outside the prefix`                          | A path or a link leads out of the prefix and the script folder. Name a path inside one |
 | `matches no files`                            | A glob in `src` found nothing. Check the prefix with `ls -R prefix`        |
-| A package holds too much                      | Add `exclude` entries. `pkgsmith files` shows the list                     |
-| A file is missing from the package            | It is not in the prefix, or it is not exposed. Check both                  |
+| A package holds too much                      | Call `exclude(...)` or `include(...)` before the package. `pkgsmith files` shows the list |
+| A file is missing from the package            | It is not in the prefix, or an `include`, an `exclude` or an `expose` left it out. Check each |

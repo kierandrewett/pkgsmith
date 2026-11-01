@@ -4,7 +4,8 @@
 #   pip install --no-deps --prefix=prefix/usr .
 #   pkgsmith build -f examples/python-app.star
 
-expose(tree("/", "/"))
+# pip writes caches and bytecode that the package does not need.
+exclude("**/__pycache__/**", "**/*.pyc")
 
 # The Python package has a different name on each system.
 python = {
@@ -22,6 +23,4 @@ for format in ["rpm", "deb", "archlinux", "apk"]:
         description = "A note taking tool",
         arch = "all",
         depends = [python[format]],
-        # pip writes caches and bytecode that the package does not need.
-        exclude = ["**/__pycache__", "**/*.pyc"],
     )
