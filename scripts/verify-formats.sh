@@ -256,23 +256,43 @@ YAML
 fi
 
 if selected dmg; then
-    mkdir -p lang/dmg/bin
-    printf 'hi-from-dmg\n' > lang/dmg/bin/hi
-    chmod 755 lang/dmg/bin/hi
-    lang_manifest dmg <<'YAML'
-contents:
-  - { src: lang/dmg/bin/hi, dst: /usr/bin/hi }
-dmg:
-  volume_name: Hi Tools
-YAML
+    # 320 files in one folder make the catalog more than one node. The other files cover sizes, modes and names.
+    rm -rf lang/dmg; mkdir -p lang/dmg/many lang/dmg/bin
+    for i in $(seq -w 0 319); do printf 'file %s\n' "$i" > "lang/dmg/many/f$i.txt"; done
+    head -c 5242880 /dev/urandom > lang/dmg/big.bin
+    : > lang/dmg/empty.txt
+    printf 'hi-from-dmg\n' > lang/dmg/bin/hi; chmod 755 lang/dmg/bin/hi
+    printf 'spaced\n' > "lang/dmg/with space.txt"
+    long="$(printf 'n%.0s' $(seq 1 200)).txt"; printf 'long\n' > "lang/dmg/$long"
+    {
+        echo "contents:"
+        echo "  - { src: lang/dmg/bin/hi, dst: /usr/bin/hi }"
+        echo "  - { src: lang/dmg/big.bin, dst: /usr/share/hi/big.bin }"
+        echo "  - { src: lang/dmg/empty.txt, dst: /usr/share/hi/empty.txt }"
+        echo "  - { src: \"lang/dmg/with space.txt\", dst: \"/usr/share/hi/with space.txt\" }"
+        echo "  - { src: lang/dmg/$long, dst: /usr/share/hi/$long }"
+        for f in lang/dmg/many/*.txt; do echo "  - { src: $f, dst: /usr/share/hi/many/${f##*/} }"; done
+        echo "dmg:"
+        echo "  volume_name: Hi Tools"
+    } | lang_manifest dmg
     check "dmg: build" build_lang dmg
-    check "dmg: dmg2img, fsck.hfsplus, 7z extract (latest Fedora)" in_image "$IMAGE_FEDORA" out-dmg '
-        dnf -y -q install dmg2img hfsplus-tools p7zip p7zip-plugins >/dev/null
+    cp -r lang/dmg out-dmg/src
+    check "dmg: fsck.hfsplus, 7z extract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-dmg '
+        dnf -y -q install dmg2img hfsplus-tools p7zip p7zip-plugins diffutils findutils >/dev/null
         cd /tmp && dmg2img /p/*.dmg vol.img >/dev/null
         # The first 64 sectors are the partition map. The HFS+ volume follows.
         dd if=vol.img of=hfs.img bs=512 skip=64 status=none
         fsck.hfsplus -n hfs.img | grep -q "appears to be OK"
-        7z x -y -oex hfs.img >/dev/null; grep -rq hi-from-dmg ex; test -x "$(find ex -name hi -type f | head -1)"'
+        7z x -y -oex hfs.img >/dev/null
+        test "$(find ex -name "f*.txt" | wc -l)" -eq 320
+        cmp ex/Hi\ Tools/usr/share/hi/big.bin /p/src/big.bin
+        cmp ex/Hi\ Tools/usr/bin/hi /p/src/bin/hi
+        cmp "ex/Hi Tools/usr/share/hi/with space.txt" "/p/src/with space.txt"
+        cmp ex/Hi\ Tools/usr/share/hi/empty.txt /p/src/empty.txt
+        for f in /p/src/many/*.txt; do cmp "$f" "ex/Hi Tools/usr/share/hi/many/${f##*/}"; done
+        test -x "ex/Hi Tools/usr/bin/hi"
+        long="$(printf "n%.0s" $(seq 1 200)).txt"
+        find ex -type f -name "$long" | grep -q .'
 fi
 if selected flatpak; then
     if need flatpak; then

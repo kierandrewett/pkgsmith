@@ -195,13 +195,12 @@ A disk image has no install path. Files sit on the volume in the same layout as 
 | `volume_name` | 1 to 31 bytes, no `:`                   | The package name   | The name of the volume in the Finder                |
 | `compression` | `zlib`, `none`                          | `zlib`             | The compression of the blocks in the image          |
 
-Checked with `scripts/verify-formats.sh dmg`:
+Checked with `scripts/verify-formats.sh dmg` on a volume with 320 files in one folder, a 5 MiB file, an empty file, an
+executable, a name with a space and a 200-character name:
 
 - `dmg2img` reads the image.
 - `fsck.hfsplus` reports the volume as OK.
-- `7z` extracts the files.
-
-By hand, the same tools also checked a volume with 320 files in one folder, a 5 MiB file and a 200-character name.
+- `7z` extracts the files, and each one is byte for byte equal to its source.
 
 Not checked:
 
