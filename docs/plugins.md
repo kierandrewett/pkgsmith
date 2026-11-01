@@ -39,9 +39,10 @@ pkgsmith loads every such file in these folders, in this order:
 1. The folders you give with `--plugin-path DIR`. Repeat the option for more.
 2. The folders in `PKGSMITH_PLUGIN_PATH`, separated by `:`. On Windows the separator is `;`.
 3. The folder of the `pkgsmith` binary. A `cargo build` of this repository puts the plugins there.
-4. `lib/pkgsmith/plugins` in the folder above the binary. A package that installs `/usr/bin/pkgsmith` finds
+4. The `plugins` folder next to the binary. The tarball of a release unpacks to the program and a `plugins` folder.
+5. `lib/pkgsmith/plugins` in the folder above the binary. A package that installs `/usr/bin/pkgsmith` finds
    `/usr/lib/pkgsmith/plugins` this way.
-5. The data folder of the user, with `pkgsmith/plugins` below it:
+6. The data folder of the user, with `pkgsmith/plugins` below it:
 
    | System  | Folder                                                                          |
    | ------- | ------------------------------------------------------------------------------- |
@@ -49,7 +50,7 @@ pkgsmith loads every such file in these folders, in this order:
    | macOS   | `~/Library/Application Support/pkgsmith/plugins`                                |
    | Windows | `%LOCALAPPDATA%\pkgsmith\plugins`                                              |
 
-6. The folders for all users:
+7. The folders for all users:
 
    | System  | Folders                                                                                        |
    | ------- | ---------------------------------------------------------------------------------------------- |

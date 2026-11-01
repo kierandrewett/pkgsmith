@@ -85,6 +85,8 @@ pub fn search_path(extra: &[PathBuf]) -> Vec<PathBuf> {
         && let Some(dir) = exe.parent()
     {
         path.push(dir.to_path_buf());
+        // The tarball of a release holds the program and a `plugins` folder.
+        path.push(dir.join("plugins"));
         if let Some(prefix) = dir.parent() {
             path.push(prefix.join("lib/pkgsmith/plugins"));
         }
