@@ -12,6 +12,7 @@ format and every signing method is a plugin: a shared library named `pkgsmith-pl
 | `crates/pkgsmith-plugin/` | The SDK: the `Package` type, the C interface, the `Plugin` trait, shared helpers |
 | `crates/pkgsmith-windows-app/` | The MSIX and APPX package writer that the `msix` and `appx` plugins share         |
 | `plugins/*/`              | The built-in plugins. One `cdylib` crate each. `plugins/*` joins the workspace by itself |
+| `vendor/msi/`             | The `msi` crate with long string references, routed in by `[patch.crates-io]`; see its `PATCHES.md` |
 | `examples/`               | Complete scripts, and a C and a Rust example plugin in `examples/plugins/`     |
 | `docs/`                   | The documentation. `README.md` links to every page                               |
 | `pkgsmith.star`           | The script that pkgsmith uses to package itself, from a prefix                   |
