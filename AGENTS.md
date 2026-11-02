@@ -55,7 +55,8 @@ Each script writes a small package, installs or inspects it with the tool of the
 `skip` for every check. A run writes `verify-formats.log` with the digest of every test system.
 
 - The suite uses the newest release of every distro on each run. Do not pin a release in the script: the suite is there
-  to catch what a new release breaks. Use `IMAGE_FEDORA=fedora:43` and the like to reproduce one fixed release.
+  to catch what a new release breaks. Use `IMAGE_FEDORA=fedora:43` and the like to reproduce one fixed release. The one
+  exception is `IMAGE_ALPINE_APK2` (Alpine 3.22), which checks apk-tools 2 until Alpine 3.22 reaches its end of life.
 - A new format plugin gets its checks in `scripts/verify-formats.sh` in the same change. Build, install, run, remove, and
   check the package manager's own verification (`rpm -V`, `dpkg -V`, `pacman -Qkk`).
 - Say which checks could not run here (snap needs snapd, FreeBSD needs FreeBSD) in the commit and in the docs. Never claim
