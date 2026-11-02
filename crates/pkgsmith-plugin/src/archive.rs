@@ -72,7 +72,8 @@ pub struct Leading {
 /// What differs between the tar flavours of the package formats.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TarStyle {
-    /// Write a pax header with `APK-TOOLS.checksum.SHA1` before every regular file, as Alpine packages do.
+    /// Write a pax header with `APK-TOOLS.checksum.SHA1` before every regular file and symlink, as Alpine packages do.
+    /// A symlink target that does not fit the ustar header goes in the same pax header as `linkpath`.
     pub apk_checksums: bool,
     /// Leave out the two zero blocks that end a tar. Alpine joins several tar streams into one package and the first
     /// ones must not end.
@@ -147,7 +148,26 @@ pub fn tar_styled(
                     &entry.owner,
                     &entry.group,
                 )?;
-                builder.append_link(&mut h, &name, target)?;
+                if style.apk_checksums {
+                    // apk-tools 2 marks a package broken when a symlink has no checksum, and checks it against the SHA-1
+                    // of the target. apk-tools skips the GNU long link header that `append_link` writes for a long
+                    // target, so a long target goes in a pax `linkpath` record instead.
+                    let mut records = vec![];
+                    let written = if target.len() > h.as_old().linkname.len() {
+                        records.push(format!("linkpath={target}"));
+                        target.as_bytes().to_vec()
+                    } else {
+                        // The tar crate drops `.` components, so hash what the header holds.
+                        h.set_link_name(target)?;
+                        h.link_name_bytes().unwrap_or_default().into_owned()
+                    };
+                    let value = crate::hash::hex(&sha1::Sha1::digest(&written));
+                    records.push(format!("APK-TOOLS.checksum.SHA1={value}"));
+                    append_pax(&mut builder, &name, &records, mtime)?;
+                    builder.append_data(&mut h, &name, io::empty())?;
+                } else {
+                    builder.append_link(&mut h, &name, target)?;
+                }
             }
             Data::File { src, size } => {
                 if style.apk_checksums {
@@ -157,7 +177,7 @@ pub fn tar_styled(
                     append_pax(
                         &mut builder,
                         &name,
-                        &format!("APK-TOOLS.checksum.SHA1={value}"),
+                        &[format!("APK-TOOLS.checksum.SHA1={value}")],
                         mtime,
                     )?;
                 }
@@ -184,22 +204,25 @@ pub fn tar_styled(
     Ok(bytes)
 }
 
-/// A pax extended header before a file, named `dir/PaxHeaders/file` and written as a ustar entry like abuild does.
-/// apk-tools reads its checksum record there.
+/// A pax extended header before a member, named `dir/PaxHeaders/name` and written as a ustar entry like abuild does.
+/// apk-tools reads the checksum and the long link target of the member there.
 fn append_pax(
     builder: &mut tar::Builder<Vec<u8>>,
     path: &str,
-    record: &str,
+    records: &[String],
     mtime: u64,
 ) -> Result<()> {
     // A pax record is "<length> <key>=<value>\n", and the length counts its own digits.
-    let body = {
-        let mut length = record.len() + 3;
-        while format!("{length} {record}\n").len() != length {
-            length = format!("{length} {record}\n").len();
-        }
-        format!("{length} {record}\n")
-    };
+    let body: String = records
+        .iter()
+        .map(|record| {
+            let mut length = record.len() + 3;
+            while format!("{length} {record}\n").len() != length {
+                length = format!("{length} {record}\n").len();
+            }
+            format!("{length} {record}\n")
+        })
+        .collect();
     let (dir, base) = path
         .rsplit_once('/')
         .map(|(d, b)| (format!("{d}/"), b))

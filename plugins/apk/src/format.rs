@@ -146,3 +146,228 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
     std::fs::write(&path, file)?;
     Ok(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pkgsmith_plugin::{Data, Entry};
+    use std::collections::BTreeMap;
+    use std::io::{Cursor, Read};
+    use std::path::Path;
+
+    const PROGRAM: &[u8] = b"#!/bin/sh\necho hi\n";
+    /// Longer than the 100 bytes that a ustar header holds for a link target.
+    const LONG_TARGET: &str = "/usr/share/hi/a-folder-with-a-long-name/and-another-long-folder-name/so-the-target-passes-100-bytes/file";
+
+    fn entry(path: &str, data: Data, mode: u32) -> Entry {
+        Entry {
+            path: path.into(),
+            data,
+            mode,
+            owner: "root".into(),
+            group: "root".into(),
+            config: false,
+        }
+    }
+
+    /// A package with a program, an empty file, and symlinks: a plain one, one whose target has a `.` component that the
+    /// tar crate drops, and one with a long target.
+    fn sample(dir: &Path) -> Package {
+        let program = dir.join("hi");
+        std::fs::write(&program, PROGRAM).unwrap();
+        let empty = dir.join("empty");
+        std::fs::write(&empty, "").unwrap();
+        let link = |target: &str| Data::Symlink {
+            target: target.into(),
+        };
+        Package {
+            format: "apk".into(),
+            name: "hi".into(),
+            version: "1.0.0".into(),
+            release: "1".into(),
+            arch: "amd64".into(),
+            description: "Says hi".into(),
+            entries: vec![
+                entry(
+                    "/usr/bin/hi",
+                    Data::File {
+                        src: program,
+                        size: PROGRAM.len() as u64,
+                    },
+                    0o755,
+                ),
+                entry(
+                    "/usr/share/hi/empty",
+                    Data::File {
+                        src: empty,
+                        size: 0,
+                    },
+                    0o644,
+                ),
+                entry("/usr/bin/hello", link("/usr/bin/hi"), 0o777),
+                entry("/usr/bin/hi-dot", link("/usr/bin/./hi"), 0o777),
+                entry("/usr/bin/hi-long", link(LONG_TARGET), 0o777),
+            ],
+            mtime: 1_700_000_000,
+            out: dir.join("out"),
+            ..Default::default()
+        }
+    }
+
+    /// The gzip streams of a package file, in order.
+    fn streams(file: &[u8]) -> Vec<&[u8]> {
+        let mut cursor = Cursor::new(file);
+        let mut out = vec![];
+        while (cursor.position() as usize) < file.len() {
+            let start = cursor.position() as usize;
+            flate2::bufread::GzDecoder::new(&mut cursor)
+                .read_to_end(&mut Vec::new())
+                .unwrap();
+            out.push(&file[start..cursor.position() as usize]);
+        }
+        out
+    }
+
+    fn gunzip(stream: &[u8]) -> Vec<u8> {
+        let mut out = vec![];
+        flate2::read::GzDecoder::new(stream)
+            .read_to_end(&mut out)
+            .unwrap();
+        out
+    }
+
+    /// A tar member as apk-tools 2 reads it (`apk_tar_parse` in `src/io_archive.c`).
+    struct Member {
+        path: String,
+        kind: tar::EntryType,
+        link: Option<String>,
+        /// The records of the pax header right before the member.
+        pax: BTreeMap<String, String>,
+        body: Vec<u8>,
+    }
+
+    /// The members of a tar, read like apk-tools 2 does: a pax header gives the `path`, `linkpath` and checksum of the
+    /// member after it, and a GNU long link header (type `K`) is skipped.
+    fn members(tar_bytes: &[u8]) -> Vec<Member> {
+        let mut archive = tar::Archive::new(tar_bytes);
+        let mut pax = BTreeMap::new();
+        let mut out = vec![];
+        for entry in archive.entries().unwrap().raw(true) {
+            let mut entry = entry.unwrap();
+            let mut body = vec![];
+            entry.read_to_end(&mut body).unwrap();
+            let header = entry.header();
+            match header.entry_type() {
+                tar::EntryType::XHeader => {
+                    for record in tar::PaxExtensions::new(&body) {
+                        let record = record.unwrap();
+                        pax.insert(
+                            record.key().unwrap().to_owned(),
+                            record.value().unwrap().to_owned(),
+                        );
+                    }
+                }
+                tar::EntryType::GNULongLink => {}
+                kind => {
+                    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+                    out.push(Member {
+                        path: pax
+                            .get("path")
+                            .cloned()
+                            .unwrap_or_else(|| text(&header.path_bytes())),
+                        kind,
+                        link: pax
+                            .get("linkpath")
+                            .cloned()
+                            .or_else(|| header.link_name_bytes().map(|b| text(&b))),
+                        pax: std::mem::take(&mut pax),
+                        body,
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    fn sha1_hex(data: &[u8]) -> String {
+        hex(&sha1::Sha1::digest(data))
+    }
+
+    /// The streams of the sample package: control, then data. It is not signed.
+    fn sample_streams(dir: &Path) -> (Vec<Member>, Vec<u8>) {
+        let file = std::fs::read(build(&sample(dir), &Host::silent()).unwrap()).unwrap();
+        let streams = streams(&file);
+        assert_eq!(streams.len(), 2, "control and data");
+        (members(&gunzip(streams[0])), streams[1].to_vec())
+    }
+
+    fn find<'a>(members: &'a [Member], path: &str) -> &'a Member {
+        members
+            .iter()
+            .find(|m| m.path == path)
+            .unwrap_or_else(|| panic!("{path} is not in the tar"))
+    }
+
+    #[test]
+    fn every_file_and_symlink_carries_the_sha1_that_apk_tools_2_checks() {
+        // apk-tools 2 marks a package broken (`f:f` in its database, and `apk add` exits 1) when a member that is not a
+        // folder or a device has no checksum. It hashes the bytes of a file and the target of a symlink (`need_checksum`
+        // in src/database.c, `apk_fileinfo_get` in src/io.c).
+        let dir = tempfile::tempdir().unwrap();
+        let (_, data) = sample_streams(dir.path());
+        let members = members(&gunzip(&data));
+        for (path, bytes) in [
+            ("usr/bin/hi", PROGRAM),
+            ("usr/share/hi/empty", b"".as_slice()),
+            ("usr/bin/hello", b"/usr/bin/hi".as_slice()),
+            // The checksum is of the target as the archive holds it, which is what apk-tools finds on disk.
+            ("usr/bin/hi-dot", b"/usr/bin/hi".as_slice()),
+            ("usr/bin/hi-long", LONG_TARGET.as_bytes()),
+        ] {
+            let checksum = find(&members, path).pax.get("APK-TOOLS.checksum.SHA1");
+            assert_eq!(checksum, Some(&sha1_hex(bytes)), "{path}");
+        }
+        for member in members.iter().filter(|m| m.kind.is_dir()) {
+            assert!(member.pax.is_empty(), "{} has a pax header", member.path);
+        }
+    }
+
+    #[test]
+    fn a_link_target_longer_than_ustar_holds_reaches_apk_tools_2_whole() {
+        // apk-tools 2 reads a long target from a pax `linkpath` record. It skips the GNU long link header, so a target
+        // written that way is cut to what the ustar header holds.
+        let dir = tempfile::tempdir().unwrap();
+        let (_, data) = sample_streams(dir.path());
+        let members = members(&gunzip(&data));
+        let link = find(&members, "usr/bin/hi-long");
+        assert!(link.kind.is_symlink());
+        assert_eq!(link.link.as_deref(), Some(LONG_TARGET));
+        assert_eq!(
+            find(&members, "usr/bin/hello").link.as_deref(),
+            Some("/usr/bin/hi")
+        );
+    }
+
+    #[test]
+    fn datahash_is_the_sha256_of_the_data_stream() {
+        // apk-tools refuses the package when the data stream does not match `datahash` in `.PKGINFO`.
+        let dir = tempfile::tempdir().unwrap();
+        let (control, data) = sample_streams(dir.path());
+        let pkginfo = String::from_utf8(find(&control, ".PKGINFO").body.clone()).unwrap();
+        let datahash = pkginfo
+            .lines()
+            .find_map(|l| l.strip_prefix("datahash = "))
+            .expect("a datahash line");
+        assert_eq!(datahash, hex(&Sha256::digest(&data)));
+    }
+
+    #[test]
+    fn the_same_package_gives_the_same_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut package = sample(dir.path());
+        let first = std::fs::read(build(&package, &Host::silent()).unwrap()).unwrap();
+        package.out = dir.path().join("again");
+        let second = std::fs::read(build(&package, &Host::silent()).unwrap()).unwrap();
+        assert_eq!(first, second);
+    }
+}

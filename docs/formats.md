@@ -71,6 +71,15 @@ A format that depends on a runtime or a target OS says so below. Signing is in [
 | ---------- | ------ | ---------------- | -------------------- |
 | `packager` | Text   | The maintainer   | The `packager` field |
 
+## apk
+
+The format has no options. Install an unsigned package with `apk add --allow-untrusted`; [signing](signing.md) says how
+to sign one.
+
+Every regular file and symlink in the data part carries an `APK-TOOLS.checksum.SHA1` pax record, as `abuild` writes
+it: the SHA-1 of the file, or of the link target. A link target longer than 100 bytes goes in a pax `linkpath`
+record. apk-tools 2 marks a package broken, and `apk add` exits 1, when a file or a link has no checksum.
+
 ## tar and zip
 
 | Format | Key           | Values                                | Default | Effect                                         |
