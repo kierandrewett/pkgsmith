@@ -2674,6 +2674,8 @@ dependencies = [
  "msi",
  "pkgsmith-plugin",
  "serde",
+ "serde_json",
+ "tempfile",
  "time",
  "uuid",
 ]

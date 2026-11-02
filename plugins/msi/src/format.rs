@@ -52,6 +52,10 @@ struct Options {
     upgrade_code: Option<String>,
     /// Entries are taken relative to this absolute Unix path. Default `/usr`. A path outside it stops the build.
     prefix: Option<String>,
+    /// Installed files, given by their entry path, that get a Start Menu shortcut in a folder named after the
+    /// package: `/usr/bin/hi.exe` gives `Start Menu\Programs\NAME\hi.lnk`. Removing the package removes them.
+    #[serde(default)]
+    shortcuts: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -83,6 +87,8 @@ struct Node {
 }
 
 struct FileItem {
+    /// The entry path in the package, as the manifest names it.
+    entry: String,
     key: String,
     component: String,
     directory: String,
@@ -98,6 +104,20 @@ struct Folder {
     name: String,
     component: String,
 }
+
+/// A Start Menu shortcut to an installed file.
+struct Shortcut {
+    id: String,
+    /// The name in the `Shortcut` table, `SHORT|long` without the `.lnk` that the installer adds.
+    name: String,
+    /// The key of the target file, and the component and folder that hold it.
+    file: String,
+    component: String,
+    directory: String,
+}
+
+/// The Start Menu folder that holds the shortcuts: its `Directory` identifier and its name in the database.
+const SHORTCUT_FOLDER: &str = "ShortcutFolder";
 
 /// Builds the package and returns its path.
 pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
@@ -147,6 +167,16 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
     if files.is_empty() {
         bail!("an MSI needs at least one file, and the manifest has none below {prefix}");
     }
+    let shortcuts = shortcuts(&options, &files)?;
+    let shortcut_folder = if shortcuts.is_empty() {
+        String::new()
+    } else {
+        check_name(
+            &package.name,
+            "the package name, which names the Start Menu folder of the shortcuts",
+        )?;
+        db_name(&package.name, &mut BTreeSet::new())
+    };
     let total: u64 = files.iter().map(|f| f.size).sum();
     if total >= 1 << 31 {
         bail!("the files are {total} bytes, and an embedded cabinet holds less than 2 GiB");
@@ -193,6 +223,8 @@ pub fn build(package: &Package, host: &Host) -> Result<PathBuf> {
         version: &version,
         folders: &folders,
         files: &files,
+        shortcuts: &shortcuts,
+        shortcut_folder: &shortcut_folder,
         root,
     };
     tables.write(&mut database)?;
@@ -460,6 +492,7 @@ fn layout(
         };
         let short = db_name(&name, taken.entry(directory.clone()).or_default());
         files.push(FileItem {
+            entry: entry.path.clone(),
             key: format!("f{}", index + 1),
             component: format!("Cf_{}", index + 1),
             directory,
@@ -474,6 +507,42 @@ fn layout(
         file.sequence = (n + 1) as i32;
     }
     Ok((folders, files))
+}
+
+/// The shortcuts that `msi.shortcuts` asks for: one for each installed file that it names.
+fn shortcuts(options: &Options, files: &[FileItem]) -> Result<Vec<Shortcut>> {
+    let mut taken = BTreeSet::new();
+    let mut shortcuts = Vec::new();
+    for (n, path) in options.shortcuts.iter().enumerate() {
+        let file = files
+            .iter()
+            .find(|file| &file.entry == path)
+            .with_context(|| {
+                format!("msi.shortcuts: {path} is not an installed file under the prefix")
+            })?;
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let stem = name
+            .rsplit_once('.')
+            .filter(|(stem, _)| !stem.is_empty())
+            .map_or(name, |(stem, _)| stem);
+        if !taken.insert(stem.to_ascii_lowercase()) {
+            bail!("msi.shortcuts: two shortcuts would both be named {stem}.lnk");
+        }
+        shortcuts.push(Shortcut {
+            id: format!("s{}", n + 1),
+            name: stem.to_owned(),
+            file: file.key.clone(),
+            component: file.component.clone(),
+            directory: file.directory.clone(),
+        });
+    }
+    // The 8.3 names of the links are unique among the links, which share one folder.
+    let mut short = BTreeSet::new();
+    for shortcut in &mut shortcuts {
+        check_name(&shortcut.name, "msi.shortcuts")?;
+        shortcut.name = db_name(&shortcut.name, &mut short);
+    }
+    Ok(shortcuts)
 }
 
 fn cabinet(package: &Package, files: &[FileItem]) -> Result<Vec<u8>> {
@@ -510,6 +579,9 @@ struct Tables<'a> {
     version: &'a str,
     folders: &'a [Folder],
     files: &'a [FileItem],
+    shortcuts: &'a [Shortcut],
+    /// The database name of the Start Menu folder of the shortcuts.
+    shortcut_folder: &'a str,
     root: &'a str,
 }
 
@@ -593,6 +665,18 @@ impl Tables<'_> {
                 text(&folder.id),
                 text(&folder.parent),
                 text(&folder.name),
+            ]);
+        }
+        if !self.shortcuts.is_empty() {
+            directories.push(vec![
+                text("ProgramMenuFolder"),
+                text("TARGETDIR"),
+                text("."),
+            ]);
+            directories.push(vec![
+                text(SHORTCUT_FOLDER),
+                text("ProgramMenuFolder"),
+                text(self.shortcut_folder),
             ]);
         }
         db.insert_rows(Insert::into("Directory").rows(directories))?;
@@ -726,6 +810,74 @@ impl Tables<'_> {
             ),
         )?;
 
+        if let Some(first) = self.shortcuts.first() {
+            db.create_table(
+                "Shortcut",
+                vec![
+                    Column::build("Shortcut").primary_key().id_string(72),
+                    Column::build("Directory_").id_string(72),
+                    Column::build("Name").localizable().text_string(128),
+                    Column::build("Component_").id_string(72),
+                    Column::build("Target").formatted_string(72),
+                    Column::build("Arguments").nullable().formatted_string(255),
+                    Column::build("Description")
+                        .nullable()
+                        .localizable()
+                        .text_string(255),
+                    Column::build("Hotkey").nullable().int16(),
+                    Column::build("Icon_").nullable().id_string(72),
+                    Column::build("IconIndex").nullable().int16(),
+                    Column::build("ShowCmd").nullable().int16(),
+                    Column::build("WkDir").nullable().id_string(72),
+                ],
+            )?;
+            db.insert_rows(
+                Insert::into("Shortcut").rows(
+                    self.shortcuts
+                        .iter()
+                        .map(|s| {
+                            vec![
+                                text(&s.id),
+                                text(SHORTCUT_FOLDER),
+                                text(&s.name),
+                                text(&s.component),
+                                text(format!("[#{}]", s.file)),
+                                Value::Null,
+                                Value::Null,
+                                Value::Null,
+                                Value::Null,
+                                Value::Null,
+                                Value::Null,
+                                text(&s.directory),
+                            ]
+                        })
+                        .collect(),
+                ),
+            )?;
+            // A RemoveFile row without a file name removes the folder of the links when the package is removed, if it
+            // is empty. InstallMode 2 is on removal.
+            db.create_table(
+                "RemoveFile",
+                vec![
+                    Column::build("FileKey").primary_key().id_string(72),
+                    Column::build("Component_").id_string(72),
+                    Column::build("FileName")
+                        .nullable()
+                        .localizable()
+                        .text_string(255),
+                    Column::build("DirProperty").id_string(72),
+                    Column::build("InstallMode").int16(),
+                ],
+            )?;
+            db.insert_rows(Insert::into("RemoveFile").row(vec![
+                text("rm_shortcuts"),
+                text(&first.component),
+                Value::Null,
+                text(SHORTCUT_FOLDER),
+                Value::Int(2),
+            ]))?;
+        }
+
         db.create_table(
             "Media",
             vec![
@@ -790,7 +942,7 @@ impl Tables<'_> {
         )?;
         // The numbers are the suggested sequence of the Windows Installer documentation. FindRelatedProducts only has
         // to come before RemoveExistingProducts, which goes after InstallFinalize, the most efficient place.
-        let sequence: [(&str, i32); 18] = [
+        let mut sequence: Vec<(&str, i32)> = vec![
             ("FindRelatedProducts", 25),
             ("CostInitialize", 800),
             ("FileCost", 900),
@@ -810,6 +962,10 @@ impl Tables<'_> {
             ("InstallFinalize", 6600),
             ("RemoveExistingProducts", 6700),
         ];
+        if !self.shortcuts.is_empty() {
+            sequence.push(("RemoveShortcuts", 3200));
+            sequence.push(("CreateShortcuts", 4500));
+        }
         db.insert_rows(
             Insert::into("InstallExecuteSequence").rows(
                 sequence
@@ -914,5 +1070,164 @@ mod tests {
             assert!(check_name(bad, "test").is_err(), "{bad:?}");
         }
         assert!(check_name("fine name.txt", "test").is_ok());
+    }
+
+    /// A package of `count` files, spread over folders, written below `dir`. Every file and folder name is unique, so
+    /// each file adds several strings to the database.
+    fn sample(dir: &std::path::Path, count: usize, options: serde_json::Value) -> Package {
+        let source = dir.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let mut entries = vec![];
+        for n in 0..count {
+            let src = source.join(format!("{n}"));
+            std::fs::write(&src, format!("file {n}\n")).unwrap();
+            entries.push(pkgsmith_plugin::Entry {
+                path: format!(
+                    "/usr/lib/folder-{}/sub-{}/module_{n}_with_a_long_name.py",
+                    n % 300,
+                    n % 7
+                ),
+                data: Data::File {
+                    src,
+                    size: format!("file {n}\n").len() as u64,
+                },
+                mode: 0o644,
+                owner: "root".into(),
+                group: "root".into(),
+                config: false,
+            });
+        }
+        let program = source.join("program.exe");
+        std::fs::write(&program, "MZ").unwrap();
+        entries.push(pkgsmith_plugin::Entry {
+            path: "/usr/bin/Big Program.exe".into(),
+            data: Data::File {
+                src: program,
+                size: 2,
+            },
+            mode: 0o755,
+            owner: "root".into(),
+            group: "root".into(),
+            config: false,
+        });
+        Package {
+            name: "big".into(),
+            version: "1.0.0".into(),
+            release: "1".into(),
+            arch: "amd64".into(),
+            description: "Many files".into(),
+            maintainer: Some("Test <test@example.org>".into()),
+            entries,
+            options,
+            mtime: 1_700_000_000,
+            out: dir.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn rows(database: &mut msi::Package<File>, table: &str) -> Vec<msi::Row> {
+        database
+            .select_rows(msi::Select::table(table))
+            .unwrap()
+            .collect()
+    }
+
+    #[test]
+    fn a_small_package_keeps_two_byte_string_references() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = sample(dir.path(), 50, serde_json::Value::Null);
+        let path = build(&package, &Host::silent()).unwrap();
+        let mut database = msi::open(path).unwrap();
+        assert!(!database.long_string_refs());
+        assert_eq!(rows(&mut database, "File").len(), 51);
+    }
+
+    #[test]
+    fn a_package_of_thirty_thousand_files_writes_long_string_references() {
+        let dir = tempfile::tempdir().unwrap();
+        let package = sample(dir.path(), 30_000, serde_json::Value::Null);
+        let path = build(&package, &Host::silent()).unwrap();
+        let mut database = msi::open(path).unwrap();
+        assert!(database.long_string_refs());
+        let files = rows(&mut database, "File");
+        assert_eq!(files.len(), 30_001);
+        assert_eq!(
+            rows(&mut database, "Media")[0]["LastSequence"],
+            msi::Value::Int(30_001)
+        );
+        let named = |long: &str| {
+            files.iter().any(|row| {
+                row["FileName"]
+                    .as_str()
+                    .is_some_and(|name| name.ends_with(&format!("|{long}")))
+            })
+        };
+        assert!(named("Big Program.exe"));
+        assert!(named("module_29999_with_a_long_name.py"));
+        // Every file is a component of its own, and every folder is one as well.
+        let components = rows(&mut database, "Component").len();
+        assert!(components > 30_001 + 300, "{components}");
+        assert_eq!(rows(&mut database, "FeatureComponents").len(), components);
+    }
+
+    #[test]
+    fn shortcuts_name_installed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = serde_json::json!({"shortcuts": ["/usr/bin/Big Program.exe"]});
+        let package = sample(dir.path(), 3, options);
+        let path = build(&package, &Host::silent()).unwrap();
+        let mut database = msi::open(path).unwrap();
+        let links = rows(&mut database, "Shortcut");
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0]["Name"],
+            msi::Value::Str("BIGPRO~1|Big Program".into())
+        );
+        assert_eq!(
+            links[0]["Directory_"],
+            msi::Value::Str(SHORTCUT_FOLDER.into())
+        );
+        let target = links[0]["Target"].as_str().unwrap().to_owned();
+        let file = target.trim_start_matches("[#").trim_end_matches(']');
+        let files = rows(&mut database, "File");
+        let target_file = files
+            .iter()
+            .find(|row| row["File"] == msi::Value::Str(file.into()))
+            .unwrap();
+        assert_eq!(
+            target_file["FileName"],
+            msi::Value::Str("BIGPRO~1.EXE|Big Program.exe".into())
+        );
+        assert_eq!(target_file["Component_"], links[0]["Component_"]);
+        let directories = rows(&mut database, "Directory");
+        let folder = directories
+            .iter()
+            .find(|row| row["Directory"] == msi::Value::Str(SHORTCUT_FOLDER.into()))
+            .unwrap();
+        assert_eq!(
+            folder["Directory_Parent"],
+            msi::Value::Str("ProgramMenuFolder".into())
+        );
+        assert_eq!(folder["DefaultDir"], msi::Value::Str("big".into()));
+        assert_eq!(rows(&mut database, "RemoveFile").len(), 1);
+        let actions: Vec<String> = rows(&mut database, "InstallExecuteSequence")
+            .iter()
+            .map(|row| row["Action"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(
+            actions.contains(&"CreateShortcuts".to_owned())
+                && actions.contains(&"RemoveShortcuts".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_shortcut_to_a_file_that_is_not_installed_stops_the_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = serde_json::json!({"shortcuts": ["/usr/bin/missing.exe"]});
+        let error = build(&sample(dir.path(), 1, options), &Host::silent()).unwrap_err();
+        assert!(
+            error.to_string().contains("not an installed file"),
+            "{error}"
+        );
     }
 }

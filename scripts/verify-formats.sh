@@ -435,30 +435,60 @@ if selected msi; then
     cat > lang-msi.star <<'STAR'
 package(
     "msi", name = "hi", version = "1.2.3", description = "Says hi", maintainer = "Test Person <test@example.org>",
+    distro = "windows", options = {"manufacturer": "Example Ltd", "shortcuts": ["/usr/bin/hi.exe"]},
+)
+STAR
+    # A package of 30,000 files, in 300 folders of 100 files and seven subfolders. The names are not valid 8.3 names, so every
+    # file also gets a short name, and the files and folders and their components need far more than 65,535 strings.
+    # `module_NNN.py` holds `D.NNN`, so the check below can read back the name and the content of every file.
+    rm -rf pre-msi-big; mkdir -p pre-msi-big/usr/bin
+    printf 'MZ-fake\n' > pre-msi-big/usr/bin/big.exe
+    for d in $(seq 100 399); do
+        mkdir -p "pre-msi-big/usr/lib/package-$d/sub-$((d % 7))"
+        for f in $(seq 100 199); do printf '%s.%s\n' "$d" "$f" > "pre-msi-big/usr/lib/package-$d/sub-$((d % 7))/module_$f.py"; done
+    done
+    cat > lang-msi-big.star <<'STAR'
+package(
+    "msi", name = "big", version = "1.0.0", description = "Many files", maintainer = "Test Person <test@example.org>",
     distro = "windows", options = {"manufacturer": "Example Ltd"},
 )
 STAR
+    # The checks that both packages share: msidump writes one .idt file per table, and every reference between the tables must
+    # resolve. Column numbers are those of the table in the Windows Installer documentation.
+    msi_tables='
+        col() { tail -n +4 "dump/$1.idt" | tr -d "\r" | cut -f"$2"; }
+        missing() { sort -u "$1" | grep -vxFf "$2" | grep -v "^$" || true; }
+        dangling() { for pair in "$@"; do
+            set -- $pair; test -z "$(missing $1 $2)" || { echo "dangling reference: $1 not in $2: $(missing $1 $2 | head -5)"; exit 1; }
+        done; }
+        dump() { mkdir dump; msidump -t -d dump "$1" >/dev/null 2>&1
+            col Component 1 > comps; col Directory 1 > dirs; col File 1 > files
+            col File 2 > file_comps; col Component 3 > comp_dirs; col Directory 2 > dir_parents
+            col FeatureComponents 2 > fc_comps; col CreateFolder 1 > cf_dirs; col CreateFolder 2 > cf_comps
+            dangling "file_comps comps" "comp_dirs dirs" "dir_parents dirs" "fc_comps comps" "cf_dirs dirs" "cf_comps comps"
+            test "$(sort comps | uniq -d | wc -l)" -eq 0
+            test "$(col Media 2)" -eq "$(wc -l < files)"; }
+'
     check "msi: build" build_lang msi
     cp -r pre-msi out-msi/src
     # msitools reads the database and extracts the cabinet. It cannot install, so this does not prove that Windows accepts it.
-    check "msi: msiinfo, msidump with resolving references, msiextract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi '
+    check "msi: msiinfo, msidump with resolving references, shortcut, msiextract, every file identical (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi "
         dnf -y -q install msitools diffutils findutils >/dev/null
+        $msi_tables"'
         cd /tmp; f=$(ls /p/*.msi)
         msiinfo tables "$f" | grep -qx InstallExecuteSequence
+        msiinfo tables "$f" | grep -qx Shortcut
         msiinfo suminfo "$f" | grep -q "Template: x64;1033"
         msiinfo export "$f" File | grep -q "A-RATH~1.CON|a-rather-long-file-name.configuration"
-        # msidump writes one .idt file per table. Check that the references between the tables resolve.
-        mkdir dump; msidump -t -d dump "$f" >/dev/null 2>&1
-        col() { tail -n +4 "dump/$1.idt" | tr -d "\r" | cut -f"$2"; }
-        missing() { sort -u "$1" | grep -vxFf "$2" | grep -v "^$" || true; }
-        col Component 1 > comps; col Directory 1 > dirs; col File 1 > files
-        col File 2 > file_comps; col Component 3 > comp_dirs; col Directory 2 > dir_parents
-        col FeatureComponents 2 > fc_comps; col CreateFolder 1 > cf_dirs; col CreateFolder 2 > cf_comps
-        for pair in "file_comps comps" "comp_dirs dirs" "dir_parents dirs" "fc_comps comps" "cf_dirs dirs" "cf_comps comps"; do
-            set -- $pair; test -z "$(missing $1 $2)" || { echo "dangling reference: $1 not in $2: $(missing $1 $2)"; exit 1; }
-        done
-        test "$(sort comps | uniq -d | wc -l)" -eq 0
-        test "$(col Media 2)" -eq "$(wc -l < files)"
+        dump "$f"
+        # The Start Menu shortcut: a link in a folder below ProgramMenuFolder, to the key of the program file, in its component.
+        col Shortcut 2 > sc_dirs; col Shortcut 4 > sc_comps; col RemoveFile 2 > rf_comps; col RemoveFile 4 > rf_dirs
+        dangling "sc_dirs dirs" "sc_comps comps" "rf_comps comps" "rf_dirs dirs"
+        test "$(col Shortcut 1 | wc -l)" -eq 1
+        test "$(col Shortcut 3)" = "hi"
+        grep -qx ProgramMenuFolder dirs
+        n=$(col File 3 | grep -nx "hi.exe" | cut -d: -f1)
+        test "$(col File 1 | sed -n "${n}p")" = "$(col Shortcut 5 | sed "s/^\[#//; s/\]$//")"
         msiextract -C ex "$f" >/dev/null
         test "$(find ex -type f | wc -l)" -eq 5
         cmp ex/hi/share/big.bin /p/src/usr/share/big.bin
@@ -466,6 +496,27 @@ STAR
         cmp "ex/hi/share/hi docs/read me.txt" "/p/src/usr/share/hi docs/read me.txt"
         cmp ex/hi/share/empty.txt /p/src/usr/share/empty.txt
         cmp ex/hi/share/a-rather-long-file-name.configuration /p/src/usr/share/a-rather-long-file-name.configuration'
+    check "msi: build 30,000 files" "$PKGSMITH" build . -f lang-msi-big.star --prefix pre-msi-big -F msi -o out-msi/big --progress plain
+    # The string pool of this package needs references of three bytes. msitools reads them, or every name below would be wrong.
+    check "msi: 30,000 files, string references of three bytes, every path and content read back with msitools (latest Fedora)" in_image "$IMAGE_FEDORA" out-msi "
+        dnf -y -q install msitools diffutils findutils >/dev/null
+        $msi_tables"'
+        cd /tmp; f=$(ls /p/big/*.msi)
+        test "$(msiinfo export "$f" File | tail -n +4 | wc -l)" -eq 30001
+        dump "$f"
+        test "$(wc -l < files)" -eq 30001
+        # Every file reads back with the name and content that the prefix has.
+        msiextract -C ex "$f" >/dev/null
+        test "$(find ex -type f | wc -l)" -eq 30001
+        for d in $(seq 100 399); do for g in $(seq 100 199); do
+            printf "ex/big/lib/package-%s/sub-%s/module_%s.py:%s.%s\n" "$d" "$((d % 7))" "$g" "$d" "$g"
+        done; done > expected
+        grep -rH . ex/big/lib | sort > found
+        sort expected | cmp - found
+        grep -qx "MZ-fake" ex/big/bin/big.exe
+        # A long name and its short name, as the File table holds them.
+        col File 3 | grep -qx "MODULE~1.PY|module_100.py"
+        col File 3 | grep -q "|module_199.py$"'
 fi
 # MSIX and APPX are the same container, so one set of checks runs for both. Nothing here installs the package: there is no
 # Windows. The block map check hashes every 64 KiB block of every file with python3 and compares it with AppxBlockMap.xml.

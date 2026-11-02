@@ -439,6 +439,7 @@ removes them after the new files are installed.
 | `manufacturer` | Text                                | The maintainer                                       | The manufacturer Windows shows. One of the two is required |
 | `upgrade_code` | A GUID                              | Derived from the package name                        | Every version of a package shares it                |
 | `prefix`       | An absolute Unix path               | `/usr`                                               | Entry paths are taken relative to it. A path outside it stops the build |
+| `shortcuts`    | List of entry paths                 | None                                                 | One Start Menu shortcut for each, in a folder named after the package. The folder goes with the package |
 
 With `scope = "machine"`, the files go to `ProgramFiles64Folder` for `amd64` and `arm64`, and to `ProgramFilesFolder` for
 `all`.
@@ -453,12 +454,21 @@ Checked with `scripts/verify-formats.sh msi`:
   folders to parents, and the feature and `CreateFolder` rows to components and folders.
 - `msiextract` extracts the cabinet, and every file is byte for byte equal to its source. That includes a 1.5 MiB file,
   an empty file and names with spaces.
+- A `Shortcut` row names a file key, a component and a folder, and the `RemoveFile` row that removes its folder, that all resolve.
+- A package of 30,000 files, in 600 folders, with long names: `msiinfo` and `msidump` read every table, every reference
+  resolves, and `msiextract` gives back every path with its content.
 
-By hand, the exported tables were read for both scopes.
+A test of the `msi` plugin (`cargo test -p pkgsmith-plugin-msi`) builds the same 30,000 files, and reads the database with
+the `msi` crate. A small package (three files, compared once by hand) gives the same bytes as before the three byte form existed.
+
+By hand, the exported tables were read for both scopes. Also by hand, under Wine 11 on Linux (not part of the suite): the
+24,000 files of the PiKVM Desktop for Windows (350 MiB as an MSI, 1.1 GiB installed) were installed with
+`wine msiexec /i package.msi /qn`, and every file arrived. `pikvm-agent.exe --help` ran from the installed folder.
+The Start Menu shortcut was created, and `wine msiexec /x` removed the files, the shortcut and its folder.
 
 Not checked:
 
-- Installing and uninstalling with `msiexec` on Windows.
+- Installing and uninstalling with `msiexec` on Windows. Wine is not Windows Installer.
 - Validation with the ICE rules. A `user` package will fail ICE38, which wants a registry key as the key path of each
   component in the user profile.
 - The sequence numbers beyond the Microsoft documentation. `FindRelatedProducts` at 25 is a convention, and the
