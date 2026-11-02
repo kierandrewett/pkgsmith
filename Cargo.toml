@@ -12,8 +12,13 @@ categories = ["command-line-utilities", "development-tools"]
 exclude = ["/docs/media", "/.github"]
 
 [workspace]
-members = ["crates/pkgsmith-plugin", "crates/pkgsmith-windows-app", "plugins/*"]
+members = ["crates/pkgsmith-plugin", "crates/pkgsmith-windows-app", "plugins/*", "vendor/msi"]
 resolver = "3"
+
+# The `msi` crate 0.11.1 cannot write more than 65,535 distinct strings. `vendor/msi` is that crate with long string
+# references added; see vendor/msi/PATCHES.md. Drop this section when a released `msi` writes them.
+[patch.crates-io]
+msi = { path = "vendor/msi" }
 
 [dependencies]
 pkgsmith-plugin = { path = "crates/pkgsmith-plugin", version = "0.1.1" }

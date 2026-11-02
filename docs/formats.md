@@ -424,6 +424,11 @@ removes them after the new files are installed.
   the build. A name that is not a valid 8.3 name gets a short name, for example `A-RATH~1.CON|a-rather-long-name.conf`.
 - Paths are taken relative to `prefix`. `/usr/bin/hi.exe` goes to `bin\hi.exe` in the install folder.
 - The package needs at least one file, and at most 32767.
+- An MSI refers to a string by its number in a string pool. Two bytes hold 65,535 numbers, and every file adds several
+  strings (its key, its component, its names). When a package needs more, pkgsmith sets the flag of the string pool and
+  writes every reference with three bytes, as Windows Installer allows. A package of 30,000 files, and the 24,000 files
+  of an Electron app with a Python runtime, need it. A small package keeps the two byte form. The `msi` crate cannot do
+  this, so pkgsmith carries a patched copy of it in `vendor/msi`; see `vendor/msi/PATCHES.md`.
 - Dependencies, scripts, `license`, symbolic links, ghost entries, owners and modes have no place in an MSI. Each one
   warns. A configuration file is installed as an ordinary file.
 

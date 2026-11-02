@@ -1,0 +1,26 @@
+# A patched copy of the `msi` crate 0.11.1 (https://github.com/mdsteele/rust-msi, MIT, Matthew D. Steele).
+# The patch is described in PATCHES.md. The root Cargo.toml routes the crates.io `msi` here with [patch.crates-io].
+
+[package]
+edition = "2024"
+rust-version = "1.85"
+name = "msi"
+version = "0.11.1"
+authors = ["Matthew D. Steele <mdsteele@alum.mit.edu>"]
+description = "Read/write Windows Installer (MSI) files"
+readme = "README.md"
+keywords = ["msi", "windows", "installer", "package"]
+license = "MIT"
+repository = "https://github.com/mdsteele/rust-msi"
+publish = false
+
+[dependencies]
+byteorder = "1"
+cfb = "0.16"
+encoding_rs = "0.8"
+uuid = "1"
+
+# Upstream code, kept as it is: the lints that pkgsmith's `clippy -D warnings` raises on it are allowed here.
+[lints.clippy]
+unused_io_amount = "allow"
+unused_format_specs = "allow"
