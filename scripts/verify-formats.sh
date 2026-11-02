@@ -312,7 +312,8 @@ STAR
         for f in /p/src/usr/share/hi/many/*.txt; do cmp "$f" "ex/Hi Tools/usr/share/hi/many/${f##*/}"; done
         test -x "ex/Hi Tools/usr/bin/hi"
         test "$(readlink "ex/Hi Tools/usr/bin/hello")" = hi
-        test "$(readlink "ex/Hi Tools/usr/share/hi/apps")" = /Applications
+        # 7z resolves an absolute target inside the extraction folder, so only the end can be compared.
+        readlink "ex/Hi Tools/usr/share/hi/apps" | grep -q "/Applications$"
         long="$(printf "n%.0s" $(seq 1 200)).txt"
         find ex -type f -name "$long" | grep -q .'
 fi

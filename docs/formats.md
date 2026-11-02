@@ -225,9 +225,8 @@ executable, a name with a space and a 200-character name:
 - `dmg2img` reads the image.
 - `fsck.hfsplus` reports the volume as OK.
 - `7z` extracts the files, and each one is byte for byte equal to its source.
-- `fsck.hfsplus` and `7z` accept a volume that holds symbolic links, and `7z` extracts them as links with their targets (checked by hand with
-  `fsck.hfsplus` and `7z` on a relative link and on `/Applications`; `scripts/verify-formats.sh dmg` now has the same links, and was not run
-  here because it needs podman images).
+- A volume that holds a relative and an absolute (`/Applications`) symbolic link: `fsck.hfsplus` reports it OK and `7z` extracts both as links
+  (`scripts/verify-formats.sh dmg`, latest Fedora).
 
 Not checked:
 
