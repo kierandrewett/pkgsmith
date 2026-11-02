@@ -31,6 +31,10 @@ IMAGE_FEDORA="${IMAGE_FEDORA:-registry.fedoraproject.org/fedora:latest}"
 IMAGE_DEBIAN="${IMAGE_DEBIAN:-docker.io/library/debian:latest}"
 IMAGE_ARCH="${IMAGE_ARCH:-docker.io/library/archlinux:base}"
 IMAGE_ALPINE="${IMAGE_ALPINE:-docker.io/library/alpine:latest}"
+# Alpine 3.23 moved to apk-tools 3. Alpine 3.22, the last release with apk-tools 2, is supported until May 2027, and its
+# apk marks a package broken for things apk-tools 3 lets pass. This pins a tool, not a frozen distro: drop the image
+# and its check when Alpine 3.22 reaches its end of life.
+IMAGE_ALPINE_APK2="${IMAGE_ALPINE_APK2:-docker.io/library/alpine:3.22}"
 IMAGE_SLACKWARE="${IMAGE_SLACKWARE:-docker.io/vbatts/slackware:current}"
 IMAGE_VOID="${IMAGE_VOID:-ghcr.io/void-linux/void-glibc:latest}"
 IMAGE_RUBY="${IMAGE_RUBY:-docker.io/library/ruby:latest}"
@@ -58,7 +62,7 @@ need() { command -v "$1" >/dev/null 2>&1; }
 need podman || { echo "podman is required"; exit 2; }
 
 # Pull every image now, so a pull error is one clear failure and the log shows what was tested.
-for image in "$IMAGE_FEDORA" "$IMAGE_DEBIAN" "$IMAGE_ARCH" "$IMAGE_ALPINE" "$IMAGE_SLACKWARE" "$IMAGE_VOID" "$IMAGE_RUBY" "$IMAGE_NODE" "$IMAGE_MAMBA" "$IMAGE_DOTNET"; do
+for image in "$IMAGE_FEDORA" "$IMAGE_DEBIAN" "$IMAGE_ARCH" "$IMAGE_ALPINE" "$IMAGE_ALPINE_APK2" "$IMAGE_SLACKWARE" "$IMAGE_VOID" "$IMAGE_RUBY" "$IMAGE_NODE" "$IMAGE_MAMBA" "$IMAGE_DOTNET"; do
     if [ -z "${PKGSMITH_NO_PULL:-}" ]; then podman pull -q "$image" >>"$LOG" 2>&1 || echo "could not pull $image" >&2; fi
     echo "image $image $(podman image inspect --format '{{.Digest}} {{.Created}}' "$image" 2>/dev/null)" | tee -a "$LOG"
 done
@@ -107,6 +111,9 @@ for fmt in FORMATS:
     fields["options"] = OPTIONS.get(fmt, {})
     if fmt in LINKED:
         fields["contents"] = [symlink("/usr/bin/hi", "/usr/bin/hello")]
+    if fmt == "apk":
+        # A link target longer than the 100 bytes of a ustar header. It still points at /usr/bin/hi.
+        fields["contents"] = fields["contents"] + [symlink("/usr/bin/" + "../bin/" * 15 + "hi", "/usr/bin/hi-long")]
     if fmt == "freebsd":
         fields["depends"] = ["libfoo"]
     package(fmt, **fields)
@@ -176,10 +183,21 @@ if selected archlinux; then
         pacman -Qkk hi | grep -q "0 altered files"; pacman -R --noconfirm hi >/dev/null 2>&1; ! test -e /usr/bin/hi'
 fi
 if selected apk; then
+    # apk must exit 0, record no broken files (`f:f` in the database), keep the whole long link target, and `apk audit`
+    # must find a checksum for every file and link (it prints `U` for a link without one). No repository is set, so the
+    # check needs no network. `sh -e` does not stop at a failed `! cmd`, so the negative checks use `&& exit 1`.
+    APK_CHECK='
+        : > /etc/apk/repositories
+        apk add --allow-untrusted /p/hi-1.0.0-r1.apk >/tmp/add.log 2>&1 || { cat /tmp/add.log; exit 1; }
+        grep -i "checksum" /tmp/add.log && exit 1
+        awk "/^P:hi\$/ { p = 1 } p && /^\$/ { exit } p && /^f:/" /lib/apk/db/installed | grep . && exit 1
+        hi | grep -q hi-from-package; hello | grep -q hi-from-package; hi-long | grep -q hi-from-package
+        test "$(readlink /usr/bin/hi-long)" = "/usr/bin/$(printf "../bin/%.0s" $(seq 15))hi"
+        apk audit --system | grep -E "^U usr/bin/(hi|hello|hi-long)$" && exit 1
+        apk del hi >/dev/null; ! test -e /usr/bin/hi'
     check "apk: build" build apk
-    check "apk: install and run (latest Alpine)" in_image "$IMAGE_ALPINE" out-apk '
-        apk add --allow-untrusted --no-network --force-missing-repositories /p/hi-1.0.0-r1.apk >/dev/null 2>&1 || apk add --allow-untrusted --no-cache /p/hi-1.0.0-r1.apk >/dev/null
-        hi | grep -q hi-from-package; apk del hi >/dev/null; ! test -e /usr/bin/hi'
+    check "apk: install, run, audit, remove (latest Alpine)" in_image "$IMAGE_ALPINE" out-apk "$APK_CHECK"
+    check "apk: install, run, audit, remove with apk-tools 2 (Alpine 3.22)" in_image "$IMAGE_ALPINE_APK2" out-apk "$APK_CHECK"
 fi
 if selected slackware; then
     check "slackware: build" build slackware

@@ -23,7 +23,7 @@ that pkgsmith reads files from. See [the prefix](prefix.md) for that.
 | `deb`       | `.deb`                           | Debian, Ubuntu                       | `dpkg` in Debian 13                 |
 | `ipk`       | `.ipk`                           | OpenWrt                              | Layout only                         |
 | `archlinux` | `.pkg.tar.zst`                   | Arch Linux                           | `pacman` in Arch                    |
-| `apk`       | `.apk`                           | Alpine                               | `apk` in Alpine 3.22                |
+| `apk`       | `.apk`                           | Alpine                               | `apk` 2 in Alpine 3.22, `apk` 3 in the latest Alpine |
 | `slackware` | `.txz`                           | Slackware                            | `installpkg` in Slackware 15.0      |
 | `snap`      | `.snap`                          | snapd                                | `unsquashfs` only, not snapd        |
 | `oci`       | `.oci.tar`                       | OCI runtimes                         | `load` and `run` in an OCI tool     |
@@ -79,6 +79,9 @@ to sign one.
 Every regular file and symlink in the data part carries an `APK-TOOLS.checksum.SHA1` pax record, as `abuild` writes
 it: the SHA-1 of the file, or of the link target. A link target longer than 100 bytes goes in a pax `linkpath`
 record. apk-tools 2 marks a package broken, and `apk add` exits 1, when a file or a link has no checksum.
+
+`scripts/verify-formats.sh` installs the package with apk-tools 2 (Alpine 3.22) and apk-tools 3 (the latest Alpine),
+runs it, follows both links, and checks that `apk audit` finds a checksum for every file and link.
 
 ## tar and zip
 
