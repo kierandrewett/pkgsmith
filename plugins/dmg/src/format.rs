@@ -144,11 +144,7 @@ fn volume_entries(package: &Package, prefix: &str, host: &Host) -> Result<Vec<En
                 ghosts += 1;
                 continue;
             }
-            Data::Symlink { .. } => bail!(
-                "{}: a symbolic link cannot be written into a DMG, because pkgsmith cannot write HFS+ symbolic links",
-                entry.path
-            ),
-            Data::File { .. } | Data::Dir => {}
+            Data::File { .. } | Data::Dir | Data::Symlink { .. } => {}
         }
         if entry.config {
             configs += 1;
@@ -182,7 +178,11 @@ fn volume_size(entries: &[Entry]) -> u64 {
     let block = u64::from(BLOCK);
     let data: u64 = entries
         .iter()
-        .map(|e| e.size().div_ceil(block) * block)
+        .map(|e| match &e.data {
+            // A link's target is its data fork, which takes at least one block.
+            Data::Symlink { target } => (target.len() as u64).div_ceil(block) * block,
+            _ => e.size().div_ceil(block) * block,
+        })
         .sum();
     let overhead = entries.len() as u64 * 8 * 1024 + 8 * MIB;
     let total = (data + overhead) * 5 / 4;

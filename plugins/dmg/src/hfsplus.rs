@@ -9,6 +9,8 @@
 //! attributes file has no extent, which TN1150 defines as "the attributes file does not exist". The catalog is a B-tree
 //! with as many index levels as its leaves need.
 //!
+//! A symbolic link is a file whose data fork is its target, with the BSD link type bits and the Finder type `slnk`.
+//!
 //! Names are ASCII only. HFS Plus compares names after Unicode decomposition and case folding (TN1150, "String
 //! Comparison Algorithm"). This writer does not implement that table, so it folds ASCII letters only and refuses every
 //! other name with an error that names the path. Two names in one folder that differ only in ASCII case are also refused.
@@ -65,10 +67,15 @@ const FILE_THREAD_EXISTS: u16 = 0x0002;
 /// BSD file-type bits of `fileMode`: directory and regular file.
 const BSD_DIR: u16 = 0o040000;
 const BSD_FILE: u16 = 0o100000;
+/// BSD file-type bits of a symbolic link. macOS reads these, and the data fork holds the target.
+const BSD_LINK: u16 = 0o120000;
+/// Finder type and creator of a symbolic link, as the HFS+ drivers of macOS write them.
+const LINK_TYPE: &[u8; 4] = b"slnk";
+const LINK_CREATOR: &[u8; 4] = b"rhap";
 const ROOT_MODE: u16 = 0o755;
 
 /// Writes the volume of `size` bytes holding `entries`, named `name`, with every date set to `mtime` (unix seconds).
-/// The entries are the volume's paths with a leading `/`, every parent folder present, and no symbolic links.
+/// The entries are the volume's paths with a leading `/` and every parent folder present.
 pub fn write_volume(entries: &[Entry], size: u64, name: &str, mtime: u64) -> Result<Vec<u8>> {
     check_name(&format!("the volume name {name:?}"), name)?;
     let block = block_size(size)?;
@@ -99,7 +106,8 @@ pub fn write_volume(entries: &[Entry], size: u64, name: &str, mtime: u64) -> Res
     for item in &items {
         forks.push(match item.kind {
             Kind::Dir => Fork::default(),
-            Kind::File { size, .. } => {
+            Kind::File { .. } | Kind::Symlink { .. } => {
+                let size = item.kind.data_len();
                 let blocks = size.div_ceil(block);
                 let blocks = u32::try_from(blocks).map_err(|_| {
                     anyhow::anyhow!("{}: the file is too large for HFS Plus", item.path)
@@ -140,7 +148,7 @@ pub fn write_volume(entries: &[Entry], size: u64, name: &str, mtime: u64) -> Res
         total,
         free: total - used - 1,
         next_alloc: used,
-        file_count: count(&items, |k| matches!(k, Kind::File { .. }))?,
+        file_count: count(&items, |k| matches!(k, Kind::File { .. } | Kind::Symlink { .. }))?,
         folder_count: count(&items, |k| matches!(k, Kind::Dir))?,
         next_cnid,
         date: hfs_date(mtime),
@@ -152,11 +160,11 @@ pub fn write_volume(entries: &[Entry], size: u64, name: &str, mtime: u64) -> Res
 
     let mut image = vec![0u8; size as usize];
     for (item, fork) in items.iter().zip(&forks) {
-        if let Kind::File { src, size } = item.kind
-            && size > 0
-        {
-            let at = fork.start as usize * block as usize;
-            read_into(&mut image, at, src, size, item.path)?;
+        let at = fork.start as usize * block as usize;
+        match item.kind {
+            Kind::File { src, size } if size > 0 => read_into(&mut image, at, src, size, item.path)?,
+            Kind::Symlink { target } => put(&mut image, at, target.as_bytes()),
+            _ => {}
         }
     }
     put_nodes(&mut image, catalog_fork.start, block, &catalog_nodes);
@@ -229,6 +237,19 @@ struct Item<'a> {
 enum Kind<'a> {
     Dir,
     File { src: &'a Path, size: u64 },
+    /// A symbolic link: the target is the data fork.
+    Symlink { target: &'a str },
+}
+
+impl Kind<'_> {
+    /// The length of the data fork.
+    fn data_len(&self) -> u64 {
+        match self {
+            Kind::Dir => 0,
+            Kind::File { size, .. } => *size,
+            Kind::Symlink { target } => target.len() as u64,
+        }
+    }
 }
 
 /// Checks the names and gives every entry a catalog number, from `FIRST_USER_CNID` in path order. Returns the items
@@ -275,10 +296,14 @@ fn number(entries: &[Entry]) -> Result<(Vec<Item<'_>>, u32)> {
                 src: src.as_path(),
                 size: *size,
             },
-            Data::Symlink { .. } => bail!(
-                "{}: a symbolic link cannot be written into a DMG, because the HFS+ writer does not write symbolic links",
-                entry.path
-            ),
+            Data::Symlink { target } => {
+                ensure!(
+                    !target.is_empty() && target.is_ascii() && !target.contains('\0'),
+                    "{}: the link target must be ASCII text without a NUL",
+                    entry.path
+                );
+                Kind::Symlink { target: target.as_str() }
+            }
             Data::Ghost => bail!("{}: a ghost entry is not part of the volume", entry.path),
         };
         items.push(Item {
@@ -405,7 +430,11 @@ fn catalog_records(items: &[Item], forks: &[Fork], volume: &str, mtime: u64) -> 
                 REC_FOLDER_THREAD,
             ),
             Kind::File { .. } => (
-                file_record(item.cnid, item.mode, date, *fork),
+                file_record(item.cnid, BSD_FILE, item.mode, None, date, *fork),
+                REC_FILE_THREAD,
+            ),
+            Kind::Symlink { .. } => (
+                file_record(item.cnid, BSD_LINK, item.mode, Some((LINK_TYPE, LINK_CREATOR)), date, *fork),
                 REC_FILE_THREAD,
             ),
         };
@@ -474,7 +503,14 @@ fn folder_record(id: u32, valence: u32, mode: u16, date: u32) -> Vec<u8> {
 }
 
 /// `HFSPlusCatalogFile`, 248 bytes: the data fork, and an empty resource fork.
-fn file_record(id: u32, mode: u16, date: u32, data: Fork) -> Vec<u8> {
+fn file_record(
+    id: u32,
+    type_bits: u16,
+    mode: u16,
+    finder: Option<(&[u8; 4], &[u8; 4])>,
+    date: u32,
+    data: Fork,
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(248);
     out.extend_from_slice(&REC_FILE.to_be_bytes());
     out.extend_from_slice(&FILE_THREAD_EXISTS.to_be_bytes());
@@ -484,8 +520,14 @@ fn file_record(id: u32, mode: u16, date: u32, data: Fork) -> Vec<u8> {
         out.extend_from_slice(&date.to_be_bytes());
     }
     out.extend_from_slice(&0u32.to_be_bytes());
-    out.extend_from_slice(&bsd_info(BSD_FILE, mode));
-    out.extend_from_slice(&[0u8; 16]);
+    out.extend_from_slice(&bsd_info(type_bits, mode));
+    // userInfo (FileInfo): the Finder file type and creator, then zeros.
+    let mut user_info = [0u8; 16];
+    if let Some((kind, creator)) = finder {
+        user_info[0..4].copy_from_slice(kind);
+        user_info[4..8].copy_from_slice(creator);
+    }
+    out.extend_from_slice(&user_info);
     out.extend_from_slice(&[0u8; 16]);
     out.extend_from_slice(&[0u8; 8]);
     out.extend_from_slice(&data.bytes());

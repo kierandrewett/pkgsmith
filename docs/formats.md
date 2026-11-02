@@ -207,7 +207,9 @@ A disk image has no install path. Files sit on the volume in the same layout as 
 - File names must be ASCII. HFS+ compares other names after Unicode normalisation and case folding, which pkgsmith does
   not implement, so any other name stops the build with the path in the error.
 - Two names in one folder that differ only in ASCII case stop the build.
-- Symbolic links stop the build, because pkgsmith cannot write HFS+ symbolic links.
+- A symbolic link is written as an HFS+ symbolic link: a file whose data fork is the target, with the BSD link type bits
+  and the Finder type `slnk`. The target is written as it is, so an absolute target such as `/Applications` works. It must
+  be ASCII.
 - Dependencies, scripts, `description`, `license`, owners and the config flag have no place in a disk image. Each one
   warns. Every file is written with uid 0 and gid 0, and the dates are the build time.
 
@@ -223,6 +225,9 @@ executable, a name with a space and a 200-character name:
 - `dmg2img` reads the image.
 - `fsck.hfsplus` reports the volume as OK.
 - `7z` extracts the files, and each one is byte for byte equal to its source.
+- `fsck.hfsplus` and `7z` accept a volume that holds symbolic links, and `7z` extracts them as links with their targets (checked by hand with
+  `fsck.hfsplus` and `7z` on a relative link and on `/Applications`; `scripts/verify-formats.sh dmg` now has the same links, and was not run
+  here because it needs podman images).
 
 Not checked:
 

@@ -290,6 +290,7 @@ if selected dmg; then
     : > pre-dmg/usr/share/hi/empty.txt
     printf 'hi-from-dmg\n' > pre-dmg/usr/bin/hi; chmod 755 pre-dmg/usr/bin/hi
     printf 'spaced\n' > "pre-dmg/usr/share/hi/with space.txt"
+    ln -s hi pre-dmg/usr/bin/hello; ln -s /Applications pre-dmg/usr/share/hi/apps
     long="$(printf 'n%.0s' $(seq 1 200)).txt"; printf 'long\n' > "pre-dmg/usr/share/hi/$long"
     lang_script dmg <<'STAR'
 package(FORMAT, distro = "macos", options = {"volume_name": "Hi Tools"}, **common)
@@ -310,6 +311,8 @@ STAR
         cmp ex/Hi\ Tools/usr/share/hi/empty.txt /p/src/usr/share/hi/empty.txt
         for f in /p/src/usr/share/hi/many/*.txt; do cmp "$f" "ex/Hi Tools/usr/share/hi/many/${f##*/}"; done
         test -x "ex/Hi Tools/usr/bin/hi"
+        test "$(readlink "ex/Hi Tools/usr/bin/hello")" = hi
+        test "$(readlink "ex/Hi Tools/usr/share/hi/apps")" = /Applications
         long="$(printf "n%.0s" $(seq 1 200)).txt"
         find ex -type f -name "$long" | grep -q .'
 fi
